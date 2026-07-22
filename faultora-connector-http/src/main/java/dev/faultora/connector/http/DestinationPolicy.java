@@ -87,7 +87,12 @@ public final class DestinationPolicy {
         }
 
         // Check explicit allowlist (if non-empty, only these hosts are allowed)
-        if (!allowedHosts.isEmpty() && !allowedHosts.contains(host.toLowerCase())) {
+        // Hosts in the allowlist are trusted and skip further private/reserved checks
+        // including DNS resolution.
+        if (!allowedHosts.isEmpty()) {
+            if (allowedHosts.contains(host.toLowerCase())) {
+                return null; // Explicitly allowed — trusted host
+            }
             return "Host is not in the allowlist: " + host;
         }
 
@@ -125,8 +130,9 @@ public final class DestinationPolicy {
     /**
      * Resolve hostname and check all addresses against private/reserved ranges.
      * Time-bounded to prevent blocking in DNS-restricted environments.
+     * Fails closed: if DNS resolution cannot be verified, the request is blocked.
      *
-     * @return null if allowed, error message if all resolved addresses are private/reserved
+     * @return null if allowed, error message if resolved addresses are private/reserved or DNS failed
      */
     private static String resolveAndClassify(String host) {
         Future<InetAddress[]> future = DNS_EXECUTOR.submit(() -> InetAddress.getAllByName(host));
@@ -139,16 +145,19 @@ public final class DestinationPolicy {
             }
             return null;
         } catch (TimeoutException e) {
-            // DNS timed out — fail open. The actual connection will also fail
-            // if DNS is unreachable, so no SSRF risk from this path.
+            // DNS timed out — fail closed. Cannot verify the resolved address
+            // is safe, so block the request to prevent SSRF via slow DNS.
             future.cancel(true);
-            return null;
+            return "DNS resolution timed out for host: " + host;
         } catch (ExecutionException e) {
-            // DNS lookup failed — fail open.
-            return null;
+            // DNS lookup failed — fail closed. Cannot verify the resolved address
+            // is safe. The cause is typically UnknownHostException.
+            Throwable cause = e.getCause();
+            String detail = cause != null ? cause.getMessage() : e.getMessage();
+            return "DNS resolution failed for host: " + host + " (" + detail + ")";
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return null;
+            return "DNS resolution interrupted for host: " + host;
         }
     }
 

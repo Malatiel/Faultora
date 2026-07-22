@@ -56,7 +56,8 @@ class DestinationPolicyTest {
     @Test
     void defaultPolicyAllowsPublicHost() {
         DestinationPolicy policy = DestinationPolicy.defaultPolicy();
-        assertThat(policy.check(URI.create("https://api.example.com"))).isNull();
+        // Use IP literal to avoid DNS dependency in sandboxed environments
+        assertThat(policy.check(URI.create("http://8.8.8.8"))).isNull();
     }
 
     @Test
@@ -96,7 +97,33 @@ class DestinationPolicyTest {
     void blocklistAllowsNonMatchingHost() {
         DestinationPolicy policy = new DestinationPolicy(
                 false, Set.of(), Set.of("evil.example.com"));
-        assertThat(policy.check(URI.create("https://api.example.com"))).isNull();
+        // Use IP literal to avoid DNS dependency in sandboxed environments
+        assertThat(policy.check(URI.create("http://8.8.8.8"))).isNull();
+    }
+
+    @Test
+    void defaultPolicyBlocksNonExistentDns() {
+        // DNS lookup for a non-existent domain should fail closed (blocked)
+        DestinationPolicy policy = DestinationPolicy.defaultPolicy();
+        assertThat(policy.check(URI.create("https://this-host-does-not-exist.invalid")))
+                .as("Non-resolvable DNS host should be blocked")
+                .isNotNull();
+    }
+
+    @Test
+    void defaultPolicyBlocksNonResolvableTld() {
+        // A host that will fail DNS resolution should be blocked
+        DestinationPolicy policy = DestinationPolicy.defaultPolicy();
+        assertThat(policy.check(URI.create("https://definitely-not-a-real-host-12345.example.invalid")))
+                .isNotNull();
+    }
+
+    @Test
+    void permissivePolicyAllowsNonExistentDns() {
+        // Permissive mode skips all private/reserved checks including DNS
+        DestinationPolicy policy = DestinationPolicy.permissive();
+        assertThat(policy.check(URI.create("https://this-host-does-not-exist.invalid")))
+                .isNull();
     }
 
     @Test
@@ -114,8 +141,8 @@ class DestinationPolicyTest {
     @Test
     void rejectsNoScheme() {
         DestinationPolicy policy = DestinationPolicy.defaultPolicy();
-        // URI.create will fail for no scheme, but let's test with a constructed URI
-        assertThat(policy.check(URI.create("http://example.com"))).isNull();
+        // IP literal passes without DNS — test basic scheme validation
+        assertThat(policy.check(URI.create("http://8.8.8.8"))).isNull();
     }
 
     @ParameterizedTest
@@ -137,10 +164,9 @@ class DestinationPolicyTest {
 
     @ParameterizedTest
     @ValueSource(strings = {
-            "https://api.example.com",
-            "https://payments.stripe.com",
             "http://8.8.8.8",
-            "https://1.1.1.1"
+            "https://1.1.1.1",
+            "http://93.184.216.34"
     })
     void defaultPolicyAllowsPublicAddresses(String uri) {
         DestinationPolicy policy = DestinationPolicy.defaultPolicy();

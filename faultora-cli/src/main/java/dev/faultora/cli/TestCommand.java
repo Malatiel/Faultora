@@ -124,9 +124,10 @@ public class TestCommand implements Command {
 
             ExpressionContext exprContext = ExpressionContext.builder().build();
 
+            EnvironmentSecretResolver secretResolver = new EnvironmentSecretResolver();
             ConnectorContext connectorContext = new ConnectorContext(
                     EvidencePolicy.MINIMAL,
-                    handleId -> null,
+                    secretResolver::resolve,
                     5000, 30000, 60000,
                     Map.of("baseUrl", targetUrl));
 

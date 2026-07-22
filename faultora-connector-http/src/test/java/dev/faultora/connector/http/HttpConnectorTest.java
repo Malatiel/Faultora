@@ -158,8 +158,9 @@ class HttpConnectorTest {
     @Test
     void connectorWithDefaultPolicyAllowsPublicHost() {
         HttpConnector defaultConnector = new HttpConnector();
+        // Use IP literal to avoid DNS dependency in sandboxed environments
         TargetDefinition target = new TargetDefinition(
-                new TargetId("public"), "Public", "https://api.example.com",
+                new TargetId("public"), "Public", "http://8.8.8.8",
                 List.of(new ProtocolId("http")), List.of(), Map.of()
         );
 
