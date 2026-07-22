@@ -1,0 +1,316 @@
+package dev.faultora.cli;
+
+import dev.faultora.assertions.core.DurationAssertionProvider;
+import dev.faultora.assertions.core.HeaderAssertionProvider;
+import dev.faultora.assertions.core.JsonPathAssertionProvider;
+import dev.faultora.assertions.core.StatusAssertionProvider;
+import dev.faultora.connector.http.HttpConnector;
+import dev.faultora.engine.LocalEngine;
+import dev.faultora.engine.journal.RunJournal;
+import dev.faultora.engine.plan.PlanCompilationResult;
+import dev.faultora.engine.plan.PlanCompiler;
+import dev.faultora.engine.plan.PlanDiagnostic;
+import dev.faultora.engine.run.RunResult;
+import dev.faultora.importer.openapi.OpenApiImporter;
+import dev.faultora.model.catalog.ApiCatalog;
+import dev.faultora.model.catalog.OperationDefinition;
+import dev.faultora.model.catalog.SafetyClassification;
+import dev.faultora.model.catalog.TargetDefinition;
+import dev.faultora.model.events.RunEvent;
+import dev.faultora.model.identifier.*;
+import dev.faultora.model.security.EvidencePolicy;
+import dev.faultora.model.security.TargetPolicy;
+import dev.faultora.reporting.ConsoleRenderer;
+import dev.faultora.reporting.HtmlRenderer;
+import dev.faultora.reporting.JsonRenderer;
+import dev.faultora.reporting.JUnitXmlRenderer;
+import dev.faultora.spec.expression.ExpressionContext;
+import dev.faultora.spec.model.ScenarioDocument;
+import dev.faultora.spec.parser.ParseResult;
+import dev.faultora.spec.parser.ScenarioParser;
+import dev.faultora.spec.validator.ScenarioValidator;
+import dev.faultora.spi.contract.AssertionProvider;
+import dev.faultora.spi.contract.Connector;
+import dev.faultora.spi.contract.ReportRenderer;
+import dev.faultora.spi.context.ConnectorContext;
+import dev.faultora.spi.context.ImportContext;
+import dev.faultora.spi.result.ImportResult;
+
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+/**
+ * Runs a scenario against a target and produces reports.
+ *
+ * Usage: faultora test --scenario &lt;path&gt; [--openapi &lt;path&gt;] [--target &lt;url&gt;]
+ *                      [--format console,json,junit,html] [--output &lt;dir&gt;]
+ *                      [--seed &lt;n&gt;]
+ */
+public class TestCommand implements Command {
+
+    @Override
+    public int execute(List<String> args) {
+        Path scenarioPath = null;
+        Path openApiPath = null;
+        String targetUrl = "http://localhost:8080";
+        List<String> formats = List.of("console");
+        Path outputDir = Path.of("faultora-results");
+        long seed = System.currentTimeMillis();
+
+        Iterator<String> it = args.iterator();
+        while (it.hasNext()) {
+            String arg = it.next();
+            switch (arg) {
+                case "--scenario", "-s" -> scenarioPath = Path.of(requireNext(it, "--scenario"));
+                case "--openapi", "-o" -> openApiPath = Path.of(requireNext(it, "--openapi"));
+                case "--target", "-t" -> targetUrl = requireNext(it, "--target");
+                case "--format", "-f" -> formats = List.of(requireNext(it, "--format").split(","));
+                case "--output" -> outputDir = Path.of(requireNext(it, "--output"));
+                case "--seed" -> seed = Long.parseLong(requireNext(it, "--seed"));
+                case "--help", "-h" -> {
+                    printHelp();
+                    return FaultoraCli.EXIT_PASS;
+                }
+                default -> {
+                    System.err.println("Unknown option: " + arg);
+                    return FaultoraCli.EXIT_INVALID_CONFIG;
+                }
+            }
+        }
+
+        if (scenarioPath == null) {
+            System.err.println("Error: --scenario is required");
+            return FaultoraCli.EXIT_INVALID_CONFIG;
+        }
+
+        try {
+            // 1. Parse scenario
+            String scenarioContent = Files.readString(scenarioPath, StandardCharsets.UTF_8);
+            ScenarioParser parser = new ScenarioParser();
+            ParseResult<ScenarioDocument> parseResult = parser.parse(scenarioContent);
+
+            if (!parseResult.isSuccess()) {
+                System.err.println("Scenario validation failed:");
+                parseResult.errors().forEach(d -> System.err.println("  " + d.message()));
+                return FaultoraCli.EXIT_INVALID_CONFIG;
+            }
+
+            ScenarioDocument scenario = parseResult.document();
+            parseResult.warnings().forEach(d -> System.err.println("Warning: " + d.message()));
+
+            // 2. Load or import catalog
+            ApiCatalog catalog;
+            if (openApiPath != null) {
+                catalog = importCatalog(openApiPath);
+            } else {
+                catalog = buildCatalogFromScenario(scenario, targetUrl);
+            }
+
+            // 3. Build execution context
+            TargetPolicy targetPolicy = new TargetPolicy(
+                    Set.of(),
+                    Set.of(SafetyClassification.READ_ONLY, SafetyClassification.MUTATING),
+                    1000, 10, 300_000, 1_048_576,
+                    Set.of(), Set.of());
+
+            ExpressionContext exprContext = ExpressionContext.builder().build();
+
+            ConnectorContext connectorContext = new ConnectorContext(
+                    EvidencePolicy.MINIMAL,
+                    handleId -> null,
+                    5000, 30000, 60000,
+                    Map.of("baseUrl", targetUrl));
+
+            // 4. Compile plan
+            String scenarioDigest = "sha256:" + Integer.toHexString(scenarioContent.hashCode());
+            String catalogDigest = "sha256:" + Integer.toHexString(catalog.hashCode());
+            RunId runId = new RunId("run-" + seed);
+
+            PlanCompiler compiler = new PlanCompiler();
+            PlanCompilationResult compilation = compiler.compile(
+                    scenario, catalog, targetPolicy, runId, seed,
+                    scenarioDigest, catalogDigest);
+
+            if (compilation.plan() == null) {
+                System.err.println("Plan compilation failed:");
+                compilation.diagnostics().forEach(d -> System.err.println("  " + d.message()));
+                return FaultoraCli.EXIT_INVALID_CONFIG;
+            }
+
+            compilation.diagnostics().stream()
+                    .filter(d -> d.severity() == PlanDiagnostic.Severity.WARNING)
+                    .forEach(d -> System.err.println("Warning: " + d.message()));
+
+            // 5. Set up connectors and assertion providers
+            Map<String, Connector> connectors = Map.of("http", new HttpConnector());
+            Map<String, AssertionProvider> assertionProviders = Map.of(
+                    "status", new StatusAssertionProvider(),
+                    "duration", new DurationAssertionProvider(),
+                    "header", new HeaderAssertionProvider(),
+                    "jsonpath", new JsonPathAssertionProvider());
+
+            // 6. Execute
+            LocalEngine engine = new LocalEngine(connectors, assertionProviders);
+            Files.createDirectories(outputDir);
+            Path journalPath = outputDir.resolve("events.ndjson");
+
+            RunResult result;
+            try (RunJournal journal = new RunJournal(journalPath, true)) {
+                System.out.println("Running scenario: " + scenario.metadata().name());
+                System.out.println("Target: " + targetUrl);
+                System.out.println("Seed: " + seed);
+                System.out.println();
+
+                result = engine.execute(
+                        compilation.plan(), journal, exprContext,
+                        connectorContext, new AtomicBoolean(false));
+            }
+
+            // 7. Generate reports
+            List<RunEvent> events = loadEvents(journalPath);
+            for (String format : formats) {
+                ReportRenderer renderer = buildRenderer(format.toLowerCase(Locale.ROOT));
+                if (renderer == null) {
+                    System.err.println("Unknown format: " + format);
+                    continue;
+                }
+
+                if ("console".equals(format)) {
+                    renderer.render(events, new PrintWriter(System.out, true));
+                } else {
+                    String ext = switch (format.toLowerCase(Locale.ROOT)) {
+                        case "json" -> ".json";
+                        case "junit" -> ".xml";
+                        case "html" -> ".html";
+                        default -> "." + format;
+                    };
+                    Path reportPath = outputDir.resolve("report" + ext);
+                    try (Writer w = new BufferedWriter(new FileWriter(reportPath.toFile()))) {
+                        renderer.render(events, w);
+                    }
+                    System.out.println("Report written: " + reportPath);
+                }
+            }
+
+            // 8. Summary and exit code
+            System.out.printf("%nResult: %s — %d nodes, %d passed, %d failed (%dms)%n",
+                    result.status(), result.totalNodes(),
+                    result.passedAssertions(), result.failedAssertions(),
+                    result.durationMs());
+
+            return switch (result.status()) {
+                case PASSED -> FaultoraCli.EXIT_PASS;
+                case FAILED -> FaultoraCli.EXIT_TEST_FAILURE;
+                case ERROR, CANCELLED -> FaultoraCli.EXIT_RUNNER_FAILURE;
+            };
+
+        } catch (CliException e) {
+            throw e;
+        } catch (Exception e) {
+            System.err.println("Runner error: " + e.getMessage());
+            return FaultoraCli.EXIT_RUNNER_FAILURE;
+        }
+    }
+
+    private ApiCatalog importCatalog(Path openApiPath) throws IOException {
+        String content = Files.readString(openApiPath, StandardCharsets.UTF_8);
+        OpenApiImporter importer = new OpenApiImporter();
+        ImportContext context = new ImportContext(
+                "openapi", Path.of("."), Set.of(), 10, 1_000_000, Map.of());
+        ImportResult result = importer.importSource(content, context);
+
+        if (!result.isSuccess()) {
+            System.err.println("Failed to import OpenAPI document:");
+            result.errors().forEach(e -> System.err.println("  " + e.message()));
+            throw new CliException("OpenAPI import failed", FaultoraCli.EXIT_INVALID_CONFIG);
+        }
+        return result.catalog();
+    }
+
+    private ApiCatalog buildCatalogFromScenario(ScenarioDocument scenario, String targetUrl) {
+        var targetId = new TargetId("default");
+        var target = new TargetDefinition(
+                targetId, "Default", targetUrl,
+                List.of(new ProtocolId("http")), List.of(), Map.of());
+
+        Set<String> operationIds = new LinkedHashSet<>();
+        collectOperationIds(scenario.setup(), operationIds);
+        collectOperationIds(scenario.execute(), operationIds);
+        collectOperationIds(scenario.cleanup(), operationIds);
+
+        List<OperationDefinition> operations = new ArrayList<>();
+        for (String opId : operationIds) {
+            operations.add(new OperationDefinition(
+                    new OperationId(opId), new ProtocolId("http"), targetId,
+                    SafetyClassification.READ_ONLY,
+                    Map.of(), null, Map.of(),
+                    Map.of("method", "GET", "path", "/" + opId)));
+        }
+
+        return new ApiCatalog(
+                new CatalogVersion("v1alpha1"),
+                List.of(target), operations,
+                Map.of(), Map.of(), List.of());
+    }
+
+    private void collectOperationIds(List<dev.faultora.spec.model.ScenarioStep> steps, Set<String> ids) {
+        if (steps == null) return;
+        for (var step : steps) {
+            if (step.operationId() != null) ids.add(step.operationId());
+        }
+    }
+
+    private List<RunEvent> loadEvents(Path journalPath) throws IOException {
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        List<RunEvent> events = new ArrayList<>();
+        try (var reader = Files.newBufferedReader(journalPath)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (!line.isBlank()) {
+                    events.add(mapper.readValue(line, RunEvent.class));
+                }
+            }
+        }
+        return events;
+    }
+
+    private ReportRenderer buildRenderer(String format) {
+        return switch (format) {
+            case "console" -> new ConsoleRenderer();
+            case "json" -> new JsonRenderer();
+            case "junit" -> new JUnitXmlRenderer();
+            case "html" -> new HtmlRenderer();
+            default -> null;
+        };
+    }
+
+    private String requireNext(Iterator<String> it, String flag) {
+        if (!it.hasNext()) {
+            throw new CliException("Option " + flag + " requires a value", FaultoraCli.EXIT_INVALID_CONFIG);
+        }
+        return it.next();
+    }
+
+    private void printHelp() {
+        System.out.println("Usage: faultora test --scenario <path> [options]");
+        System.out.println();
+        System.out.println("Options:");
+        System.out.println("  -s, --scenario <path>      Scenario YAML file (required)");
+        System.out.println("  -o, --openapi <path>       OpenAPI document for catalog");
+        System.out.println("  -t, --target <url>         Target base URL (default: http://localhost:8080)");
+        System.out.println("  -f, --format <formats>     Output formats: console,json,junit,html (default: console)");
+        System.out.println("  --output <dir>             Output directory (default: faultora-results)");
+        System.out.println("  --seed <n>                 Random seed (default: current time)");
+        System.out.println("  -h, --help                 Show this help");
+        System.out.println();
+        System.out.println("Exit codes:");
+        System.out.println("  0  All tests passed");
+        System.out.println("  1  Test failure (assertion failed)");
+        System.out.println("  2  Invalid configuration");
+        System.out.println("  3  Runner failure");
+    }
+}

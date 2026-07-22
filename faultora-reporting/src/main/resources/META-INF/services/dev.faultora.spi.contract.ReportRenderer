@@ -1,0 +1,4 @@
+dev.faultora.reporting.ConsoleRenderer
+dev.faultora.reporting.JsonRenderer
+dev.faultora.reporting.JUnitXmlRenderer
+dev.faultora.reporting.HtmlRenderer
