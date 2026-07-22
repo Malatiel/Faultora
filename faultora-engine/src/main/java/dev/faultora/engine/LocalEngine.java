@@ -11,6 +11,7 @@ import dev.faultora.model.events.RunEvent;
 import dev.faultora.model.identifier.NodeId;
 import dev.faultora.model.identifier.OperationId;
 import dev.faultora.model.identifier.RunId;
+import dev.faultora.model.security.EvidencePolicy;
 import dev.faultora.spec.expression.ExpressionContext;
 import dev.faultora.spec.expression.ExpressionEvaluator;
 import dev.faultora.spi.contract.AssertionProvider;
@@ -24,6 +25,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -84,6 +86,7 @@ public class LocalEngine {
         AtomicInteger passedAssertions = new AtomicInteger();
         AtomicInteger failedAssertions = new AtomicInteger();
         AtomicBoolean hasFailure = new AtomicBoolean(false);
+        AtomicInteger cleanupFailedCount = new AtomicInteger(0);
 
         // Build execution order (topological)
         List<PlanNode> nodes = plan.topologicalOrder();
@@ -149,6 +152,7 @@ public class LocalEngine {
                     cleanupSucceeded++;
                 } else {
                     cleanupFailed++;
+                    cleanupFailedCount.incrementAndGet();
                 }
             }
 
@@ -165,7 +169,7 @@ public class LocalEngine {
         RunResult.Status status;
         if (cancellation.get()) {
             status = RunResult.Status.CANCELLED;
-        } else if (hasFailure.get() || failedAssertions.get() > 0) {
+        } else if (hasFailure.get() || failedAssertions.get() > 0 || cleanupFailedCount.get() > 0) {
             status = RunResult.Status.FAILED;
         } else {
             status = RunResult.Status.PASSED;
@@ -234,7 +238,7 @@ public class LocalEngine {
                         NormalizedError.ErrorCategory.CANCELLED, nodeStart);
             }
 
-            NodeEvidence evidence = new NodeEvidence();
+            NodeEvidence evidence = new NodeEvidence(connectorContext.evidencePolicy());
 
             switch (node) {
                 case PlanNode.OperationNode opNode -> {
@@ -324,10 +328,12 @@ public class LocalEngine {
 
             // Emit evidence captured event
             if (evidence.responseBody().isPresent()) {
+                byte[] bodyBytes = evidence.responseBody().get();
+                String digest = "sha256:" + sha256Hex(bodyBytes);
                 emitEvent(journal, new RunEvent.EvidenceCaptured(
                         "EVIDENCE_CAPTURED", System.currentTimeMillis(),
                         plan.runId(), nodeId, "http-response",
-                        "sha256:evidence", evidence.responseBody().get().length
+                        digest, bodyBytes.length
                 ));
             }
 
@@ -497,6 +503,21 @@ public class LocalEngine {
             journal.append(event);
         } catch (IOException e) {
             LOG.warn("Failed to emit event: {}", e.getMessage());
+        }
+    }
+
+    private static String sha256Hex(byte[] data) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(data);
+            StringBuilder sb = new StringBuilder();
+            for (byte b : hash) {
+                sb.append(String.format("%02x", b & 0xff));
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            LOG.warn("SHA-256 not available: {}", e.getMessage());
+            return "error";
         }
     }
 }

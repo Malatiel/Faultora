@@ -8,6 +8,9 @@ import dev.faultora.spi.contract.Connector;
 import dev.faultora.spi.context.ConnectorContext;
 import dev.faultora.spi.result.OperationResult;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -20,7 +23,8 @@ import java.util.*;
  * HTTP connector implementing the Connector SPI.
  * Executes operations against HTTP targets using Java's built-in HttpClient.
  * Enforces deadlines, captures evidence, normalizes errors, and enforces
- * destination policy to prevent SSRF.
+ * destination policy to prevent SSRF — including DNS resolution and
+ * redirect re-checking.
  */
 public class HttpConnector implements Connector {
 
@@ -29,6 +33,7 @@ public class HttpConnector implements Connector {
     private static final long DEFAULT_CONNECT_TIMEOUT_MS = 5000;
     private static final long DEFAULT_REQUEST_TIMEOUT_MS = 30000;
     private static final long MAX_RESPONSE_BYTES = 10 * 1024 * 1024; // 10 MB
+    private static final int MAX_REDIRECTS = 10;
 
     private final HttpClient client;
     private final DestinationPolicy destinationPolicy;
@@ -41,7 +46,7 @@ public class HttpConnector implements Connector {
         this.destinationPolicy = destinationPolicy;
         this.client = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofMillis(DEFAULT_CONNECT_TIMEOUT_MS))
-                .followRedirects(HttpClient.Redirect.NORMAL)
+                .followRedirects(HttpClient.Redirect.NEVER) // manual redirect handling
                 .build();
     }
 
@@ -59,7 +64,7 @@ public class HttpConnector implements Connector {
 
     @Override
     public PreparedTarget prepare(TargetDefinition target, ConnectorContext context) {
-        // Validate destination before preparing
+        // Validate destination before preparing (includes DNS resolution)
         URI uri = URI.create(target.baseUrl());
         String policyError = destinationPolicy.check(uri);
         if (policyError != null) {
@@ -84,7 +89,7 @@ public class HttpConnector implements Connector {
             String path = (String) operation.protocolMetadata().getOrDefault("path", "/");
             String url = buildUrl(httpTarget.targetDefinition().baseUrl(), path, inputs);
 
-            // Validate the resolved URL against destination policy
+            // Validate the resolved URL against destination policy (includes DNS resolution)
             URI resolvedUri = URI.create(url);
             String policyError = destinationPolicy.check(resolvedUri);
             if (policyError != null) {
@@ -123,36 +128,104 @@ public class HttpConnector implements Connector {
             // Add headers
             addHeaders(requestBuilder, inputs, context);
 
-            // Execute
+            // Execute with manual redirect following
             HttpRequest request = requestBuilder.build();
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            URI currentUri = resolvedUri;
+            HttpResponse<InputStream> response = null;
+            int redirectCount = 0;
+
+            while (true) {
+                response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+
+                int statusCode = response.statusCode();
+                if (statusCode < 300 || statusCode >= 400) {
+                    break; // Not a redirect
+                }
+
+                Optional<String> locationOpt = response.headers().firstValue("location");
+                if (locationOpt.isEmpty()) {
+                    break; // No location header, treat as final
+                }
+
+                // Close redirect response body to free connection
+                try { response.body().close(); } catch (IOException ignored) {}
+
+                redirectCount++;
+                if (redirectCount > MAX_REDIRECTS) {
+                    NormalizedError error = new NormalizedError(
+                            NormalizedError.ErrorCategory.POLICY_VIOLATION,
+                            "TOO_MANY_REDIRECTS",
+                            "Exceeded maximum redirect count (" + MAX_REDIRECTS + ")",
+                            false, Map.of());
+                    return OperationResult.failure(error,
+                            (System.nanoTime() - startTime) / 1_000_000);
+                }
+
+                // Resolve redirect URI
+                URI redirectUri = currentUri.resolve(locationOpt.get());
+                String redirectScheme = redirectUri.getScheme();
+                if (redirectScheme == null ||
+                        (!"http".equals(redirectScheme) && !"https".equals(redirectScheme))) {
+                    NormalizedError error = new NormalizedError(
+                            NormalizedError.ErrorCategory.POLICY_VIOLATION,
+                            "DESTINATION_BLOCKED",
+                            "Redirect to unsupported scheme: " + redirectScheme,
+                            false, Map.of());
+                    return OperationResult.failure(error,
+                            (System.nanoTime() - startTime) / 1_000_000);
+                }
+
+                // Re-check destination policy for each redirect hop (includes DNS resolution)
+                String redirectPolicyError = destinationPolicy.check(redirectUri);
+                if (redirectPolicyError != null) {
+                    NormalizedError error = new NormalizedError(
+                            NormalizedError.ErrorCategory.POLICY_VIOLATION,
+                            "DESTINATION_BLOCKED",
+                            "Redirect destination policy violation: " + redirectPolicyError,
+                            false, Map.of());
+                    return OperationResult.failure(error,
+                            (System.nanoTime() - startTime) / 1_000_000);
+                }
+
+                // Rebuild request for redirect
+                currentUri = redirectUri;
+                requestBuilder = HttpRequest.newBuilder()
+                        .uri(redirectUri)
+                        .timeout(Duration.ofMillis(
+                                context.requestTimeoutMs() > 0 ?
+                                        context.requestTimeoutMs() : DEFAULT_REQUEST_TIMEOUT_MS));
+
+                // Preserve method and body for 307/308; switch to GET for 301/302/303
+                if (statusCode == 307 || statusCode == 308) {
+                    switch (method.toUpperCase()) {
+                        case "GET" -> requestBuilder.GET();
+                        case "DELETE" -> requestBuilder.DELETE();
+                        case "POST" -> requestBuilder.POST(bodyPublisher(body));
+                        case "PUT" -> requestBuilder.PUT(bodyPublisher(body));
+                        case "PATCH" -> requestBuilder.method("PATCH", bodyPublisher(body));
+                        default -> requestBuilder.method(method.toUpperCase(), bodyPublisher(body));
+                    }
+                } else {
+                    requestBuilder.GET();
+                }
+
+                addHeaders(requestBuilder, inputs, context);
+                request = requestBuilder.build();
+            }
 
             long durationNs = System.nanoTime() - startTime;
             long durationMs = durationNs / 1_000_000;
 
-            // Parse response
+            // Parse response — bounded streaming read
             int statusCode = response.statusCode();
-            byte[] responseBytes = response.body() != null ?
-                    response.body().getBytes(StandardCharsets.UTF_8) : new byte[0];
-
-            // Enforce response size limit
-            if (responseBytes.length > maxPayload) {
-                NormalizedError error = new NormalizedError(
-                        NormalizedError.ErrorCategory.POLICY_VIOLATION,
-                        "RESPONSE_TOO_LARGE",
-                        "Response exceeds maximum payload size of " + maxPayload + " bytes",
-                        false,
-                        Map.of("responseBytes", responseBytes.length)
-                );
-                return OperationResult.failure(error, durationMs);
-            }
+            byte[] responseBytes = readBounded(response.body(), maxPayload);
 
             // Parse JSON if possible
             JsonNode responseJson = null;
             String contentType = response.headers().firstValue("content-type").orElse("");
-            if (contentType.contains("json") && response.body() != null) {
+            if (contentType.contains("json") && responseBytes.length > 0) {
                 try {
-                    responseJson = MAPPER.readTree(response.body());
+                    responseJson = MAPPER.readTree(responseBytes);
                 } catch (Exception ignored) {
                     // Not valid JSON
                 }
@@ -168,9 +241,16 @@ public class HttpConnector implements Connector {
 
             return OperationResult.success(
                     statusCode, responseHeaders, responseBytes,
-                    durationMs, Map.of()
-            );
+                    durationMs, Map.of());
 
+        } catch (ResponseTooLargeException e) {
+            long durationMs = (System.nanoTime() - startTime) / 1_000_000;
+            NormalizedError error = new NormalizedError(
+                    NormalizedError.ErrorCategory.POLICY_VIOLATION,
+                    "RESPONSE_TOO_LARGE",
+                    "Response exceeds maximum payload size of " + MAX_RESPONSE_BYTES + " bytes",
+                    false, Map.of());
+            return OperationResult.failure(error, durationMs);
         } catch (java.net.ConnectException e) {
             long durationMs = (System.nanoTime() - startTime) / 1_000_000;
             NormalizedError error = new NormalizedError(
@@ -213,6 +293,31 @@ public class HttpConnector implements Connector {
     @Override
     public void close() {
         // HttpClient doesn't require explicit close in Java 21
+    }
+
+    /**
+     * Read from an input stream with a bounded size limit.
+     * Throws ResponseTooLargeException if the stream exceeds maxBytes.
+     */
+    private byte[] readBounded(InputStream in, long maxBytes) throws IOException, ResponseTooLargeException {
+        try (in) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            long total = 0;
+            int n;
+            while ((n = in.read(buffer)) != -1) {
+                total += n;
+                if (total > maxBytes) {
+                    throw new ResponseTooLargeException();
+                }
+                out.write(buffer, 0, n);
+            }
+            return out.toByteArray();
+        }
+    }
+
+    private static class ResponseTooLargeException extends Exception {
+        ResponseTooLargeException() { super("Response too large"); }
     }
 
     private String buildUrl(String baseUrl, String path, Map<String, Object> inputs) {

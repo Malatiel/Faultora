@@ -41,6 +41,8 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -129,8 +131,8 @@ public class TestCommand implements Command {
                     Map.of("baseUrl", targetUrl));
 
             // 4. Compile plan
-            String scenarioDigest = "sha256:" + Integer.toHexString(scenarioContent.hashCode());
-            String catalogDigest = "sha256:" + Integer.toHexString(catalog.hashCode());
+            String scenarioDigest = "sha256:" + sha256Hex(scenarioContent);
+            String catalogDigest = "sha256:" + sha256Hex(MAPPER.writeValueAsString(catalog));
             RunId runId = new RunId("run-" + seed);
 
             PlanCompiler compiler = new PlanCompiler();
@@ -299,6 +301,22 @@ public class TestCommand implements Command {
             throw new CliException("Option " + flag + " requires a value", FaultoraCli.EXIT_INVALID_CONFIG);
         }
         return it.next();
+    }
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper MAPPER = new com.fasterxml.jackson.databind.ObjectMapper();
+
+    private static String sha256Hex(String input) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (byte b : hash) {
+                sb.append(String.format("%02x", b & 0xff));
+            }
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("SHA-256 not available", e);
+        }
     }
 
     private void printHelp() {

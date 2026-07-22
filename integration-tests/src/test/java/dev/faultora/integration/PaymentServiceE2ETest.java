@@ -86,15 +86,14 @@ class PaymentServiceE2ETest {
                 "--scenario", scenario.toAbsolutePath().toString(),
                 "--openapi", openApi.toAbsolutePath().toString(),
                 "--target", api.baseUrl(),
+                "--allow-private",
                 "--format", "json",
                 "--output", Path.of(System.getProperty("java.io.tmpdir"),
                         "faultora-e2e-pass").toString()
         });
 
-        // Either PASS (0) or TEST_FAILURE (1) is acceptable — the scenario runs
-        // and the exit code is deterministic. If the assertion matches the actual
-        // HTTP response status, it passes; if not, it's a deliberate test failure.
-        assertThat(exit).isIn(FaultoraCli.EXIT_PASS, FaultoraCli.EXIT_TEST_FAILURE);
+        // Happy path must pass — the scenario expects 201 and the API returns 201
+        assertThat(exit).isEqualTo(FaultoraCli.EXIT_PASS);
     }
 
     @Test
@@ -107,6 +106,7 @@ class PaymentServiceE2ETest {
                 "--scenario", scenario.toAbsolutePath().toString(),
                 "--openapi", openApi.toAbsolutePath().toString(),
                 "--target", api.baseUrl(),
+                "--allow-private",
                 "--format", "console",
                 "--output", Path.of(System.getProperty("java.io.tmpdir"),
                         "faultora-e2e-fail").toString()

@@ -3,6 +3,7 @@ package dev.faultora.engine.evidence;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.faultora.model.catalog.NormalizedError;
+import dev.faultora.model.security.EvidencePolicy;
 import dev.faultora.spi.context.EvidenceView;
 
 import java.util.*;
@@ -10,12 +11,14 @@ import java.util.*;
 /**
  * In-memory evidence store for a single node execution.
  * Captures status code, headers, body, duration, and errors.
- * Respects evidence policy (bodies/headers may be omitted).
+ * Respects evidence policy — bodies and headers are omitted when
+ * the policy specifies captureBodies=false / captureHeaders=false.
  */
 public class NodeEvidence implements EvidenceView {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    private final EvidencePolicy evidencePolicy;
     private int statusCode = -1;
     private Map<String, List<String>> headers = Map.of();
     private byte[] body;
@@ -24,15 +27,32 @@ public class NodeEvidence implements EvidenceView {
     private NormalizedError error;
     private final Map<String, Object> protocolEvidence = new LinkedHashMap<>();
 
+    public NodeEvidence() {
+        this(EvidencePolicy.MINIMAL);
+    }
+
+    public NodeEvidence(EvidencePolicy evidencePolicy) {
+        this.evidencePolicy = evidencePolicy != null ? evidencePolicy : EvidencePolicy.MINIMAL;
+    }
+
     public void statusCode(int statusCode) {
         this.statusCode = statusCode;
     }
 
     public void headers(Map<String, List<String>> headers) {
+        if (!evidencePolicy.captureHeaders()) {
+            this.headers = Map.of();
+            return;
+        }
         this.headers = headers != null ? Map.copyOf(headers) : Map.of();
     }
 
     public void body(byte[] body) {
+        if (!evidencePolicy.captureBodies()) {
+            this.body = null;
+            this.responseJson = null;
+            return;
+        }
         this.body = body;
         if (body != null) {
             try {
