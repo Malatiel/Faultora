@@ -9,8 +9,9 @@ execute:
     type: operation
     operationId: create-payment
     inputs:
-      amount: 2500
-      currency: USD
+      body:
+        amount: 2500
+        currency: USD
     timeout: 10s
 
 assertions:

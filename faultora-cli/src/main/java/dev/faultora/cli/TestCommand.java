@@ -4,6 +4,7 @@ import dev.faultora.assertions.core.DurationAssertionProvider;
 import dev.faultora.assertions.core.HeaderAssertionProvider;
 import dev.faultora.assertions.core.JsonPathAssertionProvider;
 import dev.faultora.assertions.core.StatusAssertionProvider;
+import dev.faultora.connector.http.DestinationPolicy;
 import dev.faultora.connector.http.HttpConnector;
 import dev.faultora.engine.LocalEngine;
 import dev.faultora.engine.journal.RunJournal;
@@ -60,6 +61,7 @@ public class TestCommand implements Command {
         List<String> formats = List.of("console");
         Path outputDir = Path.of("faultora-results");
         long seed = System.currentTimeMillis();
+        boolean allowPrivate = false;
 
         Iterator<String> it = args.iterator();
         while (it.hasNext()) {
@@ -71,6 +73,7 @@ public class TestCommand implements Command {
                 case "--format", "-f" -> formats = List.of(requireNext(it, "--format").split(","));
                 case "--output" -> outputDir = Path.of(requireNext(it, "--output"));
                 case "--seed" -> seed = Long.parseLong(requireNext(it, "--seed"));
+                case "--allow-private" -> allowPrivate = true;
                 case "--help", "-h" -> {
                     printHelp();
                     return FaultoraCli.EXIT_PASS;
@@ -146,7 +149,10 @@ public class TestCommand implements Command {
                     .forEach(d -> System.err.println("Warning: " + d.message()));
 
             // 5. Set up connectors and assertion providers
-            Map<String, Connector> connectors = Map.of("http", new HttpConnector());
+            HttpConnector httpConnector = allowPrivate
+                    ? new HttpConnector(DestinationPolicy.permissive())
+                    : new HttpConnector();
+            Map<String, Connector> connectors = Map.of("http", httpConnector);
             Map<String, AssertionProvider> assertionProviders = Map.of(
                     "status", new StatusAssertionProvider(),
                     "duration", new DurationAssertionProvider(),
@@ -305,6 +311,7 @@ public class TestCommand implements Command {
         System.out.println("  -f, --format <formats>     Output formats: console,json,junit,html (default: console)");
         System.out.println("  --output <dir>             Output directory (default: faultora-results)");
         System.out.println("  --seed <n>                 Random seed (default: current time)");
+        System.out.println("  --allow-private            Allow connections to private/local networks");
         System.out.println("  -h, --help                 Show this help");
         System.out.println();
         System.out.println("Exit codes:");
