@@ -19,6 +19,11 @@
             <groupId>dev.faultora</groupId>
             <artifactId>faultora-spi</artifactId>
         </dependency>
+        <!-- JMESPath expression evaluation -->
+        <dependency>
+            <groupId>io.burt</groupId>
+            <artifactId>jmespath-jackson</artifactId>
+        </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
