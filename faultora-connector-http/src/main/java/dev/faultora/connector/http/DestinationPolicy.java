@@ -109,7 +109,7 @@ public final class DestinationPolicy {
 
             // Resolve DNS and classify all resolved addresses.
             // Skip for IP literals — already covered by string-based checks above.
-            // DNS resolution is time-bounded; if it times out, fail open.
+            // DNS resolution is time-bounded; if it times out, fail closed.
             if (!isIpLiteral(host)) {
                 String dnsError = resolveAndClassify(host);
                 if (dnsError != null) {
