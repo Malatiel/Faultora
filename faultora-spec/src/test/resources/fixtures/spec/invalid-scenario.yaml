@@ -1,0 +1,16 @@
+apiVersion: faultora.dev/v1alpha1
+kind: Scenario
+
+metadata:
+  name: invalid-scenario
+
+execute:
+  - id: step-a
+    type: operation
+    operationId: op-a
+    dependsOn:
+      - nonexistent-step
+
+  - id: step-a
+    type: operation
+    operationId: op-b

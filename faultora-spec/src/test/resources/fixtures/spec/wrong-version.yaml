@@ -1,0 +1,2 @@
+apiVersion: wrong-version
+kind: WrongKind

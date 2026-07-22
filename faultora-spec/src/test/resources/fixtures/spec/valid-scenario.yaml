@@ -1,0 +1,54 @@
+apiVersion: faultora.dev/v1alpha1
+kind: Scenario
+
+metadata:
+  name: duplicate-payment
+  description: Test idempotency of payment creation
+  labels:
+    team: payments
+    env: staging
+
+inputs:
+  idempotency-key:
+    type: string
+    description: Unique idempotency key for the payment
+    required: true
+
+setup:
+  - id: create-payment
+    type: operation
+    operationId: create-payment
+    inputs:
+      amount: 100
+      currency: USD
+      Idempotency-Key: "{{inputs.idempotency-key}}"
+    outputAs: firstPayment
+
+execute:
+  - id: duplicate-request
+    type: operation
+    operationId: create-payment
+    inputs:
+      amount: 100
+      currency: USD
+      Idempotency-Key: "{{inputs.idempotency-key}}"
+    outputAs: secondPayment
+
+assertions:
+  - id: same-status
+    assertionType: status
+    params:
+      expected: 200
+    targetStep: duplicate-request
+  - id: same-payment-id
+    assertionType: jsonpath
+    params:
+      path: "$.id"
+      equals: "{{firstPayment.id}}"
+    targetStep: duplicate-request
+    message: Duplicate request should return the same payment ID
+
+cleanup:
+  - id: log-result
+    type: operation
+    operationId: log-cleanup
