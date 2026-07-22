@@ -57,7 +57,7 @@ public class FaultoraCli {
     /**
      * Run the CLI with the given arguments. Returns the exit code.
      */
-    int run(String[] args) {
+    public int run(String[] args) {
         if (args.length == 0) {
             printUsage();
             return EXIT_INVALID_CONFIG;

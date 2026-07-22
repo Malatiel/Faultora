@@ -1,0 +1,39 @@
+apiVersion: faultora.dev/v1alpha1
+kind: Scenario
+
+metadata:
+  name: payment-smoke
+  description: Create a payment and verify the response — should pass all assertions
+  labels:
+    team: payments
+    suite: smoke
+
+execute:
+  - id: create-payment
+    type: operation
+    operationId: create-payment
+    inputs:
+      body:
+        amount: 2500
+        currency: EUR
+
+assertions:
+  - id: create-status
+    assertionType: status
+    targetStep: create-payment
+    params:
+      expected: 201
+    message: POST /payments should return 201
+
+  - id: response-has-id
+    assertionType: jsonpath
+    targetStep: create-payment
+    params:
+      path: "id"
+      exists: true
+    message: Response must contain an id field
+
+cleanup:
+  - id: list-payments
+    type: operation
+    operationId: list-payments

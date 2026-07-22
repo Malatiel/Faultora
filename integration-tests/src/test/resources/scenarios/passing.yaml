@@ -1,0 +1,26 @@
+apiVersion: faultora.dev/v1alpha1
+kind: Scenario
+metadata:
+  name: payment-create-and-verify
+  description: Create a payment and verify it can be retrieved
+
+execute:
+  - id: create-payment
+    type: operation
+    operationId: create-payment
+    inputs:
+      amount: 2500
+      currency: USD
+    timeout: 10s
+
+assertions:
+  - id: assert-create-status
+    assertionType: status
+    targetStep: create-payment
+    params:
+      expected: 201
+
+cleanup:
+  - id: list-payments
+    type: operation
+    operationId: list-payments

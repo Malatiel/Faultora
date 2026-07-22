@@ -1,0 +1,26 @@
+apiVersion: faultora.dev/v1alpha1
+kind: Scenario
+
+metadata:
+  name: payment-expect-wrong-status
+  description: Deliberately fails — expects 400 but the API returns 201
+  labels:
+    team: payments
+    suite: negative
+
+execute:
+  - id: create-payment
+    type: operation
+    operationId: create-payment
+    inputs:
+      body:
+        amount: 100
+        currency: USD
+
+assertions:
+  - id: wrong-status
+    assertionType: status
+    targetStep: create-payment
+    params:
+      expected: 400
+    message: Deliberately expects 400 — will fail because API returns 201

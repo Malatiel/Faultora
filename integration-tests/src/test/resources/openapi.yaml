@@ -1,0 +1,97 @@
+openapi: "3.0.3"
+info:
+  title: Payment Service
+  description: Deterministic example payment API for Faultora end-to-end testing
+  version: "1.0.0"
+servers:
+  - url: http://localhost:{port}
+    variables:
+      port:
+        default: "8080"
+paths:
+  /payments:
+    post:
+      operationId: create-payment
+      summary: Create a new payment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount:
+                  type: integer
+                  description: Payment amount in minor units
+                currency:
+                  type: string
+                  description: ISO 4217 currency code
+                  default: USD
+      responses:
+        "201":
+          description: Payment created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+    get:
+      operationId: list-payments
+      summary: List all payments
+      responses:
+        "200":
+          description: List of payments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Payment"
+  /payments/{paymentId}:
+    get:
+      operationId: get-payment
+      summary: Get a payment by ID
+      parameters:
+        - name: paymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Payment found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+        "404":
+          description: Payment not found
+    delete:
+      operationId: delete-payment
+      summary: Delete a payment
+      parameters:
+        - name: paymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Payment deleted
+        "404":
+          description: Payment not found
+components:
+  schemas:
+    Payment:
+      type: object
+      properties:
+        id:
+          type: string
+        amount:
+          type: integer
+        currency:
+          type: string
+        status:
+          type: string
+        createdAt:
+          type: integer
+          format: int64
