@@ -1,0 +1,103 @@
+{
+  "version": "v1alpha1-abc123",
+  "targets": [
+    {
+      "id": "payment-api",
+      "name": "Payment API",
+      "baseUrl": "https://api.example.com/v1",
+      "protocols": ["http"],
+      "authSchemeIds": ["api-key"],
+      "metadata": {}
+    }
+  ],
+  "operations": [
+    {
+      "id": "create-payment",
+      "protocol": "http",
+      "target": "payment-api",
+      "safety": "MUTATING",
+      "inputs": {
+        "idempotency-key": {
+          "name": "Idempotency-Key",
+          "location": "HEADER",
+          "required": true,
+          "schemaId": null,
+          "defaultValue": null,
+          "metadata": {}
+        }
+      },
+      "requestSchemaId": "payment-request",
+      "outcomes": {
+        "200": "payment-response",
+        "400": "error-response"
+      },
+      "protocolMetadata": {
+        "method": "POST",
+        "path": "/payments"
+      }
+    }
+  ],
+  "schemas": {
+    "payment-request": {
+      "id": "payment-request",
+      "schemaType": "object",
+      "sourcePath": "#/components/schemas/PaymentRequest",
+      "definition": {
+        "type": "object",
+        "required": ["amount", "currency"],
+        "properties": {
+          "amount": {"type": "number"},
+          "currency": {"type": "string"}
+        }
+      }
+    },
+    "payment-response": {
+      "id": "payment-response",
+      "schemaType": "object",
+      "sourcePath": "#/components/schemas/PaymentResponse",
+      "definition": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "status": {"type": "string"}
+        }
+      }
+    },
+    "error-response": {
+      "id": "error-response",
+      "schemaType": "object",
+      "sourcePath": "#/components/schemas/ErrorResponse",
+      "definition": {
+        "type": "object",
+        "properties": {
+          "error": {"type": "string"}
+        }
+      }
+    }
+  },
+  "authentication": {
+    "api-key": {
+      "id": "api-key",
+      "type": "apiKey",
+      "name": "X-API-Key",
+      "location": "header",
+      "metadata": {}
+    }
+  },
+  "workflows": [
+    {
+      "id": "payment-flow",
+      "name": "Payment Flow",
+      "steps": [
+        {
+          "stepId": "create",
+          "operationId": "create-payment",
+          "description": "Create a payment",
+          "dependsOn": [],
+          "metadata": {}
+        }
+      ],
+      "metadata": {}
+    }
+  ]
+}
