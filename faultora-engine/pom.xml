@@ -17,7 +17,15 @@
     <dependencies>
         <dependency>
             <groupId>dev.faultora</groupId>
+            <artifactId>faultora-model</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.faultora</groupId>
             <artifactId>faultora-spi</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.faultora</groupId>
+            <artifactId>faultora-spec</artifactId>
         </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>
