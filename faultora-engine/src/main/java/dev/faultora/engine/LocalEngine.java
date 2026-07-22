@@ -310,10 +310,19 @@ public class LocalEngine {
                     evidence.durationMs(System.currentTimeMillis() - nodeStart);
                 }
                 case PlanNode.CleanupNode cleanupNode -> {
-                    // Execute cleanup operation via connector
+                    // Look up the operation definition from the catalog
+                    dev.faultora.model.catalog.OperationDefinition opDef =
+                            plan.catalog().operations().stream()
+                                    .filter(op -> op.id().equals(cleanupNode.operationId()))
+                                    .findFirst().orElse(null);
+                    if (opDef == null) {
+                        return nodeFailed(nodeId, node,
+                                "Cleanup operation not found in catalog: " + cleanupNode.operationId(),
+                                NormalizedError.ErrorCategory.VALIDATION, nodeStart);
+                    }
                     PlanNode.OperationNode asOp = new PlanNode.OperationNode(
                             cleanupNode.nodeId(), cleanupNode.operationId(),
-                            null, cleanupNode.inputExpressions(), null,
+                            opDef, cleanupNode.inputExpressions(), null,
                             cleanupNode.dependencies(), cleanupNode.safety(),
                             cleanupNode.deadlineMs(), cleanupNode.maxRetries()
                     );
