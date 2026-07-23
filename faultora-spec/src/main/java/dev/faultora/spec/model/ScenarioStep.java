@@ -7,7 +7,7 @@ import java.util.Map;
  * A step in the scenario (setup, execute, or cleanup).
  *
  * @param id          stable step identifier
- * @param type        step type (operation or wait in format version 0.1.0)
+ * @param type        step type (operation or wait in the current format)
  * @param operationId operation to invoke (for operation steps)
  * @param inputs      input expressions
  * @param outputAs    variable name to bind output to

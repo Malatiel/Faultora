@@ -2,7 +2,9 @@
 
 All notable changes to Faultora are documented in this file.
 
-## Unreleased
+## 0.1.1 — 2026-07-23
+
+Maintenance release focused on public documentation and report correctness.
 
 ### Added
 
@@ -22,7 +24,7 @@ All notable changes to Faultora are documented in this file.
 
 ## 0.1.0 — 2026-07-23
 
-First runnable release candidate.
+First runnable technical preview.
 
 ### Added
 

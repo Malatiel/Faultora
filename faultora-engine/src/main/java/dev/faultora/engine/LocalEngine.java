@@ -318,12 +318,12 @@ public class LocalEngine {
                 }
                 case PlanNode.FaultStartNode faultNode -> {
                     return nodeFailed(nodeId, node,
-                            "Fault injection is not supported in 0.1.0",
+                            "Fault injection is not supported in this release",
                             NormalizedError.ErrorCategory.VALIDATION, nodeStart);
                 }
                 case PlanNode.FaultStopNode faultStopNode -> {
                     return nodeFailed(nodeId, node,
-                            "Fault rollback is not supported in 0.1.0",
+                            "Fault rollback is not supported in this release",
                             NormalizedError.ErrorCategory.VALIDATION, nodeStart);
                 }
                 case PlanNode.CleanupNode cleanupNode -> {

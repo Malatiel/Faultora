@@ -150,7 +150,7 @@ public class PlanCompiler {
                 if (step.retry() != null) {
                     if (step.retry().maxAttempts() > 1) {
                         diagnostics.add(PlanDiagnostic.error(phase, stepId,
-                                "Retries are not supported in 0.1.0"));
+                                "Retries are not supported in this release"));
                     } else if (step.retry().maxAttempts() < 1) {
                         diagnostics.add(PlanDiagnostic.error(phase, stepId,
                                 "retry.maxAttempts must be at least 1"));
@@ -192,7 +192,7 @@ public class PlanCompiler {
                 ));
             } else {
                 diagnostics.add(PlanDiagnostic.error(phase, stepId,
-                        "Unsupported step type in 0.1.0: " + step.type()));
+                        "Unsupported step type in this release: " + step.type()));
             }
         }
     }
@@ -205,7 +205,7 @@ public class PlanCompiler {
 
         for (FaultStep step : steps) {
             diagnostics.add(PlanDiagnostic.error(
-                    "faults", step.id(), "Fault injection is not supported in 0.1.0"));
+                    "faults", step.id(), "Fault injection is not supported in this release"));
         }
     }
 

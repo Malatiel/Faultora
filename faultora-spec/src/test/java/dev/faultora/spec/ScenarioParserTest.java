@@ -140,7 +140,7 @@ class ScenarioParserTest {
 
         assertThat(result.errors()).extracting(Diagnostic::message)
                 .contains(
-                        "Unsupported step type in 0.1.0: parallel",
+                        "Unsupported step type in this release: parallel",
                         "Wait step requires a positive duration");
     }
 

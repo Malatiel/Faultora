@@ -336,7 +336,7 @@ class PlanCompilerTest {
 
         assertThat(result.isSuccess()).isFalse();
         assertThat(result.errors()).extracting(PlanDiagnostic::message)
-                .contains("Fault injection is not supported in 0.1.0");
+                .contains("Fault injection is not supported in this release");
     }
 
     @Test
@@ -351,7 +351,7 @@ class PlanCompilerTest {
 
         assertThat(result.isSuccess()).isFalse();
         assertThat(result.errors()).extracting(PlanDiagnostic::message)
-                .contains("Retries are not supported in 0.1.0");
+                .contains("Retries are not supported in this release");
     }
 
     @Test

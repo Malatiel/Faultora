@@ -153,7 +153,7 @@ public class ScenarioValidator {
             String path = section + "." + step.id();
             if (!"operation".equals(type) && !"wait".equals(type)) {
                 diagnostics.add(Diagnostic.error(path + ".type",
-                        "Unsupported step type in 0.1.0: " + type));
+                        "Unsupported step type in this release: " + type));
             }
             if ("wait".equals(type) && !isPositiveDuration(step.timeout())) {
                 diagnostics.add(Diagnostic.error(path + ".timeout",
