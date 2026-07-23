@@ -102,11 +102,17 @@ public class EnvironmentSecretResolver implements SecretResolver {
      */
     static SecretHandle createHandle(String handleId, String value) {
         String redacted = redact(value);
-        // Capture the value as a char[] supplier. The char[] is created on each call
-        // to avoid holding a reference to the original String (which stays in the
-        // String pool). The caller must zero-fill after use.
+        // Capture the value as a char[] supplier. The char[] is created on first call
+        // and zeroed immediately after the defensive copy is made, so the original
+        // secret material does not persist in memory beyond the first access.
+        // The caller must still zero-fill the returned copy after use.
         char[] valueChars = value.toCharArray();
-        return new SecretHandle(handleId, redacted, "env", -1, () -> Arrays.copyOf(valueChars, valueChars.length));
+        return new SecretHandle(handleId, redacted, "env", -1, () -> {
+            if (valueChars == null) return null;
+            char[] copy = Arrays.copyOf(valueChars, valueChars.length);
+            Arrays.fill(valueChars, '\0');
+            return copy;
+        });
     }
 
     /**

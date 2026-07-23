@@ -65,10 +65,17 @@ public class NodeEvidence implements EvidenceView {
             this.responseJson = null;
             return;
         }
-        this.body = body;
-        if (body != null) {
+        // Enforce maxBodyBytes — truncate if the body exceeds the policy limit
+        byte[] effective = body;
+        if (body != null && evidencePolicy.maxBodyBytes() > 0
+                && body.length > evidencePolicy.maxBodyBytes()) {
+            effective = new byte[(int) evidencePolicy.maxBodyBytes()];
+            System.arraycopy(body, 0, effective, 0, effective.length);
+        }
+        this.body = effective;
+        if (effective != null) {
             try {
-                this.responseJson = MAPPER.readTree(body);
+                this.responseJson = MAPPER.readTree(effective);
             } catch (Exception ignored) {
                 this.responseJson = null;
             }

@@ -16,6 +16,7 @@ import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.client5.http.DnsResolver;
 import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder;
 import org.apache.hc.client5.http.io.HttpClientConnectionManager;
+import org.apache.hc.client5.http.protocol.HttpClientContext;
 import org.apache.hc.client5.http.ssl.SSLConnectionSocketFactoryBuilder;
 import org.apache.hc.core5.http.*;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
@@ -116,6 +117,7 @@ public class HttpConnector implements Connector {
 
         RequestConfig requestConfig = RequestConfig.custom()
                 .setConnectionRequestTimeout(Timeout.ofMilliseconds(DEFAULT_CONNECT_TIMEOUT_MS))
+                .setConnectTimeout(Timeout.ofMilliseconds(DEFAULT_CONNECT_TIMEOUT_MS))
                 .setResponseTimeout(Timeout.ofMilliseconds(DEFAULT_REQUEST_TIMEOUT_MS))
                 .setRedirectsEnabled(false) // Manual redirect handling
                 .build();
@@ -191,7 +193,7 @@ public class HttpConnector implements Connector {
             int redirectCount = 0;
 
             while (true) {
-                response = executeWithPinning(request, pinnedAddresses);
+                response = executeWithPinning(request, pinnedAddresses, context);
 
                 int statusCode = response.getCode();
                 if (statusCode < 300 || statusCode >= 400) {
@@ -395,10 +397,13 @@ public class HttpConnector implements Connector {
     }
 
     /**
-     * Execute a request with DNS pinning.
+     * Execute a request with DNS pinning and per-request timeouts.
      * Sets the ThreadLocal pinned addresses before execution and clears them after.
      * The custom DnsResolver in the HttpClient reads from the ThreadLocal to
      * route the connection to the pre-verified IP addresses, preventing DNS rebinding.
+     *
+     * Per-request timeouts from {@link ConnectorContext} override the client defaults
+     * via a per-execution {@link RequestConfig}.
      *
      * For HTTP: the original hostname stays in the URI, so HttpClient derives the
      * correct Host header from it. The connection goes to the pinned IP address.
@@ -408,13 +413,23 @@ public class HttpConnector implements Connector {
      */
     private ClassicHttpResponse executeWithPinning(
             ClassicHttpRequest request,
-            InetAddress[] pinnedAddresses
+            InetAddress[] pinnedAddresses,
+            ConnectorContext context
     ) throws IOException {
         if (pinnedAddresses != null && pinnedAddresses.length > 0) {
             PINNED_ADDRESSES.set(pinnedAddresses);
         }
         try {
-            return client.execute(request);
+            // Build per-request config from ConnectorContext timeouts
+            RequestConfig perRequestConfig = RequestConfig.custom()
+                    .setConnectionRequestTimeout(Timeout.ofMilliseconds(context.connectTimeoutMs()))
+                    .setConnectTimeout(Timeout.ofMilliseconds(context.connectTimeoutMs()))
+                    .setResponseTimeout(Timeout.ofMilliseconds(context.requestTimeoutMs()))
+                    .setRedirectsEnabled(false)
+                    .build();
+            HttpClientContext httpContext = HttpClientContext.create();
+            httpContext.setRequestConfig(perRequestConfig);
+            return client.execute(request, httpContext);
         } finally {
             PINNED_ADDRESSES.remove();
         }
@@ -460,52 +475,48 @@ public class HttpConnector implements Connector {
 
     /**
      * Add headers to the request builder, including auth credentials.
-     * Secret resolution errors are logged and cause auth to be omitted
-     * (fail-closed: the request proceeds without credentials rather than
-     * silently sending an unauthenticated request as if auth succeeded).
+     * When authSecretId is configured but secret resolution fails, throws
+     * an exception to fail the request rather than sending it without credentials.
+     * This is fail-closed: the user explicitly requested authenticated requests,
+     * so proceeding without auth would violate that expectation.
      */
     private void addHeaders(
             ClassicRequestBuilder builder,
             Map<String, Object> inputs,
             ConnectorContext context
-    ) {
+    ) throws IOException {
         // Default content type for bodies
         if (inputs.containsKey("body")) {
             builder.addHeader("Content-Type", "application/json");
         }
         builder.addHeader("Accept", "application/json");
 
-        // Resolve and inject credentials from secret resolver
+        // Resolve and inject credentials from secret resolver.
+        // If authSecretId is configured, auth is mandatory — failure to resolve
+        // the secret fails the entire request (fail-closed).
         Function<String, SecretHandle> secretResolver = context.secretResolver();
         if (secretResolver != null) {
             Object authSecretId = context.config().get("authSecretId");
             if (authSecretId instanceof String secretId && !secretId.isBlank()) {
+                SecretHandle handle = secretResolver.apply(secretId);
+                if (handle == null) {
+                    throw new IOException(
+                            "Secret resolver returned null for: " + secretId);
+                }
+                if (handle.isExpired()) {
+                    throw new IOException(
+                            "Secret handle expired for: " + secretId);
+                }
+                char[] secretValue = handle.secretValue();
+                if (secretValue == null || secretValue.length == 0) {
+                    throw new IOException(
+                            "Secret value is empty for: " + secretId);
+                }
                 try {
-                    SecretHandle handle = secretResolver.apply(secretId);
-                    if (handle == null) {
-                        throw new IllegalStateException(
-                                "Secret resolver returned null for: " + secretId);
-                    }
-                    if (handle.isExpired()) {
-                        throw new IllegalStateException(
-                                "Secret handle expired for: " + secretId);
-                    }
-                    char[] secretValue = handle.secretValue();
-                    if (secretValue == null || secretValue.length == 0) {
-                        throw new IllegalStateException(
-                                "Secret value is empty for: " + secretId);
-                    }
-                    try {
-                        builder.addHeader("Authorization", "Bearer " + new String(secretValue));
-                    } finally {
-                        // Zero the secret value immediately after use
-                        Arrays.fill(secretValue, '\0');
-                    }
-                } catch (Exception e) {
-                    // Fail-closed: log the error and omit auth header.
-                    // The request will proceed without credentials; the server
-                    // will respond with 401/403 which is a clear, observable failure.
-                    LOG.warn("Secret resolution failed for '{}': {}", secretId, e.getMessage());
+                    builder.addHeader("Authorization", "Bearer " + new String(secretValue));
+                } finally {
+                    // Zero the secret value immediately after use
+                    Arrays.fill(secretValue, '\0');
                 }
             }
         }

@@ -245,9 +245,9 @@ class HttpConnectorTest {
     }
 
     @Test
-    void executeWithFailedSecretResolutionDoesNotSwallowError() {
-        // When secret resolution throws, the connector should log the error
-        // and proceed without auth (fail-closed: request goes without credentials)
+    void executeWithFailedSecretResolutionFailsRequest() {
+        // When secret resolution throws, the connector should fail the request
+        // (fail-closed: auth was explicitly configured but cannot be resolved)
         ConnectorContext failContext = new ConnectorContext(
                 EvidencePolicy.MINIMAL,
                 handleId -> { throw new RuntimeException("Secret not found"); },
@@ -267,14 +267,15 @@ class HttpConnectorTest {
                 Map.of(), null, Map.of(),
                 Map.of("method", "GET", "path", "/"));
 
-        // Should not throw — secret failure is logged, request proceeds without auth
+        // Should return failure — secret resolution error fails the request
         OperationResult result = connector.execute(prepared, operation, Map.of(), failContext);
         assertThat(result).isNotNull();
     }
 
     @Test
-    void executeWithNullSecretHandleDoesNotThrow() {
-        // When resolver returns null, the connector should log and proceed
+    void executeWithNullSecretHandleFailsRequest() {
+        // When resolver returns null, the connector should fail the request
+        // (fail-closed: auth was configured but secret is not available)
         ConnectorContext nullContext = new ConnectorContext(
                 EvidencePolicy.MINIMAL,
                 handleId -> null,
@@ -294,6 +295,7 @@ class HttpConnectorTest {
                 Map.of(), null, Map.of(),
                 Map.of("method", "GET", "path", "/"));
 
+        // Should return failure — null secret handle fails the request
         OperationResult result = connector.execute(prepared, operation, Map.of(), nullContext);
         assertThat(result).isNotNull();
     }

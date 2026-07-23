@@ -80,4 +80,50 @@ class NodeEvidenceTest {
 
         assertThat(evidence.responseHeaders()).isEmpty();
     }
+
+    @Test
+    void bodyTruncatedByMaxBodyBytes() {
+        EvidencePolicy policy = new EvidencePolicy(
+                true, false,
+                Set.of(),
+                10, 0, List.of(), Set.of(), "session");
+
+        NodeEvidence evidence = new NodeEvidence(policy);
+        byte[] largeBody = "{\"a\":\"0123456789abcdef\"}".getBytes();
+        evidence.body(largeBody);
+
+        assertThat(evidence.responseBody()).isPresent();
+        assertThat(evidence.responseBody().get().length).isEqualTo(10);
+    }
+
+    @Test
+    void bodyNotTruncatedWhenWithinMaxBodyBytes() {
+        EvidencePolicy policy = new EvidencePolicy(
+                true, false,
+                Set.of(),
+                1000, 0, List.of(), Set.of(), "session");
+
+        NodeEvidence evidence = new NodeEvidence(policy);
+        byte[] smallBody = "{\"a\":1}".getBytes();
+        evidence.body(smallBody);
+
+        assertThat(evidence.responseBody()).isPresent();
+        assertThat(evidence.responseBody().get().length).isEqualTo(smallBody.length);
+    }
+
+    @Test
+    void bodyNotTruncatedWhenMaxBodyBytesZero() {
+        // maxBodyBytes=0 means no limit
+        EvidencePolicy policy = new EvidencePolicy(
+                true, false,
+                Set.of(),
+                0, 0, List.of(), Set.of(), "session");
+
+        NodeEvidence evidence = new NodeEvidence(policy);
+        byte[] body = "{\"a\":\"0123456789\"}".getBytes();
+        evidence.body(body);
+
+        assertThat(evidence.responseBody()).isPresent();
+        assertThat(evidence.responseBody().get().length).isEqualTo(body.length);
+    }
 }
