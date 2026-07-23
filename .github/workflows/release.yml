@@ -13,10 +13,14 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: faultora-odc-database
+      cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
@@ -33,6 +37,19 @@ jobs:
       - name: Build and verify
         run: ./mvnw install -B
 
+      - name: Get UTC date
+        id: date
+        run: echo "value=$(date -u +%Y%m%d)" >> "${GITHUB_OUTPUT}"
+
+      - name: Restore Dependency Check database
+        id: odc-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: .odc-data
+          key: odc-${{ runner.os }}-12.2.2-${{ steps.date.outputs.value }}
+          restore-keys: |
+            odc-${{ runner.os }}-12.2.2-
+
       - name: Dependency vulnerability gate
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
@@ -43,7 +60,17 @@ jobs:
           }
           ./mvnw org.owasp:dependency-check-maven:12.2.2:aggregate \
             -DnvdApiKeyEnvironmentVariable=NVD_API_KEY \
+            -DdataDirectory="${{ github.workspace }}/.odc-data" \
+            -DnvdValidForHours=24 \
+            -DnvdMaxRetryCount=5 \
             -B
+
+      - name: Save Dependency Check database
+        if: success() && steps.odc-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: .odc-data
+          key: odc-${{ runner.os }}-12.2.2-${{ steps.date.outputs.value }}
 
       - name: Generate CycloneDX SBOM
         run: >

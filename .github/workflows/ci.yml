@@ -13,14 +13,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
           cache: 'maven'
       - run: ./mvnw verify -B
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: test-reports
@@ -28,16 +28,33 @@ jobs:
 
   dependency-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: faultora-odc-database
+      cancel-in-progress: false
+    env:
+      NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
           cache: 'maven'
+      - name: Get UTC date
+        if: env.NVD_API_KEY != ''
+        id: date
+        run: echo "value=$(date -u +%Y%m%d)" >> "${GITHUB_OUTPUT}"
+      - name: Restore Dependency Check database
+        if: env.NVD_API_KEY != ''
+        id: odc-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: .odc-data
+          key: odc-${{ runner.os }}-12.2.2-${{ steps.date.outputs.value }}
+          restore-keys: |
+            odc-${{ runner.os }}-12.2.2-
       - name: OWASP Dependency Check
-        env:
-          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: |
           if [ -z "${NVD_API_KEY}" ]; then
             echo "::warning::Skipping OWASP Dependency Check because NVD_API_KEY is not configured"
@@ -46,12 +63,21 @@ jobs:
           ./mvnw install -DskipTests -B
           ./mvnw org.owasp:dependency-check-maven:12.2.2:aggregate \
             -DnvdApiKeyEnvironmentVariable=NVD_API_KEY \
+            -DdataDirectory="${{ github.workspace }}/.odc-data" \
+            -DnvdValidForHours=24 \
+            -DnvdMaxRetryCount=5 \
             -B
+      - name: Save Dependency Check database
+        if: success() && env.NVD_API_KEY != '' && steps.odc-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: .odc-data
+          key: odc-${{ runner.os }}-12.2.2-${{ steps.date.outputs.value }}
 
   secret-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Gitleaks
@@ -62,8 +88,8 @@ jobs:
   format-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
