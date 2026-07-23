@@ -180,6 +180,7 @@ public class TestCommand implements Command {
 
             Files.createDirectories(outputDir);
             Path journalPath = outputDir.resolve("events.ndjson");
+            Files.deleteIfExists(journalPath);
 
             RunResult result;
             try (HttpConnector httpConnector = allowPrivate

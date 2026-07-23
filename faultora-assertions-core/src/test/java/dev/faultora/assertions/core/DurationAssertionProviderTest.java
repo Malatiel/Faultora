@@ -66,6 +66,23 @@ class DurationAssertionProviderTest {
     }
 
     @Test
+    void rangePassesWhenWithinBothBounds() {
+        var evidence = new SimpleEvidence(200, Map.of(), null, null, 150);
+        AssertionResult result = provider.evaluate("duration",
+                Map.of("min", 100, "max", 200), evidence, context);
+        assertThat(result.outcome()).isEqualTo(AssertionResult.Outcome.PASS);
+    }
+
+    @Test
+    void rangeFailsWhenBelowMinimum() {
+        var evidence = new SimpleEvidence(200, Map.of(), null, null, 50);
+        AssertionResult result = provider.evaluate("duration",
+                Map.of("min", 100, "max", 200), evidence, context);
+        assertThat(result.outcome()).isEqualTo(AssertionResult.Outcome.FAIL);
+        assertThat(result.message()).contains("outside range");
+    }
+
+    @Test
     void noParamsIndeterminate() {
         var evidence = new SimpleEvidence(200, Map.of(), null, null, 100);
         AssertionResult result = provider.evaluate("duration",

@@ -7,7 +7,9 @@ import dev.faultora.spi.contract.ReportRenderer;
 import java.io.IOException;
 import java.io.Writer;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Renders run results as a self-contained HTML report.
@@ -27,25 +29,41 @@ public class HtmlRenderer implements ReportRenderer {
         RunEvent.RunCompleted completed = null;
         RunEvent.RunFailed failed = null;
         List<NodeRecord> nodes = new ArrayList<>();
+        Map<String, NodeRecord> nodeIndex = new HashMap<>();
+        Map<String, AssertionRecord> pendingAssertions = new HashMap<>();
 
         for (RunEvent event : events) {
             switch (event) {
                 case RunEvent.RunStarted rs -> started = rs;
                 case RunEvent.RunCompleted rc -> completed = rc;
                 case RunEvent.RunFailed rf -> failed = rf;
-                case RunEvent.NodeCompleted nc -> nodes.add(new NodeRecord(
-                        nc.nodeId().value(), "PASSED", nc.durationMs(),
-                        nc.statusCode(), null, null));
-                case RunEvent.NodeFailed nf -> nodes.add(new NodeRecord(
-                        nf.nodeId().value(), "FAILED", nf.durationMs(),
-                        -1, nf.error(), null));
+                case RunEvent.NodeCompleted nc -> {
+                    String nodeId = nc.nodeId().value();
+                    AssertionRecord assertion = pendingAssertions.remove(nodeId);
+                    String status = assertion != null && !"PASS".equals(assertion.outcome())
+                            ? "FAILED" : "PASSED";
+                    NodeRecord node = new NodeRecord(
+                            nodeId, status, nc.durationMs(), nc.statusCode(), null, null);
+                    applyAssertion(node, assertion);
+                    nodes.add(node);
+                    nodeIndex.put(nodeId, node);
+                }
+                case RunEvent.NodeFailed nf -> {
+                    String nodeId = nf.nodeId().value();
+                    NodeRecord node = new NodeRecord(
+                            nodeId, "FAILED", nf.durationMs(), -1, nf.error(), null);
+                    applyAssertion(node, pendingAssertions.remove(nodeId));
+                    nodes.add(node);
+                    nodeIndex.put(nodeId, node);
+                }
                 case RunEvent.AssertionEvaluated ae -> {
-                    if (!nodes.isEmpty()) {
-                        NodeRecord last = nodes.get(nodes.size() - 1);
-                        if (last.name.equals(ae.nodeId().value())) {
-                            last.assertionOutcome = ae.outcome();
-                            last.assertionMessage = ae.message();
-                        }
+                    String nodeId = ae.nodeId().value();
+                    AssertionRecord assertion = new AssertionRecord(ae.outcome(), ae.message());
+                    NodeRecord node = nodeIndex.get(nodeId);
+                    if (node != null) {
+                        applyAssertion(node, assertion);
+                    } else {
+                        pendingAssertions.put(nodeId, assertion);
                     }
                 }
                 default -> { /* skip */ }
@@ -142,6 +160,19 @@ public class HtmlRenderer implements ReportRenderer {
                 .replace(">", "&gt;")
                 .replace("\"", "&quot;");
     }
+
+    private static void applyAssertion(NodeRecord node, AssertionRecord assertion) {
+        if (assertion == null) {
+            return;
+        }
+        node.assertionOutcome = assertion.outcome();
+        node.assertionMessage = assertion.message();
+        if (!"PASS".equals(assertion.outcome())) {
+            node.status = "FAILED";
+        }
+    }
+
+    private record AssertionRecord(String outcome, String message) {}
 
     private static class NodeRecord {
         final String name;

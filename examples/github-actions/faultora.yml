@@ -1,0 +1,76 @@
+name: Faultora API checks
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  FAULTORA_VERSION: '0.1.0'
+
+jobs:
+  api-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Download Faultora
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_url="https://github.com/Malatiel/Faultora/releases/download/v${FAULTORA_VERSION}"
+          curl --fail --location --retry 3 \
+            --output "faultora-${FAULTORA_VERSION}.jar" \
+            "${release_url}/faultora-${FAULTORA_VERSION}.jar"
+          curl --fail --location --retry 3 \
+            --output SHA256SUMS \
+            "${release_url}/SHA256SUMS"
+          grep " faultora-${FAULTORA_VERSION}.jar$" SHA256SUMS \
+            | sha256sum --check --strict -
+
+      - name: Validate Faultora scenario
+        run: >
+          java -jar "faultora-${FAULTORA_VERSION}.jar"
+          validate
+          --scenario faultora/scenario.yaml
+
+      - name: Run Faultora
+        if: github.event_name != 'pull_request'
+        env:
+          TARGET_URL: ${{ vars.FAULTORA_TARGET_URL }}
+          FAULTORA_SECRET_API: ${{ secrets.FAULTORA_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${TARGET_URL}" || {
+            echo "FAULTORA_TARGET_URL repository variable is required"
+            exit 2
+          }
+          java -jar "faultora-${FAULTORA_VERSION}.jar" test \
+            --scenario faultora/scenario.yaml \
+            --openapi faultora/openapi.yaml \
+            --target "${TARGET_URL}" \
+            --auth-secret-id api \
+            --format console,json,junit,html \
+            --output faultora-results
+
+      - name: Upload Faultora reports
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: faultora-results
+          path: faultora-results/
+          if-no-files-found: warn
+          retention-days: 14

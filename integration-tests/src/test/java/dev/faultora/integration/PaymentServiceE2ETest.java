@@ -6,7 +6,7 @@ import org.junit.jupiter.api.*;
 
 import java.io.IOException;
 import java.io.PrintWriter;
-import java.io.StringWriter;
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -77,9 +77,12 @@ class PaymentServiceE2ETest {
     }
 
     @Test
-    void passingScenarioRunsSuccessfully() {
+    void passingScenarioRunsSuccessfully() throws IOException {
         Path scenario = Path.of("src/test/resources/scenarios/passing.yaml");
         Path openApi = Path.of("src/test/resources/openapi.yaml");
+        Path outputDir = Path.of(System.getProperty("java.io.tmpdir"), "faultora-e2e-pass");
+        Files.createDirectories(outputDir);
+        Files.writeString(outputDir.resolve("events.ndjson"), "{\"stale\":true}\n");
 
         int exit = createCli().run(new String[]{
                 "test",
@@ -87,13 +90,17 @@ class PaymentServiceE2ETest {
                 "--openapi", openApi.toAbsolutePath().toString(),
                 "--target", api.baseUrl(),
                 "--allow-private",
-                "--format", "json",
-                "--output", Path.of(System.getProperty("java.io.tmpdir"),
-                        "faultora-e2e-pass").toString()
+                "--format", "console,json,junit,html",
+                "--output", outputDir.toString()
         });
 
-        // Happy path must pass — the scenario expects 201 and the API returns 201
         assertThat(exit).isEqualTo(FaultoraCli.EXIT_PASS);
+        assertThat(outputDir.resolve("events.ndjson")).exists();
+        assertThat(outputDir.resolve("report.json")).exists();
+        assertThat(outputDir.resolve("report.xml")).exists();
+        assertThat(outputDir.resolve("report.html")).exists();
+        assertThat(Files.readString(outputDir.resolve("events.ndjson")))
+                .doesNotContain("\"stale\":true");
     }
 
     @Test

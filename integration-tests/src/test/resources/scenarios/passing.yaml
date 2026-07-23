@@ -21,6 +21,13 @@ assertions:
     params:
       expected: 201
 
+  - id: assert-response-has-id
+    assertionType: jsonpath
+    targetStep: create-payment
+    params:
+      path: id
+      exists: true
+
 cleanup:
   - id: list-payments
     type: operation

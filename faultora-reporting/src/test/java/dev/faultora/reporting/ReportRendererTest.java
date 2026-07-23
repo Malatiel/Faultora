@@ -45,6 +45,31 @@ class ReportRendererTest {
     }
 
     @Test
+    void consoleRendererAssociatesAssertionBeforeNodeCompletion() throws IOException {
+        List<RunEvent> events = List.of(
+                new RunEvent.RunStarted("RUN_STARTED", 1000, RUN_ID,
+                        "sha256:abc", "sha256:def", 42, Map.of()),
+                new RunEvent.NodeStarted("NODE_STARTED", 1100, RUN_ID,
+                        NODE_1, "assertion", null),
+                new RunEvent.AssertionEvaluated("ASSERTION_EVALUATED", 1200, RUN_ID,
+                        NODE_1, "status", "FAIL", "Expected 201 but got 500"),
+                new RunEvent.NodeCompleted("NODE_COMPLETED", 1300, RUN_ID,
+                        NODE_1, 5, 0, 0),
+                new RunEvent.RunFailed("RUN_FAILED", 1400, RUN_ID,
+                        new NormalizedError(NormalizedError.ErrorCategory.INTERNAL,
+                                "ASSERTION_FAILURES", "1 assertion failed", false, Map.of()),
+                        400)
+        );
+
+        StringWriter out = new StringWriter();
+        new ConsoleRenderer().render(events, out);
+
+        String text = out.toString();
+        assertThat(text).contains("[FAILED] step-1");
+        assertThat(text).contains("Assertion: FAIL — Expected 201 but got 500");
+    }
+
+    @Test
     void junitXmlRendererProducesValidXml() throws IOException {
         StringWriter out = new StringWriter();
         new JUnitXmlRenderer().render(sampleEvents(), out);
@@ -124,6 +149,32 @@ class ReportRendererTest {
         String html = out.toString();
         assertThat(html).contains("&lt;script&gt;");
         assertThat(html).doesNotContain("<script>alert");
+    }
+
+    @Test
+    void htmlRendererAssociatesAssertionBeforeNodeCompletion() throws IOException {
+        List<RunEvent> events = List.of(
+                new RunEvent.RunStarted("RUN_STARTED", 1000, RUN_ID,
+                        "sha256:abc", "sha256:def", 42, Map.of()),
+                new RunEvent.NodeStarted("NODE_STARTED", 1100, RUN_ID,
+                        NODE_1, "assertion", null),
+                new RunEvent.AssertionEvaluated("ASSERTION_EVALUATED", 1200, RUN_ID,
+                        NODE_1, "status", "FAIL", "Expected 201 but got 500"),
+                new RunEvent.NodeCompleted("NODE_COMPLETED", 1300, RUN_ID,
+                        NODE_1, 5, 0, 0),
+                new RunEvent.RunFailed("RUN_FAILED", 1400, RUN_ID,
+                        new NormalizedError(NormalizedError.ErrorCategory.INTERNAL,
+                                "ASSERTION_FAILURES", "1 assertion failed", false, Map.of()),
+                        400)
+        );
+
+        StringWriter out = new StringWriter();
+        new HtmlRenderer().render(events, out);
+
+        String html = out.toString();
+        assertThat(html).contains("<span class=\"badge fail\">FAILED</span>");
+        assertThat(html).contains("<span class=\"badge fail\">FAIL</span>");
+        assertThat(html).contains("Expected 201 but got 500");
     }
 
     @Test

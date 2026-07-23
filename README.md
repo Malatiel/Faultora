@@ -8,7 +8,7 @@ invariants, and produces console, JSON, HTML, and JUnit reports. Execution stays
 inside your infrastructure and does not require a hosted control plane or
 telemetry.
 
-Version 0.1.0 is the first runnable release candidate. It targets local
+Version 0.1.0 is the first runnable technical preview. It targets local
 development and CI use on Java 21.
 
 ## What 0.1.0 includes
@@ -22,7 +22,7 @@ development and CI use on Java 21.
 - console, JSON, HTML, and JUnit reports;
 - SSRF protection with DNS resolution and address pinning;
 - bounded HTTP response streaming;
-- metadata-only evidence capture by default;
+- policy-bounded in-memory evidence for assertions;
 - header filtering, content-type allowlists, body limits, and JSON redaction;
 - manual redirect handling with cross-origin credential stripping.
 
@@ -35,6 +35,30 @@ validation or plan compilation rather than being silently accepted.
 
 - Java 21 or newer;
 - Maven is not required when using the release JAR.
+
+## Install
+
+Download the release JAR and its checksums:
+
+```bash
+FAULTORA_VERSION=0.1.0
+RELEASE_URL="https://github.com/Malatiel/Faultora/releases/download/v${FAULTORA_VERSION}"
+
+curl --fail --location --retry 3 \
+  --output "faultora-${FAULTORA_VERSION}.jar" \
+  "${RELEASE_URL}/faultora-${FAULTORA_VERSION}.jar"
+curl --fail --location --retry 3 \
+  --output SHA256SUMS \
+  "${RELEASE_URL}/SHA256SUMS"
+
+grep " faultora-${FAULTORA_VERSION}.jar$" SHA256SUMS \
+  | sha256sum --check --strict -
+
+java -jar "faultora-${FAULTORA_VERSION}.jar" --version
+```
+
+On macOS, use `shasum -a 256 -c` instead of `sha256sum --check --strict`.
+Every release also includes a CycloneDX SBOM and the Apache 2.0 license.
 
 ## Build
 
@@ -89,6 +113,46 @@ java -jar faultora-cli/target/faultora-0.1.0.jar \
 Private, loopback, and link-local destinations are blocked by default. Use
 `--allow-private` only for an explicitly trusted local test environment.
 
+## Reports
+
+Faultora can write console, JSON, JUnit XML, and self-contained offline HTML
+reports in one run:
+
+```text
+=== Faultora Run Report ===
+--- Nodes ---
+  [PASSED] create-payment (31ms)
+  [PASSED] create-status (1ms)
+         Assertion: PASS — Status 201 matches expected 201
+  [PASSED] response-has-id (1ms)
+         Assertion: PASS — Path 'id' exists: true
+  [PASSED] list-payments (2ms)
+
+Result: PASSED — 4 nodes, 2 passed assertions, 0 failed assertions (35ms)
+```
+
+![Faultora HTML report](docs/assets/html-report.png)
+
+The HTML report has no CDN, remote fonts, scripts, or telemetry and can be
+opened directly from a CI artifact.
+
+## CI integration
+
+A copy-ready GitHub Actions workflow is available at
+[`examples/github-actions/faultora.yml`](examples/github-actions/faultora.yml).
+Copy it to `.github/workflows/faultora.yml` in the project being tested, then:
+
+1. place the scenario at `faultora/scenario.yaml`;
+2. place the OpenAPI document at `faultora/openapi.yaml`;
+3. create the repository variable `FAULTORA_TARGET_URL`;
+4. create the repository secret `FAULTORA_API_TOKEN`.
+
+The example downloads the pinned release and verifies its SHA-256 checksum.
+Pull requests validate the scenario without receiving credentials or contacting
+the target. Main-branch pushes and manual runs execute all report formats and
+upload the results even when an assertion fails. For an unauthenticated API,
+remove `--auth-secret-id api` and `FAULTORA_SECRET_API` from the workflow.
+
 ## Credentials
 
 Faultora accepts a secret handle rather than a token on the command line. A
@@ -127,7 +191,10 @@ The default policy is intentionally restrictive:
 - HTTPS-to-HTTP redirects are rejected;
 - credentials are removed on cross-origin redirects;
 - HTTP responses are read with a hard byte limit;
-- response bodies and headers are not captured unless enabled by policy;
+- response bodies and headers are held in memory only when required by the
+  active evidence policy; the CLI run journal stores evidence digests, not raw
+  response bodies;
+- authentication and cookie headers are filtered from captured evidence;
 - configured redaction fails closed when content cannot be safely processed.
 
 See [Security architecture](docs/SECURITY.md) for the threat model and trust
@@ -138,6 +205,7 @@ advisory flow; do not open a public issue with exploit details.
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Security architecture](docs/SECURITY.md)
+- [Scenario reference](docs/SCENARIO_REFERENCE.md)
 - [Delivery roadmap](docs/ROADMAP.md)
 - [Changelog](CHANGELOG.md)
 

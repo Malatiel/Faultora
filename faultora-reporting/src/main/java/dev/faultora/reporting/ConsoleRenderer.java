@@ -7,7 +7,9 @@ import dev.faultora.spi.contract.ReportRenderer;
 import java.io.IOException;
 import java.io.Writer;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Renders run results as human-readable console output.
@@ -27,24 +29,40 @@ public class ConsoleRenderer implements ReportRenderer {
         RunEvent.RunCompleted completed = null;
         RunEvent.RunFailed failed = null;
         List<NodeSummary> nodes = new ArrayList<>();
+        Map<String, NodeSummary> nodeIndex = new HashMap<>();
+        Map<String, AssertionSummary> pendingAssertions = new HashMap<>();
 
         for (RunEvent event : events) {
             switch (event) {
                 case RunEvent.RunStarted rs -> started = rs;
                 case RunEvent.RunCompleted rc -> completed = rc;
                 case RunEvent.RunFailed rf -> failed = rf;
-                case RunEvent.NodeCompleted nc -> nodes.add(new NodeSummary(
-                        nc.nodeId().value(), "PASSED", nc.durationMs(), null));
-                case RunEvent.NodeFailed nf -> nodes.add(new NodeSummary(
-                        nf.nodeId().value(), "FAILED", nf.durationMs(), nf.error()));
+                case RunEvent.NodeCompleted nc -> {
+                    String nodeId = nc.nodeId().value();
+                    AssertionSummary assertion = pendingAssertions.remove(nodeId);
+                    String status = assertion != null && !"PASS".equals(assertion.outcome())
+                            ? "FAILED" : "PASSED";
+                    NodeSummary node = new NodeSummary(nodeId, status, nc.durationMs(), null);
+                    applyAssertion(node, assertion);
+                    nodes.add(node);
+                    nodeIndex.put(nodeId, node);
+                }
+                case RunEvent.NodeFailed nf -> {
+                    String nodeId = nf.nodeId().value();
+                    NodeSummary node = new NodeSummary(
+                            nodeId, "FAILED", nf.durationMs(), nf.error());
+                    applyAssertion(node, pendingAssertions.remove(nodeId));
+                    nodes.add(node);
+                    nodeIndex.put(nodeId, node);
+                }
                 case RunEvent.AssertionEvaluated ae -> {
-                    // Attach assertion outcome to the last node if matching
-                    if (!nodes.isEmpty()) {
-                        NodeSummary last = nodes.get(nodes.size() - 1);
-                        if (last.name.equals(ae.nodeId().value())) {
-                            last.assertionOutcome = ae.outcome();
-                            last.assertionMessage = ae.message();
-                        }
+                    String nodeId = ae.nodeId().value();
+                    AssertionSummary assertion = new AssertionSummary(ae.outcome(), ae.message());
+                    NodeSummary node = nodeIndex.get(nodeId);
+                    if (node != null) {
+                        applyAssertion(node, assertion);
+                    } else {
+                        pendingAssertions.put(nodeId, assertion);
                     }
                 }
                 default -> { /* skip intermediate events */ }
@@ -89,7 +107,21 @@ public class ConsoleRenderer implements ReportRenderer {
                     failed.error() != null ? failed.error().message() : "unknown",
                     failed.durationMs()));
         }
+        output.flush();
     }
+
+    private static void applyAssertion(NodeSummary node, AssertionSummary assertion) {
+        if (assertion == null) {
+            return;
+        }
+        node.assertionOutcome = assertion.outcome();
+        node.assertionMessage = assertion.message();
+        if (!"PASS".equals(assertion.outcome())) {
+            node.status = "FAILED";
+        }
+    }
+
+    private record AssertionSummary(String outcome, String message) {}
 
     private static class NodeSummary {
         final String name;

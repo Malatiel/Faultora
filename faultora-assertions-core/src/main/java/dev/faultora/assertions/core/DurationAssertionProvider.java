@@ -27,6 +27,20 @@ public class DurationAssertionProvider implements AssertionProvider {
     ) {
         long actualMs = evidence.durationMs();
 
+        // Range check
+        if (params.containsKey("min") && params.containsKey("max")) {
+            long minMs = toLong(params.get("min"));
+            long maxMs = toLong(params.get("max"));
+            if (actualMs >= minMs && actualMs <= maxMs) {
+                return AssertionResult.pass("Duration " + actualMs + "ms is in range [" + minMs + ", " + maxMs + "]");
+            } else {
+                return AssertionResult.fail(
+                        "Duration " + actualMs + "ms is outside range [" + minMs + ", " + maxMs + "]",
+                        Map.of("min", minMs, "max", maxMs, "actual", actualMs)
+                );
+            }
+        }
+
         // Max duration check
         if (params.containsKey("max")) {
             long maxMs = toLong(params.get("max"));
@@ -49,20 +63,6 @@ public class DurationAssertionProvider implements AssertionProvider {
                 return AssertionResult.fail(
                         "Duration " + actualMs + "ms is below minimum of " + minMs + "ms",
                         Map.of("min", minMs, "actual", actualMs)
-                );
-            }
-        }
-
-        // Range check
-        if (params.containsKey("min") && params.containsKey("max")) {
-            long minMs = toLong(params.get("min"));
-            long maxMs = toLong(params.get("max"));
-            if (actualMs >= minMs && actualMs <= maxMs) {
-                return AssertionResult.pass("Duration " + actualMs + "ms is in range [" + minMs + ", " + maxMs + "]");
-            } else {
-                return AssertionResult.fail(
-                        "Duration " + actualMs + "ms is outside range [" + minMs + ", " + maxMs + "]",
-                        Map.of("min", minMs, "max", maxMs, "actual", actualMs)
                 );
             }
         }
