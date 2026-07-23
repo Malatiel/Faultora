@@ -44,7 +44,19 @@ public class NodeEvidence implements EvidenceView {
             this.headers = Map.of();
             return;
         }
-        this.headers = headers != null ? Map.copyOf(headers) : Map.of();
+        if (headers == null || headers.isEmpty()) {
+            this.headers = Map.of();
+            return;
+        }
+        // Filter out headers in the denylist (e.g., authorization, cookie)
+        Map<String, List<String>> filtered = new LinkedHashMap<>();
+        for (Map.Entry<String, List<String>> entry : headers.entrySet()) {
+            String key = entry.getKey();
+            if (key != null && !evidencePolicy.headerDenylist().contains(key.toLowerCase())) {
+                filtered.put(key, List.copyOf(entry.getValue()));
+            }
+        }
+        this.headers = Map.copyOf(filtered);
     }
 
     public void body(byte[] body) {

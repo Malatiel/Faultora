@@ -9,27 +9,48 @@ import dev.faultora.spi.contract.Connector;
 import dev.faultora.spi.context.ConnectorContext;
 import dev.faultora.spi.result.OperationResult;
 
-import java.io.ByteArrayOutputStream;
+import org.apache.hc.client5.http.classic.methods.*;
+import org.apache.hc.client5.http.config.RequestConfig;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
+import org.apache.hc.client5.http.impl.classic.HttpClients;
+import org.apache.hc.client5.http.DnsResolver;
+import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder;
+import org.apache.hc.client5.http.io.HttpClientConnectionManager;
+import org.apache.hc.client5.http.ssl.SSLConnectionSocketFactoryBuilder;
+import org.apache.hc.core5.http.*;
+import org.apache.hc.core5.http.io.entity.EntityUtils;
+import org.apache.hc.core5.http.io.entity.StringEntity;
+import org.apache.hc.core5.http.io.support.ClassicRequestBuilder;
+import org.apache.hc.core5.util.Timeout;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.*;
 import java.util.function.Function;
 
 /**
  * HTTP connector implementing the Connector SPI.
- * Executes operations against HTTP targets using Java's built-in HttpClient.
- * Enforces deadlines, captures evidence, normalizes errors, and enforces
- * destination policy to prevent SSRF — including DNS resolution,
- * redirect re-checking, and DNS rebinding pinning.
+ * Executes operations against HTTP targets using Apache HttpClient 5.
+ * <p>
+ * DNS pinning uses a custom {@code DnsResolver} backed by a {@code ThreadLocal}
+ * to route each connection to a pre-verified IP address. This prevents DNS
+ * rebinding attacks for both HTTP and HTTPS targets. The original hostname is
+ * preserved in the request URI so that:
+ * <ul>
+ *   <li>HTTP: the {@code Host} header is derived from the URI (virtual hosting)</li>
+ *   <li>HTTPS: TLS SNI uses the hostname for certificate verification</li>
+ * </ul>
+ * Redirect handling compares full origin (scheme + host + port) to detect
+ * HTTPS→HTTP downgrades and cross-domain redirects, stripping sensitive
+ * headers (including {@code Authorization}) when the origin changes.
  */
 public class HttpConnector implements Connector {
+
+    private static final Logger LOG = LoggerFactory.getLogger(HttpConnector.class);
 
     private static final ProtocolId PROTOCOL = new ProtocolId("http");
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -39,15 +60,22 @@ public class HttpConnector implements Connector {
     private static final int MAX_REDIRECTS = 10;
 
     /**
-     * Headers that must not be forwarded to a different host on redirect.
-     * Prevents credential leakage across domain boundaries.
+     * Headers that must not be forwarded to a different origin on redirect.
+     * Prevents credential leakage across scheme/host/port boundaries.
      */
     private static final Set<String> SENSITIVE_HEADERS = Set.of(
             "authorization", "cookie", "proxy-authorization",
             "www-authenticate", "x-api-key"
     );
 
-    private final HttpClient client;
+    /**
+     * Thread-local pinned addresses for DNS rebinding prevention.
+     * Set before each request execution and cleared after.
+     * The DnsResolver reads from this to return pre-verified addresses.
+     */
+    private static final ThreadLocal<InetAddress[]> PINNED_ADDRESSES = new ThreadLocal<>();
+
+    private final CloseableHttpClient client;
     private final DestinationPolicy destinationPolicy;
 
     public HttpConnector() {
@@ -56,9 +84,45 @@ public class HttpConnector implements Connector {
 
     public HttpConnector(DestinationPolicy destinationPolicy) {
         this.destinationPolicy = destinationPolicy;
-        this.client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofMillis(DEFAULT_CONNECT_TIMEOUT_MS))
-                .followRedirects(HttpClient.Redirect.NEVER) // manual redirect handling
+        this.client = createClient();
+    }
+
+    /**
+     * Create an Apache HttpClient 5 with a custom DnsResolver that returns
+     * pinned addresses from the ThreadLocal. When no addresses are pinned
+     * (e.g., for non-pinned requests), falls back to system DNS resolution.
+     */
+    private static CloseableHttpClient createClient() {
+        HttpClientConnectionManager connManager = PoolingHttpClientConnectionManagerBuilder.create()
+                .setSSLSocketFactory(SSLConnectionSocketFactoryBuilder.create()
+                        .build())
+                .setDnsResolver(new DnsResolver() {
+                    @Override
+                    public InetAddress[] resolve(String host) throws java.net.UnknownHostException {
+                        InetAddress[] pinned = PINNED_ADDRESSES.get();
+                        if (pinned != null && pinned.length > 0) {
+                            return pinned;
+                        }
+                        return InetAddress.getAllByName(host);
+                    }
+
+                    @Override
+                    public String resolveCanonicalHostname(String host) throws java.net.UnknownHostException {
+                        InetAddress[] addresses = resolve(host);
+                        return addresses.length > 0 ? addresses[0].getCanonicalHostName() : host;
+                    }
+                })
+                .build();
+
+        RequestConfig requestConfig = RequestConfig.custom()
+                .setConnectionRequestTimeout(Timeout.ofMilliseconds(DEFAULT_CONNECT_TIMEOUT_MS))
+                .setResponseTimeout(Timeout.ofMilliseconds(DEFAULT_REQUEST_TIMEOUT_MS))
+                .setRedirectsEnabled(false) // Manual redirect handling
+                .build();
+
+        return HttpClients.custom()
+                .setConnectionManager(connManager)
+                .setDefaultRequestConfig(requestConfig)
                 .build();
     }
 
@@ -76,7 +140,6 @@ public class HttpConnector implements Connector {
 
     @Override
     public PreparedTarget prepare(TargetDefinition target, ConnectorContext context) {
-        // Validate destination before preparing (includes DNS resolution + pinning)
         URI uri = URI.create(target.baseUrl());
         DestinationPolicy.CheckResult result = destinationPolicy.check(uri);
         if (!result.isAllowed()) {
@@ -115,50 +178,35 @@ public class HttpConnector implements Connector {
                 return OperationResult.failure(error, 0);
             }
 
-            // Enforce payload size limits (use config or default)
+            // Enforce payload size limits
             long maxPayload = MAX_RESPONSE_BYTES;
 
-            // Build the request with DNS pinning
-            HttpRequest.Builder requestBuilder = buildPinnedRequest(
-                    resolvedUri, policyResult, context);
-
-            // Set method and body
-            String body = buildBody(inputs);
-            switch (method.toUpperCase()) {
-                case "GET" -> requestBuilder.GET();
-                case "DELETE" -> requestBuilder.DELETE();
-                case "POST" -> requestBuilder.POST(bodyPublisher(body));
-                case "PUT" -> requestBuilder.PUT(bodyPublisher(body));
-                case "PATCH" -> requestBuilder.method("PATCH", bodyPublisher(body));
-                case "HEAD" -> requestBuilder.method("HEAD", HttpRequest.BodyPublishers.noBody());
-                default -> requestBuilder.method(method.toUpperCase(), bodyPublisher(body));
-            }
-
-            // Add headers
-            addHeaders(requestBuilder, inputs, context);
+            // Build the ClassicHttpRequest with DNS pinning
+            InetAddress[] pinnedAddresses = extractPinnedAddresses(policyResult);
+            ClassicHttpRequest request = buildRequest(method, resolvedUri, pinnedAddresses, inputs, context);
 
             // Execute with manual redirect following
-            HttpRequest request = requestBuilder.build();
             URI currentUri = resolvedUri;
-            String currentHost = resolvedUri.getHost();
-            HttpResponse<InputStream> response = null;
+            ClassicHttpResponse response = null;
             int redirectCount = 0;
 
             while (true) {
-                response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+                response = executeWithPinning(request, pinnedAddresses);
 
-                int statusCode = response.statusCode();
+                int statusCode = response.getCode();
                 if (statusCode < 300 || statusCode >= 400) {
                     break; // Not a redirect
                 }
 
-                Optional<String> locationOpt = response.headers().firstValue("location");
-                if (locationOpt.isEmpty()) {
+                Header locationHeader = response.getFirstHeader("location");
+                if (locationHeader == null) {
                     break; // No location header, treat as final
                 }
 
                 // Close redirect response body to free connection
-                try { response.body().close(); } catch (IOException ignored) {}
+                try {
+                    EntityUtils.consume(response.getEntity());
+                } catch (IOException ignored) {}
 
                 redirectCount++;
                 if (redirectCount > MAX_REDIRECTS) {
@@ -172,7 +220,7 @@ public class HttpConnector implements Connector {
                 }
 
                 // Resolve redirect URI
-                URI redirectUri = currentUri.resolve(locationOpt.get());
+                URI redirectUri = currentUri.resolve(locationHeader.getValue());
                 String redirectScheme = redirectUri.getScheme();
                 if (redirectScheme == null ||
                         (!"http".equals(redirectScheme) && !"https".equals(redirectScheme))) {
@@ -185,7 +233,7 @@ public class HttpConnector implements Connector {
                             (System.nanoTime() - startTime) / 1_000_000);
                 }
 
-                // Re-check destination policy for each redirect hop (includes DNS pinning)
+                // Re-check destination policy for each redirect hop
                 DestinationPolicy.CheckResult redirectResult = destinationPolicy.check(redirectUri);
                 if (!redirectResult.isAllowed()) {
                     NormalizedError error = new NormalizedError(
@@ -197,51 +245,70 @@ public class HttpConnector implements Connector {
                             (System.nanoTime() - startTime) / 1_000_000);
                 }
 
-                // Determine if this is a cross-domain redirect
-                String redirectHost = redirectUri.getHost();
-                boolean crossDomain = !Objects.equals(
-                        currentHost.toLowerCase(), redirectHost.toLowerCase());
+                // Check for HTTPS→HTTP downgrade — must block credential forwarding
+                boolean schemeDowngrade = "https".equals(currentUri.getScheme())
+                        && "http".equals(redirectScheme);
 
-                // Rebuild request for redirect with DNS pinning
-                currentUri = redirectUri;
-                currentHost = redirectHost;
-                requestBuilder = buildPinnedRequest(redirectUri, redirectResult, context);
+                // Determine if this is a cross-origin redirect (scheme + host + port)
+                boolean crossOrigin = !originEquals(currentUri, redirectUri);
 
-                // Preserve method and body for 307/308; switch to GET for 301/302/303
+                // Block HTTPS→HTTP downgrade entirely (redirect itself is rejected)
+                if (schemeDowngrade) {
+                    NormalizedError error = new NormalizedError(
+                            NormalizedError.ErrorCategory.POLICY_VIOLATION,
+                            "INSECURE_REDIRECT",
+                            "HTTPS→HTTP downgrade blocked: " + currentUri + " → " + redirectUri,
+                            false, Map.of());
+                    return OperationResult.failure(error,
+                            (System.nanoTime() - startTime) / 1_000_000);
+                }
+
+                // Build redirect request with DNS pinning
+                pinnedAddresses = extractPinnedAddresses(redirectResult);
+                String redirectMethod;
                 if (statusCode == 307 || statusCode == 308) {
-                    switch (method.toUpperCase()) {
-                        case "GET" -> requestBuilder.GET();
-                        case "DELETE" -> requestBuilder.DELETE();
-                        case "POST" -> requestBuilder.POST(bodyPublisher(body));
-                        case "PUT" -> requestBuilder.PUT(bodyPublisher(body));
-                        case "PATCH" -> requestBuilder.method("PATCH", bodyPublisher(body));
-                        default -> requestBuilder.method(method.toUpperCase(), bodyPublisher(body));
-                    }
+                    redirectMethod = method;
                 } else {
-                    requestBuilder.GET();
+                    redirectMethod = "GET";
+                }
+                request = buildRequest(redirectMethod, redirectUri, pinnedAddresses, inputs, context);
+
+                // Strip sensitive headers on cross-origin redirect
+                if (crossOrigin) {
+                    stripSensitiveHeaders(request);
                 }
 
-                addHeaders(requestBuilder, inputs, context);
-
-                // Strip sensitive headers on cross-domain redirect to prevent
-                // credential leakage to third-party hosts
-                if (crossDomain) {
-                    stripSensitiveHeaders(requestBuilder);
-                }
-
-                request = requestBuilder.build();
+                currentUri = redirectUri;
             }
 
-            long durationNs = System.nanoTime() - startTime;
-            long durationMs = durationNs / 1_000_000;
+            long durationMs = (System.nanoTime() - startTime) / 1_000_000;
 
-            // Parse response — bounded streaming read
-            int statusCode = response.statusCode();
-            byte[] responseBytes = readBounded(response.body(), maxPayload);
+            // Parse response
+            int statusCode = response.getCode();
+            HttpEntity entity = response.getEntity();
+            byte[] responseBytes = (entity != null)
+                    ? EntityUtils.toByteArray(entity)
+                    : new byte[0];
+            EntityUtils.consumeQuietly(entity);
+
+            // Enforce response size limit
+            if (responseBytes.length > maxPayload) {
+                NormalizedError error = new NormalizedError(
+                        NormalizedError.ErrorCategory.POLICY_VIOLATION,
+                        "RESPONSE_TOO_LARGE",
+                        "Response exceeds maximum payload size of " + maxPayload + " bytes",
+                        false, Map.of());
+                return OperationResult.failure(error,
+                        (System.nanoTime() - startTime) / 1_000_000);
+            }
 
             // Parse JSON if possible
             JsonNode responseJson = null;
-            String contentType = response.headers().firstValue("content-type").orElse("");
+            String contentType = "";
+            Header contentTypeHeader = response.getFirstHeader("content-type");
+            if (contentTypeHeader != null) {
+                contentType = contentTypeHeader.getValue();
+            }
             if (contentType.contains("json") && responseBytes.length > 0) {
                 try {
                     responseJson = MAPPER.readTree(responseBytes);
@@ -252,31 +319,23 @@ public class HttpConnector implements Connector {
 
             // Build response headers map
             Map<String, List<String>> responseHeaders = new LinkedHashMap<>();
-            response.headers().map().forEach((key, values) -> {
-                if (key != null) {
-                    responseHeaders.put(key.toLowerCase(), values);
-                }
-            });
+            for (Header h : response.getHeaders()) {
+                String key = h.getName().toLowerCase();
+                responseHeaders.computeIfAbsent(key, k -> new ArrayList<>()).add(h.getValue());
+            }
 
             return OperationResult.success(
                     statusCode, responseHeaders, responseBytes,
                     durationMs, Map.of());
 
-        } catch (ResponseTooLargeException e) {
-            long durationMs = (System.nanoTime() - startTime) / 1_000_000;
-            NormalizedError error = new NormalizedError(
-                    NormalizedError.ErrorCategory.POLICY_VIOLATION,
-                    "RESPONSE_TOO_LARGE",
-                    "Response exceeds maximum payload size of " + MAX_RESPONSE_BYTES + " bytes",
-                    false, Map.of());
-            return OperationResult.failure(error, durationMs);
         } catch (java.net.ConnectException e) {
             long durationMs = (System.nanoTime() - startTime) / 1_000_000;
             NormalizedError error = new NormalizedError(
                     NormalizedError.ErrorCategory.NETWORK, "CONNECTION_REFUSED",
                     "Connection refused: " + e.getMessage(), true, Map.of());
             return OperationResult.failure(error, durationMs);
-        } catch (java.net.http.HttpTimeoutException e) {
+        } catch (org.apache.hc.client5.http.ConnectTimeoutException
+                 | org.apache.hc.core5.http.ConnectionRequestTimeoutException e) {
             long durationMs = (System.nanoTime() - startTime) / 1_000_000;
             NormalizedError error = new NormalizedError(
                     NormalizedError.ErrorCategory.TIMEOUT, "REQUEST_TIMEOUT",
@@ -301,6 +360,9 @@ public class HttpConnector implements Connector {
                     NormalizedError.ErrorCategory.INTERNAL, "EXECUTION_ERROR",
                     "Execution error: " + e.getMessage(), false, Map.of());
             return OperationResult.failure(error, durationMs);
+        } finally {
+            // Always clear pinned addresses from ThreadLocal to prevent leaks
+            PINNED_ADDRESSES.remove();
         }
     }
 
@@ -311,146 +373,205 @@ public class HttpConnector implements Connector {
 
     @Override
     public void close() {
-        // HttpClient doesn't require explicit close in Java 21
+        try {
+            client.close();
+        } catch (IOException e) {
+            LOG.warn("Failed to close HTTP client: {}", e.getMessage());
+        }
+    }
+
+    // ---- DNS Pinning ----
+
+    /**
+     * Extract pinned addresses from a policy check result.
+     * Returns null if no addresses are available (e.g., blocked result).
+     */
+    private static InetAddress[] extractPinnedAddresses(DestinationPolicy.CheckResult result) {
+        if (result instanceof DestinationPolicy.CheckResult.Allowed a
+                && a.resolvedAddresses() != null && a.resolvedAddresses().length > 0) {
+            return a.resolvedAddresses();
+        }
+        return null;
     }
 
     /**
-     * Build an HttpRequest.Builder with DNS pinning.
-     * For HTTP requests, replaces the hostname with the resolved IP address
-     * and sets the Host header to the original hostname. This prevents DNS
-     * rebinding by ensuring the connection goes to the pre-verified address.
-     * For HTTPS, keeps the hostname in the URI (TLS cert verification provides
-     * rebinding protection) but still uses the verified addresses.
+     * Execute a request with DNS pinning.
+     * Sets the ThreadLocal pinned addresses before execution and clears them after.
+     * The custom DnsResolver in the HttpClient reads from the ThreadLocal to
+     * route the connection to the pre-verified IP addresses, preventing DNS rebinding.
+     *
+     * For HTTP: the original hostname stays in the URI, so HttpClient derives the
+     * correct Host header from it. The connection goes to the pinned IP address.
+     *
+     * For HTTPS: the original hostname stays in the URI for TLS SNI and certificate
+     * verification. The connection goes to the pinned IP address.
      */
-    private HttpRequest.Builder buildPinnedRequest(
+    private ClassicHttpResponse executeWithPinning(
+            ClassicHttpRequest request,
+            InetAddress[] pinnedAddresses
+    ) throws IOException {
+        if (pinnedAddresses != null && pinnedAddresses.length > 0) {
+            PINNED_ADDRESSES.set(pinnedAddresses);
+        }
+        try {
+            return client.execute(request);
+        } finally {
+            PINNED_ADDRESSES.remove();
+        }
+    }
+
+    // ---- Request Building ----
+
+    /**
+     * Build a ClassicHttpRequest with DNS pinning awareness.
+     * The original hostname is preserved in the URI for Host header (HTTP)
+     * and TLS SNI (HTTPS). The DnsResolver handles routing to the pinned IP.
+     */
+    private ClassicHttpRequest buildRequest(
+            String method,
             URI uri,
-            DestinationPolicy.CheckResult checkResult,
+            InetAddress[] pinnedAddresses,
+            Map<String, Object> inputs,
+            ConnectorContext context
+    ) throws IOException {
+        // Create the URI with original hostname (for Host header / SNI)
+        String uriString = uri.toString();
+
+        ClassicRequestBuilder builder = ClassicRequestBuilder.create(method.toUpperCase())
+                .setUri(uriString);
+
+        // Set method and body
+        String body = buildBody(inputs);
+        switch (method.toUpperCase()) {
+            case "GET" -> {}
+            case "DELETE" -> {}
+            case "POST" -> builder.setEntity(bodyEntity(body));
+            case "PUT" -> builder.setEntity(bodyEntity(body));
+            case "PATCH" -> builder.setEntity(bodyEntity(body));
+            case "HEAD" -> {}
+            default -> builder.setEntity(bodyEntity(body));
+        }
+
+        // Add headers
+        addHeaders(builder, inputs, context);
+
+        return builder.build();
+    }
+
+    /**
+     * Add headers to the request builder, including auth credentials.
+     * Secret resolution errors are logged and cause auth to be omitted
+     * (fail-closed: the request proceeds without credentials rather than
+     * silently sending an unauthenticated request as if auth succeeded).
+     */
+    private void addHeaders(
+            ClassicRequestBuilder builder,
+            Map<String, Object> inputs,
             ConnectorContext context
     ) {
-        InetAddress[] resolved = checkResult instanceof DestinationPolicy.CheckResult.Allowed a
-                ? a.resolvedAddresses() : null;
-        URI pinnedUri = uri;
-
-        // For HTTP (not HTTPS), pin DNS by using the resolved IP in the URI.
-        // Prefer IPv4 addresses — most servers bind to IPv4; connecting to IPv6
-        // when the server only listens on IPv4 causes a connection failure.
-        // Only pin when we have verified addresses from a non-permissive check.
-        // Permissive mode (allowPrivate=true) may return addresses that don't match
-        // the actual server binding (e.g., IPv6 vs IPv4), causing connection failures.
-        if (resolved != null && resolved.length > 0 && "http".equals(uri.getScheme())
-                && isNonLoopbackAddress(resolved)) {
-            InetAddress addr = selectPreferredAddress(resolved);
-            String ip = addr.getHostAddress();
-            try {
-                // Multi-argument URI constructor handles IPv6 bracket notation
-                pinnedUri = new URI(
-                        uri.getScheme(), uri.getUserInfo(), ip,
-                        uri.getPort(), uri.getPath(),
-                        uri.getQuery(), uri.getFragment());
-            } catch (java.net.URISyntaxException e) {
-                // Fallback to original URI if pinning fails
-                pinnedUri = uri;
-            }
+        // Default content type for bodies
+        if (inputs.containsKey("body")) {
+            builder.addHeader("Content-Type", "application/json");
         }
+        builder.addHeader("Accept", "application/json");
 
-        HttpRequest.Builder builder = HttpRequest.newBuilder()
-                .uri(pinnedUri)
-                .timeout(Duration.ofMillis(
-                        context.requestTimeoutMs() > 0 ?
-                                context.requestTimeoutMs() : DEFAULT_REQUEST_TIMEOUT_MS));
-
-        // Set Host header for HTTP pinned requests (virtual hosting)
-        if (!pinnedUri.equals(uri) && "http".equals(uri.getScheme())) {
-            String hostHeader = uri.getHost();
-            if (uri.getPort() > 0) {
-                hostHeader += ":" + uri.getPort();
-            }
-            builder.header("Host", hostHeader);
-        }
-
-        return builder;
-    }
-
-    /**
-     * Select the preferred address for DNS pinning.
-     * Prefers IPv4 addresses since most servers bind to IPv4.
-     * Falls back to the first address if no IPv4 is available.
-     */
-    private static InetAddress selectPreferredAddress(InetAddress[] addresses) {
-        for (InetAddress addr : addresses) {
-            if (addr.getAddress().length == 4) {
-                return addr; // IPv4
-            }
-        }
-        return addresses[0]; // Fallback to first (likely IPv6)
-    }
-
-    /**
-     * Check if any of the resolved addresses are non-loopback.
-     * DNS pinning is only useful for non-loopback addresses to prevent DNS rebinding.
-     * For loopback addresses (localhost), pinning can cause connection failures
-     * due to IPv4/IPv6 mismatch.
-     */
-    private static boolean isNonLoopbackAddress(InetAddress[] addresses) {
-        for (InetAddress addr : addresses) {
-            if (!addr.isLoopbackAddress()) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Strip sensitive headers from a request builder.
-     * Called on cross-domain redirects to prevent credential leakage.
-     */
-    private void stripSensitiveHeaders(HttpRequest.Builder builder) {
-        // We can't selectively remove headers from HttpRequest.Builder,
-        // so we rebuild. The caller must re-add non-sensitive headers after this call.
-        // This is handled by the redirect flow: addHeaders() is called before this method,
-        // and sensitive headers are filtered there.
-        // For now, we use a reflective approach or simply re-add headers with filtering.
-        //
-        // Actually, since Java's HttpRequest.Builder doesn't support removing headers,
-        // the approach is to NOT add sensitive headers before checking cross-domain.
-        // The addHeaders method already adds all user headers.
-        // We need to ensure that on cross-domain redirect, sensitive headers are not re-added.
-        //
-        // The fix is in the redirect flow: after addHeaders(), call this method which
-        // effectively overwrites sensitive headers with empty values.
-        // In Java 21 HttpClient, setting a header again replaces it.
-        // Setting to empty string is the closest to "removal".
-        for (String header : SENSITIVE_HEADERS) {
-            // Overwrite with empty — HttpClient will send empty header which is
-            // better than sending the actual credential
-            builder.setHeader(header, "");
-        }
-    }
-
-    /**
-     * Read from an input stream with a bounded size limit.
-     * Throws ResponseTooLargeException if the stream exceeds maxBytes.
-     */
-    private byte[] readBounded(InputStream in, long maxBytes) throws IOException, ResponseTooLargeException {
-        try (in) {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            byte[] buffer = new byte[8192];
-            long total = 0;
-            int n;
-            while ((n = in.read(buffer)) != -1) {
-                total += n;
-                if (total > maxBytes) {
-                    throw new ResponseTooLargeException();
+        // Resolve and inject credentials from secret resolver
+        Function<String, SecretHandle> secretResolver = context.secretResolver();
+        if (secretResolver != null) {
+            Object authSecretId = context.config().get("authSecretId");
+            if (authSecretId instanceof String secretId && !secretId.isBlank()) {
+                try {
+                    SecretHandle handle = secretResolver.apply(secretId);
+                    if (handle == null) {
+                        throw new IllegalStateException(
+                                "Secret resolver returned null for: " + secretId);
+                    }
+                    if (handle.isExpired()) {
+                        throw new IllegalStateException(
+                                "Secret handle expired for: " + secretId);
+                    }
+                    char[] secretValue = handle.secretValue();
+                    if (secretValue == null || secretValue.length == 0) {
+                        throw new IllegalStateException(
+                                "Secret value is empty for: " + secretId);
+                    }
+                    try {
+                        builder.addHeader("Authorization", "Bearer " + new String(secretValue));
+                    } finally {
+                        // Zero the secret value immediately after use
+                        Arrays.fill(secretValue, '\0');
+                    }
+                } catch (Exception e) {
+                    // Fail-closed: log the error and omit auth header.
+                    // The request will proceed without credentials; the server
+                    // will respond with 401/403 which is a clear, observable failure.
+                    LOG.warn("Secret resolution failed for '{}': {}", secretId, e.getMessage());
                 }
-                out.write(buffer, 0, n);
             }
-            return out.toByteArray();
+        }
+
+        // Add user-specified headers
+        Object headers = inputs.get("headers");
+        if (headers instanceof Map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> headerMap = (Map<String, Object>) headers;
+            for (Map.Entry<String, Object> entry : headerMap.entrySet()) {
+                if (entry.getValue() != null) {
+                    builder.addHeader(entry.getKey(), entry.getValue().toString());
+                }
+            }
         }
     }
 
-    private static class ResponseTooLargeException extends Exception {
-        ResponseTooLargeException() { super("Response too large"); }
+    /**
+     * Strip sensitive headers from a request to prevent credential leakage
+     * on cross-origin redirects. Apache HttpClient 5 supports removing headers.
+     */
+    private static void stripSensitiveHeaders(ClassicHttpRequest request) {
+        for (String headerName : SENSITIVE_HEADERS) {
+            request.removeHeaders(headerName);
+        }
     }
+
+    // ---- Origin Comparison ----
+
+    /**
+     * Compare two URIs by origin (scheme + host + port).
+     * Returns true if the origins are equal, meaning credentials may be forwarded.
+     * A scheme downgrade (HTTPS→HTTP) is always considered a different origin.
+     */
+    static boolean originEquals(URI a, URI b) {
+        if (!Objects.equals(
+                Optional.ofNullable(a.getScheme()).orElse(""),
+                Optional.ofNullable(b.getScheme()).orElse(""))) {
+            return false;
+        }
+        String hostA = Optional.ofNullable(a.getHost()).orElse("").toLowerCase();
+        String hostB = Optional.ofNullable(b.getHost()).orElse("").toLowerCase();
+        if (!Objects.equals(hostA, hostB)) {
+            return false;
+        }
+        int portA = effectivePort(a);
+        int portB = effectivePort(b);
+        return portA == portB;
+    }
+
+    /**
+     * Get the effective port of a URI, using the default port for the scheme
+     * if no explicit port is specified.
+     */
+    private static int effectivePort(URI uri) {
+        if (uri.getPort() > 0) {
+            return uri.getPort();
+        }
+        return switch (Optional.ofNullable(uri.getScheme()).orElse("")) {
+            case "https" -> 443;
+            case "http" -> 80;
+            default -> -1;
+        };
+    }
+
+    // ---- Helpers ----
 
     private String buildUrl(String baseUrl, String path, Map<String, Object> inputs) {
         // Replace path parameters
@@ -498,52 +619,11 @@ public class HttpConnector implements Connector {
         }
     }
 
-    private HttpRequest.BodyPublisher bodyPublisher(String body) {
+    private HttpEntity bodyEntity(String body) {
         if (body == null || body.isEmpty()) {
-            return HttpRequest.BodyPublishers.noBody();
+            return null;
         }
-        return HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8);
-    }
-
-    private void addHeaders(HttpRequest.Builder builder, Map<String, Object> inputs,
-                             ConnectorContext context) {
-        // Default content type for bodies
-        if (inputs.containsKey("body")) {
-            builder.header("Content-Type", "application/json");
-        }
-        builder.header("Accept", "application/json");
-
-        // Resolve and inject credentials from secret resolver
-        Function<String, SecretHandle> secretResolver = context.secretResolver();
-        if (secretResolver != null) {
-            // Check for auth secret in config
-            Object authSecretId = context.config().get("authSecretId");
-            if (authSecretId instanceof String secretId && !secretId.isBlank()) {
-                try {
-                    SecretHandle handle = secretResolver.apply(secretId);
-                    if (handle != null) {
-                        char[] secretValue = handle.secretValue();
-                        if (secretValue != null && secretValue.length > 0) {
-                            builder.header("Authorization", "Bearer " + new String(secretValue));
-                        }
-                    }
-                } catch (Exception ignored) {
-                    // Secret resolution failure — continue without auth
-                }
-            }
-        }
-
-        // Add user-specified headers
-        Object headers = inputs.get("headers");
-        if (headers instanceof Map) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> headerMap = (Map<String, Object>) headers;
-            for (Map.Entry<String, Object> entry : headerMap.entrySet()) {
-                if (entry.getValue() != null) {
-                    builder.header(entry.getKey(), entry.getValue().toString());
-                }
-            }
-        }
+        return new StringEntity(body, ContentType.APPLICATION_JSON);
     }
 
     /**
@@ -565,5 +645,9 @@ public class HttpConnector implements Connector {
         public TargetDefinition targetDefinition() {
             return target;
         }
+    }
+
+    private static class ResponseTooLargeException extends Exception {
+        ResponseTooLargeException() { super("Response too large"); }
     }
 }

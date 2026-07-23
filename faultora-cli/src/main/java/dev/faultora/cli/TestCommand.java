@@ -64,6 +64,7 @@ public class TestCommand implements Command {
         Path outputDir = Path.of("faultora-results");
         long seed = System.currentTimeMillis();
         boolean allowPrivate = false;
+        String authSecretId = null;
 
         Iterator<String> it = args.iterator();
         while (it.hasNext()) {
@@ -76,6 +77,7 @@ public class TestCommand implements Command {
                 case "--output" -> outputDir = Path.of(requireNext(it, "--output"));
                 case "--seed" -> seed = Long.parseLong(requireNext(it, "--seed"));
                 case "--allow-private" -> allowPrivate = true;
+                case "--auth-secret-id" -> authSecretId = requireNext(it, "--auth-secret-id");
                 case "--help", "-h" -> {
                     printHelp();
                     return FaultoraCli.EXIT_PASS;
@@ -133,11 +135,16 @@ public class TestCommand implements Command {
                     true, true,
                     Set.of("authorization", "cookie", "set-cookie", "proxy-authorization"),
                     10 * 1024 * 1024, 1000, List.of(), Set.of(), "session");
+            Map<String, Object> connectorConfig = new LinkedHashMap<>();
+            connectorConfig.put("baseUrl", targetUrl);
+            if (authSecretId != null) {
+                connectorConfig.put("authSecretId", authSecretId);
+            }
             ConnectorContext connectorContext = new ConnectorContext(
                     evidencePolicy,
                     secretResolver::resolve,
                     5000, 30000, 60000,
-                    Map.of("baseUrl", targetUrl));
+                    connectorConfig);
 
             // 4. Compile plan
             String scenarioDigest = "sha256:" + sha256Hex(scenarioContent);
@@ -339,6 +346,7 @@ public class TestCommand implements Command {
         System.out.println("  --output <dir>             Output directory (default: faultora-results)");
         System.out.println("  --seed <n>                 Random seed (default: current time)");
         System.out.println("  --allow-private            Allow connections to private/local networks");
+        System.out.println("  --auth-secret-id <id>      Secret handle ID for Authorization header (resolved from env)");
         System.out.println("  -h, --help                 Show this help");
         System.out.println();
         System.out.println("Exit codes:");
