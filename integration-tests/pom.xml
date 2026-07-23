@@ -22,12 +22,13 @@
         </dependency>
         <dependency>
             <groupId>dev.faultora</groupId>
-            <artifactId>faultora-testkit</artifactId>
+            <artifactId>payment-service</artifactId>
+            <version>${project.version}</version>
         </dependency>
         <dependency>
             <groupId>dev.faultora</groupId>
-            <artifactId>payment-service</artifactId>
-            <version>${project.version}</version>
+            <artifactId>faultora-model</artifactId>
+            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>

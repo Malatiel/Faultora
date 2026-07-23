@@ -20,6 +20,10 @@
             <artifactId>faultora-spi</artifactId>
         </dependency>
         <dependency>
+            <groupId>dev.faultora</groupId>
+            <artifactId>faultora-model</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-api</artifactId>
             <scope>compile</scope>

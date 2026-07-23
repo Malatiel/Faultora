@@ -17,7 +17,7 @@ development and CI use on Java 21.
 - versioned YAML scenarios;
 - HTTP GET, POST, PUT, PATCH, DELETE, HEAD, and OPTIONS operations;
 - status, header, JSONPath, and duration assertions;
-- sequential, parallel, repeat, and eventual execution blocks;
+- sequential operation and wait steps with explicit dependencies;
 - environment-backed bearer-token resolution;
 - console, JSON, HTML, and JUnit reports;
 - SSRF protection with DNS resolution and address pinning;
@@ -26,8 +26,10 @@ development and CI use on Java 21.
 - header filtering, content-type allowlists, body limits, and JSON redaction;
 - manual redirect handling with cross-origin credential stripping.
 
-Distributed workers, Kafka, Kubernetes orchestration, and the web interface are
-not part of this release.
+Fault injection, retries, parallel/repeat blocks, distributed workers, Kafka,
+Kubernetes orchestration, and the web interface are not part of this release.
+Scenarios that request unsupported execution features are rejected during
+validation or plan compilation rather than being silently accepted.
 
 ## Requirements
 

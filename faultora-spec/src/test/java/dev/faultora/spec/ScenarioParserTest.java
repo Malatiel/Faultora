@@ -1,6 +1,6 @@
 package dev.faultora.spec;
 
-import dev.faultora.spec.model.ScenarioDocument;
+import dev.faultora.spec.model.*;
 import dev.faultora.spec.parser.Diagnostic;
 import dev.faultora.spec.parser.ParseResult;
 import dev.faultora.spec.parser.ScenarioParser;
@@ -11,6 +11,8 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -89,6 +91,57 @@ class ScenarioParserTest {
     void parseNullContentReportsError() {
         ParseResult<ScenarioDocument> result = parser.parse(null);
         assertThat(result.isSuccess()).isFalse();
+    }
+
+    @Test
+    void validatorRejectsUnknownAssertionAndFaultReferences() {
+        ScenarioDocument document = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("references", "references", Map.of(), Map.of()),
+                Map.of(),
+                List.of(),
+                List.of(new ScenarioStep(
+                        "execute", "operation", "operation",
+                        Map.of(), null, List.of(), null, null, Map.of())),
+                List.of(new FaultStep(
+                        "fault", "latency", "target", Map.of(), "1s",
+                        List.of("missing-fault-dependency"), Map.of())),
+                List.of(new AssertionStep(
+                        "assert", "status", Map.of(), "missing-target",
+                        List.of("missing-assertion-dependency"), null, Map.of())),
+                List.of());
+
+        ParseResult<ScenarioDocument> result = validator.validate(document);
+
+        assertThat(result.errors()).extracting(Diagnostic::message)
+                .contains(
+                        "References unknown step: missing-fault-dependency",
+                        "References unknown step: missing-assertion-dependency",
+                        "References unknown step: missing-target");
+    }
+
+    @Test
+    void validatorRejectsUnsupportedTypeAndInvalidDuration() {
+        ScenarioDocument document = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("types", "types", Map.of(), Map.of()),
+                Map.of(),
+                List.of(),
+                List.of(
+                        new ScenarioStep(
+                                "parallel", "parallel", null,
+                                Map.of(), null, List.of(), null, null, Map.of()),
+                        new ScenarioStep(
+                                "wait", "wait", null,
+                                Map.of(), null, List.of(), "forever", null, Map.of())),
+                List.of(), List.of(), List.of());
+
+        ParseResult<ScenarioDocument> result = validator.validate(document);
+
+        assertThat(result.errors()).extracting(Diagnostic::message)
+                .contains(
+                        "Unsupported step type in 0.1.0: parallel",
+                        "Wait step requires a positive duration");
     }
 
     private String loadFixture(String name) throws IOException {

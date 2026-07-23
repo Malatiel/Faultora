@@ -176,7 +176,10 @@ public class LocalEngine {
             status = RunResult.Status.PASSED;
         }
 
-        // Emit run completed/failed event
+        long failedNodes = nodeResults.values().stream()
+                .filter(result -> result.status() != RunResult.Status.PASSED)
+                .count();
+        NormalizedError runError = null;
         if (status == RunResult.Status.PASSED) {
             emitEvent(journal, new RunEvent.RunCompleted(
                     "RUN_COMPLETED", System.currentTimeMillis(), runId,
@@ -184,18 +187,23 @@ public class LocalEngine {
                     failedAssertions.get(), totalDuration
             ));
         } else {
-            NormalizedError error = new NormalizedError(
-                    NormalizedError.ErrorCategory.INTERNAL,
-                    status.name(),
-                    "Run " + status.name().toLowerCase() +
-                            ": " + failedAssertions.get() + " failed assertions",
+            runError = new NormalizedError(
+                    status == RunResult.Status.CANCELLED
+                            ? NormalizedError.ErrorCategory.CANCELLED
+                            : NormalizedError.ErrorCategory.INTERNAL,
+                    status == RunResult.Status.CANCELLED ? "RUN_CANCELLED" : "RUN_FAILED",
+                    "Run " + status.name().toLowerCase(Locale.ROOT)
+                            + ": " + failedNodes + " failed nodes, "
+                            + failedAssertions.get() + " failed assertions",
                     false,
                     Map.of("passedAssertions", passedAssertions.get(),
-                            "failedAssertions", failedAssertions.get())
+                            "failedAssertions", failedAssertions.get(),
+                            "failedNodes", failedNodes,
+                            "cleanupFailures", cleanupFailedCount.get())
             );
             emitEvent(journal, new RunEvent.RunFailed(
                     "RUN_FAILED", System.currentTimeMillis(), runId,
-                    error, totalDuration
+                    runError, totalDuration
             ));
         }
 
@@ -209,10 +217,7 @@ public class LocalEngine {
                 runId, status, nodeResults.size(),
                 passedAssertions.get(), failedAssertions.get(),
                 nodeResults, totalDuration,
-                status == RunResult.Status.FAILED ?
-                        new NormalizedError(NormalizedError.ErrorCategory.INTERNAL,
-                                "ASSERTION_FAILURES", failedAssertions.get() + " assertion(s) failed",
-                                false, Map.of()) : null
+                runError
         );
     }
 
@@ -244,12 +249,17 @@ public class LocalEngine {
             switch (node) {
                 case PlanNode.OperationNode opNode -> {
                     if (opNode.operation() == null) {
-                        // Wait node
                         long waitMs = toLong(opNode.inputExpressions().get("waitMs"));
-                        if (waitMs > 0) {
-                            Thread.sleep(Math.min(waitMs, 1000)); // Cap wait for tests
+                        if (waitMs <= 0) {
+                            return nodeFailed(nodeId, node, "Wait duration must be positive",
+                                    NormalizedError.ErrorCategory.VALIDATION, nodeStart);
                         }
-                        evidence.durationMs(waitMs);
+                        waitFor(waitMs, cancellation);
+                        if (cancellation.get()) {
+                            return nodeFailed(nodeId, node, "Wait cancelled",
+                                    NormalizedError.ErrorCategory.CANCELLED, nodeStart);
+                        }
+                        evidence.durationMs(System.currentTimeMillis() - nodeStart);
                     } else {
                         // Execute operation via connector
                         OperationResult result = executeOperation(opNode, context, connectorContext);
@@ -307,12 +317,14 @@ public class LocalEngine {
                     );
                 }
                 case PlanNode.FaultStartNode faultNode -> {
-                    // Fault injection not yet implemented in M1
-                    evidence.durationMs(System.currentTimeMillis() - nodeStart);
+                    return nodeFailed(nodeId, node,
+                            "Fault injection is not supported in 0.1.0",
+                            NormalizedError.ErrorCategory.VALIDATION, nodeStart);
                 }
                 case PlanNode.FaultStopNode faultStopNode -> {
-                    // Fault rollback not yet implemented in M1
-                    evidence.durationMs(System.currentTimeMillis() - nodeStart);
+                    return nodeFailed(nodeId, node,
+                            "Fault rollback is not supported in 0.1.0",
+                            NormalizedError.ErrorCategory.VALIDATION, nodeStart);
                 }
                 case PlanNode.CleanupNode cleanupNode -> {
                     // Look up the operation definition from the catalog
@@ -425,9 +437,24 @@ public class LocalEngine {
             return OperationResult.failure(error, 0);
         }
 
-        var prepared = connector.prepare(target, connectorContext);
+        ConnectorContext operationContext = connectorContext;
+        if (node.deadlineMs() > 0) {
+            long requestTimeout = Math.min(
+                    connectorContext.requestTimeoutMs(), node.deadlineMs());
+            long totalTimeout = Math.min(
+                    connectorContext.totalTimeoutMs(), node.deadlineMs());
+            operationContext = new ConnectorContext(
+                    connectorContext.evidencePolicy(),
+                    connectorContext.secretResolver(),
+                    Math.min(connectorContext.connectTimeoutMs(), requestTimeout),
+                    requestTimeout,
+                    totalTimeout,
+                    connectorContext.config());
+        }
+
+        var prepared = connector.prepare(target, operationContext);
         try {
-            return connector.execute(prepared, node.operation(), resolvedInputs, connectorContext);
+            return connector.execute(prepared, node.operation(), resolvedInputs, operationContext);
         } finally {
             connector.release(prepared);
         }
@@ -472,9 +499,8 @@ public class LocalEngine {
             if (depResult == null) {
                 return false; // Dependency not yet executed
             }
-            if (depResult.status() == RunResult.Status.ERROR ||
-                    depResult.status() == RunResult.Status.CANCELLED) {
-                return false; // Dependency failed
+            if (depResult.status() != RunResult.Status.PASSED) {
+                return false;
             }
         }
         return true;
@@ -518,6 +544,17 @@ public class LocalEngine {
         if (value instanceof Number n) return n.longValue();
         if (value instanceof String s) return Long.parseLong(s);
         return 0;
+    }
+
+    private void waitFor(long waitMs, AtomicBoolean cancellation) throws InterruptedException {
+        long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(waitMs);
+        while (!cancellation.get()) {
+            long remainingNanos = deadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0) return;
+            long sleepMs = Math.max(
+                    1, Math.min(100, TimeUnit.NANOSECONDS.toMillis(remainingNanos)));
+            Thread.sleep(sleepMs);
+        }
     }
 
     private void emitEvent(RunJournal journal, RunEvent event) {

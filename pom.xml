@@ -65,7 +65,6 @@
         <module>faultora-engine</module>
         <module>faultora-import-openapi</module>
         <module>faultora-connector-http</module>
-        <module>faultora-fault-toxiproxy</module>
         <module>faultora-assertions-core</module>
         <module>faultora-reporting</module>
         <module>faultora-cli</module>
@@ -105,11 +104,6 @@
             <dependency>
                 <groupId>dev.faultora</groupId>
                 <artifactId>faultora-connector-http</artifactId>
-                <version>${project.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>dev.faultora</groupId>
-                <artifactId>faultora-fault-toxiproxy</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
@@ -178,6 +172,11 @@
             <dependency>
                 <groupId>io.burt</groupId>
                 <artifactId>jmespath-jackson</artifactId>
+                <version>${jmespath.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.burt</groupId>
+                <artifactId>jmespath-core</artifactId>
                 <version>${jmespath.version}</version>
             </dependency>
 

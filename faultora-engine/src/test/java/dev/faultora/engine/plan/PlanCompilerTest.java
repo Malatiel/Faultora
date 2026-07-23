@@ -303,6 +303,136 @@ class PlanCompilerTest {
         assertThat(result.plan().nodes()).isNotEmpty();
     }
 
+    @Test
+    void compileRejectsUnsupportedStepType() {
+        ScenarioDocument scenario = scenarioWithExecuteStep(new ScenarioStep(
+                "parallel-step", "parallel", null,
+                Map.of(), null, List.of(), null, null, Map.of()));
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.errors()).extracting(PlanDiagnostic::message)
+                .anyMatch(message -> message.contains("Unsupported step type"));
+    }
+
+    @Test
+    void compileRejectsFaultsUntilProviderExecutionIsImplemented() {
+        ScenarioDocument scenario = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("fault", "fault", Map.of(), Map.of()),
+                Map.of(),
+                List.of(),
+                List.of(new ScenarioStep(
+                        "execute", "operation", "create-payment",
+                        Map.of(), null, List.of(), null, null, Map.of())),
+                List.of(new FaultStep(
+                        "latency", "latency", "default",
+                        Map.of(), "1s", List.of("execute"), Map.of())),
+                List.of(),
+                List.of());
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.errors()).extracting(PlanDiagnostic::message)
+                .contains("Fault injection is not supported in 0.1.0");
+    }
+
+    @Test
+    void compileRejectsRetryPolicyThatRuntimeCannotHonor() {
+        ScenarioDocument scenario = scenarioWithExecuteStep(new ScenarioStep(
+                "retry", "operation", "create-payment",
+                Map.of(), null, List.of(), null,
+                new ScenarioStep.RetryPolicy(2, 10, 2, 100),
+                Map.of()));
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.errors()).extracting(PlanDiagnostic::message)
+                .contains("Retries are not supported in 0.1.0");
+    }
+
+    @Test
+    void compileEnforcesTargetAllowlist() {
+        TargetPolicy restricted = new TargetPolicy(
+                Set.of(new TargetId("another-target")),
+                policy.allowedOperationClasses(),
+                policy.maxRequests(),
+                policy.maxConcurrency(),
+                policy.maxDurationMs(),
+                policy.maxPayloadBytes(),
+                policy.allowedFaultTypes(),
+                policy.allowedEnvironments());
+        ScenarioDocument scenario = scenarioWithExecuteStep(new ScenarioStep(
+                "execute", "operation", "create-payment",
+                Map.of(), null, List.of(), null, null, Map.of()));
+
+        PlanCompilationResult result = compile(scenario, restricted);
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.errors()).extracting(PlanDiagnostic::message)
+                .anyMatch(message -> message.contains("Target is not allowed"));
+    }
+
+    @Test
+    void compileEnforcesMaximumRequestCount() {
+        TargetPolicy oneRequest = new TargetPolicy(
+                policy.allowedTargets(),
+                policy.allowedOperationClasses(),
+                1,
+                policy.maxConcurrency(),
+                policy.maxDurationMs(),
+                policy.maxPayloadBytes(),
+                policy.allowedFaultTypes(),
+                policy.allowedEnvironments());
+
+        PlanCompilationResult result = compile(buildTestScenario(), oneRequest);
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.errors()).extracting(PlanDiagnostic::message)
+                .anyMatch(message -> message.contains("policy allows 1"));
+    }
+
+    @Test
+    void assertionWithoutTargetUsesLastExecuteStep() {
+        ScenarioDocument scenario = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("assertion-default", "assertion-default", Map.of(), Map.of()),
+                Map.of(),
+                List.of(),
+                List.of(new ScenarioStep(
+                        "execute", "operation", "create-payment",
+                        Map.of(), null, List.of(), null, null, Map.of())),
+                List.of(),
+                List.of(new AssertionStep(
+                        "status", "status", Map.of("expected", 200),
+                        null, List.of(), null, Map.of())),
+                List.of());
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isTrue();
+        PlanNode.AssertionNode assertion = (PlanNode.AssertionNode)
+                result.plan().node(new NodeId("status")).orElseThrow();
+        assertThat(assertion.targetNode()).isEqualTo(new NodeId("execute"));
+        assertThat(assertion.dependencies()).contains(new NodeId("execute"));
+    }
+
+    private PlanCompilationResult compile(ScenarioDocument scenario, TargetPolicy targetPolicy) {
+        return compiler.compile(
+                scenario, catalog, targetPolicy,
+                new RunId("run-001"), 42L, "sha256:abc", "sha256:def");
+    }
+
+    private ScenarioDocument scenarioWithExecuteStep(ScenarioStep step) {
+        return new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("test", "test", Map.of(), Map.of()),
+                Map.of(), List.of(), List.of(step), List.of(), List.of(), List.of());
+    }
+
     private ScenarioDocument buildTestScenario() {
         return new ScenarioDocument(
                 "faultora.dev/v1alpha1", "Scenario",

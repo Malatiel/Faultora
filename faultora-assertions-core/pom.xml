@@ -20,12 +20,21 @@
             <artifactId>faultora-spi</artifactId>
         </dependency>
         <dependency>
+            <groupId>dev.faultora</groupId>
+            <artifactId>faultora-model</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
         </dependency>
         <dependency>
             <groupId>io.burt</groupId>
             <artifactId>jmespath-jackson</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.burt</groupId>
+            <artifactId>jmespath-core</artifactId>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>

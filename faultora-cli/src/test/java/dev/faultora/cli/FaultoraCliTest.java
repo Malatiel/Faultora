@@ -84,6 +84,43 @@ class FaultoraCliTest {
         assertThat(exit).isEqualTo(FaultoraCli.EXIT_INVALID_CONFIG);
     }
 
+    @Test
+    void testRejectsInvalidSeed(@TempDir Path temp) throws IOException {
+        Path scenario = temp.resolve("test.yaml");
+        Files.writeString(scenario, VALID_SCENARIO);
+
+        int exit = createCli().run(new String[]{
+                "test", "--scenario", scenario.toString(), "--seed", "not-a-number"
+        });
+
+        assertThat(exit).isEqualTo(FaultoraCli.EXIT_INVALID_CONFIG);
+    }
+
+    @Test
+    void testRejectsUnknownReportFormat(@TempDir Path temp) throws IOException {
+        Path scenario = temp.resolve("test.yaml");
+        Files.writeString(scenario, VALID_SCENARIO);
+
+        int exit = createCli().run(new String[]{
+                "test", "--scenario", scenario.toString(), "--format", "console,unknown"
+        });
+
+        assertThat(exit).isEqualTo(FaultoraCli.EXIT_INVALID_CONFIG);
+    }
+
+    @Test
+    void testRunsStructuralValidation(@TempDir Path temp) throws IOException {
+        Path scenario = temp.resolve("unsupported.yaml");
+        Files.writeString(scenario, VALID_SCENARIO.replace(
+                "type: operation", "type: parallel"));
+
+        int exit = createCli().run(new String[]{
+                "test", "--scenario", scenario.toString()
+        });
+
+        assertThat(exit).isEqualTo(FaultoraCli.EXIT_INVALID_CONFIG);
+    }
+
     private static final String VALID_SCENARIO = """
             apiVersion: faultora.dev/v1alpha1
             kind: Scenario

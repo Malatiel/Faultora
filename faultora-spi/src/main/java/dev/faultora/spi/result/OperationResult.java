@@ -3,6 +3,7 @@ package dev.faultora.spi.result;
 import dev.faultora.model.catalog.NormalizedError;
 
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -25,6 +26,18 @@ public record OperationResult(
         Map<String, Object> protocolEvidence,
         Map<String, String> evidenceDigests
 ) {
+    public OperationResult {
+        headers = immutableHeaders(headers);
+        body = body == null ? null : body.clone();
+        protocolEvidence = protocolEvidence == null ? Map.of() : Map.copyOf(protocolEvidence);
+        evidenceDigests = evidenceDigests == null ? Map.of() : Map.copyOf(evidenceDigests);
+    }
+
+    @Override
+    public byte[] body() {
+        return body == null ? null : body.clone();
+    }
+
     public boolean isSuccess() {
         return error == null;
     }
@@ -41,5 +54,14 @@ public record OperationResult(
 
     public static OperationResult failure(NormalizedError error, long durationMs) {
         return new OperationResult(-1, Map.of(), null, durationMs, error, Map.of(), Map.of());
+    }
+
+    private static Map<String, List<String>> immutableHeaders(
+            Map<String, List<String>> source) {
+        if (source == null || source.isEmpty()) return Map.of();
+        Map<String, List<String>> copy = new LinkedHashMap<>();
+        source.forEach((key, values) ->
+                copy.put(key, values == null ? List.of() : List.copyOf(values)));
+        return Map.copyOf(copy);
     }
 }

@@ -19,36 +19,19 @@ public final class DestinationPolicy {
             "[::1]", "[0:0:0:0:0:0:0:1]"
     );
 
-    private static final Set<String> BLOCKED_PREFIXES = Set.of(
-            "10.", "172.16.", "172.17.", "172.18.", "172.19.",
-            "172.20.", "172.21.", "172.22.", "172.23.", "172.24.",
-            "172.25.", "172.26.", "172.27.", "172.28.", "172.29.",
-            "172.30.", "172.31.", "192.168.", "169.254.",
-            "100.64.", "100.65.", "100.66.", "100.67.",
-            "100.68.", "100.69.", "100.70.", "100.71.",
-            "100.72.", "100.73.", "100.74.", "100.75.",
-            "100.76.", "100.77.", "100.78.", "100.79.",
-            "100.80.", "100.81.", "100.82.", "100.83.",
-            "100.84.", "100.85.", "100.86.", "100.87.",
-            "100.88.", "100.89.", "100.90.", "100.91.",
-            "100.92.", "100.93.", "100.94.", "100.95.",
-            "100.96.", "100.97.", "100.98.", "100.99.",
-            "100.100.", "100.101.", "100.102.", "100.103.",
-            "100.104.", "100.105.", "100.106.", "100.107.",
-            "100.108.", "100.109.", "100.110.", "100.111.",
-            "100.112.", "100.113.", "100.114.", "100.115.",
-            "100.116.", "100.117.", "100.118.", "100.119.",
-            "100.120.", "100.121.", "100.122.", "100.123.",
-            "100.124.", "100.125.", "100.126.", "100.127.",
-            "198.18.", "198.19."
-    );
-
     private static final long DNS_TIMEOUT_MS = 3000;
-    private static final ExecutorService DNS_EXECUTOR = Executors.newCachedThreadPool(r -> {
-        Thread t = new Thread(r, "dns-check");
-        t.setDaemon(true);
-        return t;
-    });
+    private static final ExecutorService DNS_EXECUTOR = new ThreadPoolExecutor(
+            2,
+            4,
+            30,
+            TimeUnit.SECONDS,
+            new ArrayBlockingQueue<>(64),
+            r -> {
+                Thread t = new Thread(r, "faultora-dns-check");
+                t.setDaemon(true);
+                return t;
+            },
+            new ThreadPoolExecutor.AbortPolicy());
 
     private final boolean allowPrivateNetworks;
     private final Set<String> allowedHosts;
@@ -70,7 +53,18 @@ public final class DestinationPolicy {
      * must use these addresses instead of re-resolving the hostname.
      */
     public sealed interface CheckResult {
-        record Allowed(InetAddress[] resolvedAddresses) implements CheckResult {}
+        record Allowed(InetAddress[] resolvedAddresses) implements CheckResult {
+            public Allowed {
+                resolvedAddresses = resolvedAddresses == null
+                        ? new InetAddress[0]
+                        : resolvedAddresses.clone();
+            }
+
+            @Override
+            public InetAddress[] resolvedAddresses() {
+                return resolvedAddresses.clone();
+            }
+        }
         record Blocked(String reason) implements CheckResult {}
 
         default boolean isAllowed() {
@@ -109,20 +103,26 @@ public final class DestinationPolicy {
 
         String host = uri.getHost();
         if (host == null || host.isBlank()) return new CheckResult.Blocked("URI has no host");
+        if (uri.getRawUserInfo() != null) {
+            return new CheckResult.Blocked("Credentials in destination URI are not allowed");
+        }
+
+        int port = uri.getPort();
+        if (port > 65535) {
+            return new CheckResult.Blocked("Invalid port: " + port);
+        }
 
         // Check explicit blocklist
         if (blockedHosts.contains(host.toLowerCase())) {
             return new CheckResult.Blocked("Host is explicitly blocked: " + host);
         }
 
-        // Check explicit allowlist (if non-empty, only these hosts are allowed)
-        // Hosts in the allowlist are trusted and skip further private/reserved checks
-        // including DNS resolution.
         if (!allowedHosts.isEmpty()) {
             if (allowedHosts.contains(host.toLowerCase())) {
-                // For allowed hosts, resolve DNS to return pinned addresses
-                InetAddress[] resolved = resolveHostQuietly(host);
-                return new CheckResult.Allowed(resolved != null ? resolved : new InetAddress[0]);
+                InetAddress[] resolved = resolveHostWithTimeout(host);
+                return resolved == null
+                        ? new CheckResult.Blocked("DNS resolution failed for allowlisted host: " + host)
+                        : new CheckResult.Allowed(resolved);
             }
             return new CheckResult.Blocked("Host is not in the allowlist: " + host);
         }
@@ -132,15 +132,6 @@ public final class DestinationPolicy {
             if (BLOCKED_HOSTS.contains(host.toLowerCase())) {
                 return new CheckResult.Blocked("Private/reserved host blocked: " + host);
             }
-            for (String prefix : BLOCKED_PREFIXES) {
-                if (host.startsWith(prefix)) {
-                    return new CheckResult.Blocked("Private/reserved network blocked: " + host);
-                }
-            }
-
-            // Classify IP literals by parsing to InetAddress and checking with
-            // isPrivateOrReserved(). This catches addresses like 127.0.0.2, 224.0.0.1,
-            // 240.0.0.1, IPv6 ULA, etc. that are not covered by string prefix checks.
             if (isIpLiteral(host)) {
                 String ipError = classifyIpLiteral(host);
                 if (ipError != null) {
@@ -164,13 +155,6 @@ public final class DestinationPolicy {
             return new CheckResult.Allowed(resolved);
         }
 
-        // Check port
-        int port = uri.getPort();
-        if (port > 0 && (port < 1 || port > 65535)) {
-            return new CheckResult.Blocked("Invalid port: " + port);
-        }
-
-        // Permissive mode — resolve DNS to return addresses for pinning
         InetAddress[] resolved = resolveHostQuietly(host);
         return new CheckResult.Allowed(resolved != null ? resolved : new InetAddress[0]);
     }
@@ -192,22 +176,31 @@ public final class DestinationPolicy {
      * @return resolved addresses if all are public, null if any is private/reserved or DNS failed
      */
     private static InetAddress[] resolveAndClassify(String host) {
-        Future<InetAddress[]> future = DNS_EXECUTOR.submit(() -> InetAddress.getAllByName(host));
-        try {
-            InetAddress[] addresses = future.get(DNS_TIMEOUT_MS, TimeUnit.MILLISECONDS);
-            for (InetAddress addr : addresses) {
-                if (isPrivateOrReserved(addr)) {
-                    return null; // At least one address is private — fail closed
-                }
+        InetAddress[] addresses = resolveHostWithTimeout(host);
+        if (addresses == null) {
+            return null;
+        }
+        for (InetAddress addr : addresses) {
+            if (isPrivateOrReserved(addr)) {
+                return null;
             }
-            return addresses;
+        }
+        return addresses;
+    }
+
+    private static InetAddress[] resolveHostWithTimeout(String host) {
+        Future<InetAddress[]> future;
+        try {
+            future = DNS_EXECUTOR.submit(() -> InetAddress.getAllByName(host));
+        } catch (RejectedExecutionException overloaded) {
+            return null;
+        }
+        try {
+            return future.get(DNS_TIMEOUT_MS, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
-            // DNS timed out — fail closed. Cannot verify the resolved address
-            // is safe, so block the request to prevent SSRF via slow DNS.
             future.cancel(true);
             return null;
         } catch (ExecutionException e) {
-            // DNS lookup failed — fail closed.
             return null;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

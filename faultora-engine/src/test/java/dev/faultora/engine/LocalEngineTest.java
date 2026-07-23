@@ -358,6 +358,108 @@ class LocalEngineTest {
         }
     }
 
+    @Test
+    void failedDependencyPreventsDependentOperation() throws Exception {
+        ExecutionPlan plan = ExecutionPlan.builder()
+                .runId(new RunId("run-failed-dependency"))
+                .scenario(buildScenario())
+                .catalog(catalog)
+                .targetPolicy(policy)
+                .seed(42L)
+                .scenarioDigest("sha256:abc")
+                .catalogDigest("sha256:def")
+                .addNode(new PlanNode.OperationNode(
+                        new NodeId("first"),
+                        new OperationId("create-payment"),
+                        findOp("create-payment"),
+                        Map.of(), null, List.of(),
+                        SafetyClassification.MUTATING, 0, 0))
+                .addNode(new PlanNode.OperationNode(
+                        new NodeId("second"),
+                        new OperationId("get-payment"),
+                        findOp("get-payment"),
+                        Map.of(), null, List.of(new NodeId("first")),
+                        SafetyClassification.READ_ONLY, 0, 0))
+                .build();
+        LocalEngine engine = new LocalEngine(
+                Map.of("http", new FailingConnector()), Map.of());
+
+        try (RunJournal journal = new RunJournal(
+                tempDir.resolve("failed-dependency.ndjson"), true)) {
+            RunResult result = engine.execute(
+                    plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+
+            assertThat(result.status()).isEqualTo(RunResult.Status.FAILED);
+            assertThat(result.nodeResults()).containsKey(new NodeId("first"));
+            assertThat(result.nodeResults()).doesNotContainKey(new NodeId("second"));
+            assertThat(result.error().code()).isEqualTo("RUN_FAILED");
+        }
+    }
+
+    @Test
+    void waitStepUsesConfiguredDuration() throws Exception {
+        ExecutionPlan plan = ExecutionPlan.builder()
+                .runId(new RunId("run-wait"))
+                .scenario(buildScenario())
+                .catalog(catalog)
+                .targetPolicy(policy)
+                .seed(42L)
+                .scenarioDigest("sha256:abc")
+                .catalogDigest("sha256:def")
+                .addNode(new PlanNode.OperationNode(
+                        new NodeId("wait"),
+                        new OperationId("_wait"),
+                        null,
+                        Map.of("waitMs", 1200L), null, List.of(),
+                        SafetyClassification.READ_ONLY, 0, 0))
+                .build();
+        LocalEngine engine = new LocalEngine(Map.of(), Map.of());
+
+        long started = System.nanoTime();
+        try (RunJournal journal = new RunJournal(tempDir.resolve("wait.ndjson"), true)) {
+            RunResult result = engine.execute(
+                    plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+            long elapsedMs =
+                    java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+
+            assertThat(result.status()).isEqualTo(RunResult.Status.PASSED);
+            assertThat(elapsedMs).isGreaterThanOrEqualTo(1100);
+        }
+    }
+
+    @Test
+    void unsupportedFaultNodeFailsInsteadOfPassingSilently() throws Exception {
+        ExecutionPlan plan = ExecutionPlan.builder()
+                .runId(new RunId("run-fault"))
+                .scenario(buildScenario())
+                .catalog(catalog)
+                .targetPolicy(policy)
+                .seed(42L)
+                .scenarioDigest("sha256:abc")
+                .catalogDigest("sha256:def")
+                .addNode(new PlanNode.FaultStartNode(
+                        new NodeId("fault"),
+                        "latency",
+                        "default",
+                        Map.of(),
+                        100,
+                        List.of(),
+                        SafetyClassification.MUTATING,
+                        0,
+                        0))
+                .build();
+        LocalEngine engine = new LocalEngine(Map.of(), Map.of());
+
+        try (RunJournal journal = new RunJournal(tempDir.resolve("fault.ndjson"), true)) {
+            RunResult result = engine.execute(
+                    plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+
+            assertThat(result.status()).isEqualTo(RunResult.Status.FAILED);
+            assertThat(result.nodeResults().get(new NodeId("fault")).error().message())
+                    .contains("not supported");
+        }
+    }
+
     // --- Helpers ---
 
     private OperationDefinition findOp(String id) {

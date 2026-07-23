@@ -44,10 +44,6 @@ public class PlanCompiler {
             operationIndex.put(op.id().value(), op);
         }
 
-        // Track all step IDs for dependency resolution
-        Set<String> allStepIds = new LinkedHashSet<>();
-        collectStepIds(scenario, allStepIds);
-
         // Compile setup steps
         compileSteps(scenario.setup(), "setup", operationIndex, targetPolicy, nodes, diagnostics);
 
@@ -55,13 +51,28 @@ public class PlanCompiler {
         compileSteps(scenario.execute(), "execute", operationIndex, targetPolicy, nodes, diagnostics);
 
         // Compile fault steps
-        compileFaultSteps(scenario.faults(), nodes, diagnostics);
+        compileFaultSteps(scenario.faults(), diagnostics);
 
         // Compile assertion steps
-        compileAssertionSteps(scenario.assertions(), nodes, diagnostics);
+        compileAssertionSteps(
+                scenario.assertions(), lastStepId(scenario.execute()), nodes, diagnostics);
 
         // Compile cleanup steps
         compileSteps(scenario.cleanup(), "cleanup", operationIndex, targetPolicy, nodes, diagnostics);
+
+        if (targetPolicy != null) {
+            long requestCount = nodes.stream()
+                    .filter(node -> (node instanceof PlanNode.OperationNode operation
+                                    && operation.operation() != null)
+                            || node instanceof PlanNode.CleanupNode)
+                    .count();
+            if (requestCount > targetPolicy.maxRequests()) {
+                diagnostics.add(PlanDiagnostic.error(
+                        "policy", "",
+                        "Plan requires " + requestCount + " requests, policy allows "
+                                + targetPolicy.maxRequests()));
+            }
+        }
 
         // Check for cycles
         if (hasCycles(nodes)) {
@@ -124,14 +135,26 @@ public class PlanCompiler {
                                     " is not allowed by execution policy"));
                     continue;
                 }
+                if (targetPolicy != null
+                        && !targetPolicy.allowedTargets().isEmpty()
+                        && !targetPolicy.allowedTargets().contains(operation.target())) {
+                    diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                            "Target is not allowed by execution policy: " + operation.target()));
+                    continue;
+                }
 
-                // Parse timeout
-                long deadlineMs = parseTimeout(step.timeout());
+                long deadlineMs = parseTimeout(
+                        step.timeout(), phase, stepId, "timeout", diagnostics);
 
-                // Parse retry policy
                 int maxRetries = 0;
                 if (step.retry() != null) {
-                    maxRetries = step.retry().maxAttempts() - 1;
+                    if (step.retry().maxAttempts() > 1) {
+                        diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                                "Retries are not supported in 0.1.0"));
+                    } else if (step.retry().maxAttempts() < 1) {
+                        diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                                "retry.maxAttempts must be at least 1"));
+                    }
                 }
 
                 // Build input expressions
@@ -154,56 +177,41 @@ public class PlanCompiler {
                 }
 
             } else if ("wait".equals(step.type())) {
-                long waitMs = parseTimeout(step.timeout());
+                long waitMs = parseTimeout(
+                        step.timeout(), phase, stepId, "timeout", diagnostics);
+                if (waitMs <= 0) {
+                    diagnostics.add(PlanDiagnostic.error(
+                            phase, stepId, "Wait step requires a positive timeout"));
+                    continue;
+                }
                 List<NodeId> deps = resolveDependencies(step.dependsOn());
-                // Wait is modeled as a no-op operation node
                 nodes.add(new PlanNode.OperationNode(
                         nodeId, new OperationId("_wait"), null,
                         Map.of("waitMs", waitMs), step.outputAs(),
                         deps, dev.faultora.model.catalog.SafetyClassification.READ_ONLY, 0, 0
                 ));
             } else {
-                diagnostics.add(PlanDiagnostic.warning(phase, stepId,
-                        "Unknown step type: " + step.type() + ", treating as operation"));
+                diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                        "Unsupported step type in 0.1.0: " + step.type()));
             }
         }
     }
 
     private void compileFaultSteps(
             List<FaultStep> steps,
-            List<PlanNode> nodes,
             List<PlanDiagnostic> diagnostics
     ) {
         if (steps == null) return;
 
         for (FaultStep step : steps) {
-            NodeId startNodeId = new NodeId(step.id());
-            NodeId stopNodeId = new NodeId(step.id() + "-stop");
-
-            long durationMs = parseTimeout(step.duration());
-            List<NodeId> deps = resolveDependencies(step.dependsOn());
-
-            Map<String, Object> params = step.params() != null ?
-                    new LinkedHashMap<>(step.params()) : Map.of();
-
-            // Fault start node
-            nodes.add(new PlanNode.FaultStartNode(
-                    startNodeId, step.faultType(), step.targetScope(),
-                    params, durationMs, deps,
-                    SafetyClassification.MUTATING, 0, 0
-            ));
-
-            // Fault stop node (depends on start, runs after duration)
-            nodes.add(new PlanNode.FaultStopNode(
-                    stopNodeId, startNodeId,
-                    List.of(startNodeId),
-                    SafetyClassification.READ_ONLY, 0, 0
-            ));
+            diagnostics.add(PlanDiagnostic.error(
+                    "faults", step.id(), "Fault injection is not supported in 0.1.0"));
         }
     }
 
     private void compileAssertionSteps(
             List<AssertionStep> steps,
+            NodeId defaultTarget,
             List<PlanNode> nodes,
             List<PlanDiagnostic> diagnostics
     ) {
@@ -211,8 +219,9 @@ public class PlanCompiler {
 
         for (AssertionStep step : steps) {
             NodeId nodeId = new NodeId(step.id());
-            NodeId targetNode = step.targetStep() != null ?
-                    new NodeId(step.targetStep()) : null;
+            NodeId targetNode = step.targetStep() != null && !step.targetStep().isBlank()
+                    ? new NodeId(step.targetStep())
+                    : defaultTarget;
 
             List<NodeId> deps = resolveDependencies(step.dependsOn());
             // Add target step as implicit dependency
@@ -237,21 +246,9 @@ public class PlanCompiler {
         return dependsOn.stream().map(NodeId::new).toList();
     }
 
-    private void collectStepIds(ScenarioDocument scenario, Set<String> ids) {
-        collectFromSteps(scenario.setup(), ids);
-        collectFromSteps(scenario.execute(), ids);
-        collectFromSteps(scenario.cleanup(), ids);
-        if (scenario.faults() != null) {
-            scenario.faults().forEach(f -> ids.add(f.id()));
-        }
-        if (scenario.assertions() != null) {
-            scenario.assertions().forEach(a -> ids.add(a.id()));
-        }
-    }
-
-    private void collectFromSteps(List<ScenarioStep> steps, Set<String> ids) {
-        if (steps == null) return;
-        steps.forEach(s -> ids.add(s.id()));
+    private NodeId lastStepId(List<ScenarioStep> steps) {
+        if (steps == null || steps.isEmpty()) return null;
+        return new NodeId(steps.get(steps.size() - 1).id());
     }
 
     private boolean isAllowedByPolicy(SafetyClassification safety, TargetPolicy policy) {
@@ -260,21 +257,32 @@ public class PlanCompiler {
                 policy.allowedOperationClasses().contains(safety);
     }
 
-    private long parseTimeout(String timeout) {
+    private long parseTimeout(
+            String timeout,
+            String phase,
+            String stepId,
+            String field,
+            List<PlanDiagnostic> diagnostics
+    ) {
         if (timeout == null || timeout.isBlank()) return 0;
         try {
-            // Support "30s", "5000ms", "1m" formats
             String trimmed = timeout.trim().toLowerCase();
+            long multiplier = 1;
             if (trimmed.endsWith("ms")) {
-                return Long.parseLong(trimmed.substring(0, trimmed.length() - 2));
+                trimmed = trimmed.substring(0, trimmed.length() - 2);
             } else if (trimmed.endsWith("s")) {
-                return Long.parseLong(trimmed.substring(0, trimmed.length() - 1)) * 1000;
+                trimmed = trimmed.substring(0, trimmed.length() - 1);
+                multiplier = 1000;
             } else if (trimmed.endsWith("m")) {
-                return Long.parseLong(trimmed.substring(0, trimmed.length() - 1)) * 60000;
-            } else {
-                return Long.parseLong(trimmed);
+                trimmed = trimmed.substring(0, trimmed.length() - 1);
+                multiplier = 60_000;
             }
-        } catch (NumberFormatException e) {
+            long parsed = Math.multiplyExact(Long.parseLong(trimmed), multiplier);
+            if (parsed < 0) throw new NumberFormatException("negative duration");
+            return parsed;
+        } catch (ArithmeticException | NumberFormatException e) {
+            diagnostics.add(PlanDiagnostic.error(
+                    phase, stepId, "Invalid " + field + ": " + timeout));
             return 0;
         }
     }

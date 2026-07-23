@@ -5,6 +5,7 @@ import dev.faultora.spi.contract.SecretResolutionException;
 import dev.faultora.spi.contract.SecretResolver;
 
 import java.util.Map;
+import java.util.Locale;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -119,11 +120,10 @@ public class EnvironmentSecretResolver implements SecretResolver {
     }
 
     private String envVarName(String handleId) {
-        // Convert handle ID to env var: lowercase, replace hyphens/periods with underscores, uppercase
-        return prefix + handleId.toLowerCase()
+        return prefix + handleId.toLowerCase(Locale.ROOT)
                 .replace("-", "_")
                 .replace(".", "_")
-                .toUpperCase();
+                .toUpperCase(Locale.ROOT);
     }
 
     /**

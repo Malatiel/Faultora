@@ -1,6 +1,5 @@
 package dev.faultora.connector.http;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.faultora.model.catalog.*;
 import dev.faultora.model.identifier.ProtocolId;
@@ -153,7 +152,7 @@ public class HttpConnector implements Connector {
         if (!result.isAllowed()) {
             throw new DestinationPolicyViolation(result.errorMessage());
         }
-        return new HttpPreparedTarget(target, context, result);
+        return new HttpPreparedTarget(target);
     }
 
     @Override
@@ -187,10 +186,6 @@ public class HttpConnector implements Connector {
                 return OperationResult.failure(error, 0);
             }
 
-            // Enforce payload size limits
-            long maxPayload = MAX_RESPONSE_BYTES;
-
-            // Build the ClassicHttpRequest with DNS pinning
             InetAddress[] pinnedAddresses = extractPinnedAddresses(policyResult);
             String currentMethod = method;
             ClassicHttpRequest request = buildRequest(currentMethod, resolvedUri, inputs, context);
@@ -203,8 +198,8 @@ public class HttpConnector implements Connector {
                 response = executeWithPinning(request, pinnedAddresses, context);
 
                 int statusCode = response.getCode();
-                if (statusCode < 300 || statusCode >= 400) {
-                    break; // Not a redirect
+                if (!isRedirectStatus(statusCode)) {
+                    break;
                 }
 
                 Header locationHeader = response.getFirstHeader("location");
@@ -290,30 +285,13 @@ public class HttpConnector implements Connector {
 
             long durationMs = (System.nanoTime() - startTime) / 1_000_000;
 
-            // Parse response
             int statusCode = response.getCode();
             HttpEntity entity = response.getEntity();
-            byte[] responseBytes = readBounded(entity, maxPayload);
+            byte[] responseBytes = readBounded(entity, maxResponseBytes(context));
 
-            // Parse JSON if possible
-            JsonNode responseJson = null;
-            String contentType = "";
-            Header contentTypeHeader = response.getFirstHeader("content-type");
-            if (contentTypeHeader != null) {
-                contentType = contentTypeHeader.getValue();
-            }
-            if (contentType.contains("json") && responseBytes.length > 0) {
-                try {
-                    responseJson = MAPPER.readTree(responseBytes);
-                } catch (Exception ignored) {
-                    // Not valid JSON
-                }
-            }
-
-            // Build response headers map
             Map<String, List<String>> responseHeaders = new LinkedHashMap<>();
             for (Header h : response.getHeaders()) {
-                String key = h.getName().toLowerCase();
+                String key = h.getName().toLowerCase(Locale.ROOT);
                 responseHeaders.computeIfAbsent(key, k -> new ArrayList<>()).add(h.getValue());
             }
 
@@ -369,16 +347,13 @@ public class HttpConnector implements Connector {
                     LOG.debug("Failed to close HTTP response: {}", closeFailure.getMessage());
                 }
             }
-            // Always clear pinned addresses from ThreadLocal to prevent leaks
             PINNED_ADDRESSES.remove();
             CONNECT_TIMEOUT.remove();
         }
     }
 
     @Override
-    public void release(PreparedTarget preparedTarget) {
-        // Nothing to release for HTTP connections
-    }
+    public void release(PreparedTarget preparedTarget) {}
 
     @Override
     public void close() {
@@ -456,25 +431,16 @@ public class HttpConnector implements Connector {
             Map<String, Object> inputs,
             ConnectorContext context
     ) throws IOException {
-        // Create the URI with original hostname (for Host header / SNI)
-        String uriString = uri.toString();
-
         ClassicRequestBuilder builder = ClassicRequestBuilder.create(method.toUpperCase())
-                .setUri(uriString);
+                .setUri(uri);
 
-        // Set method and body
         String body = buildBody(inputs);
         switch (method.toUpperCase()) {
-            case "GET" -> {}
-            case "DELETE" -> {}
-            case "POST" -> builder.setEntity(bodyEntity(body));
-            case "PUT" -> builder.setEntity(bodyEntity(body));
-            case "PATCH" -> builder.setEntity(bodyEntity(body));
-            case "HEAD" -> {}
-            default -> builder.setEntity(bodyEntity(body));
+            case "POST", "PUT", "PATCH" -> builder.setEntity(bodyEntity(body));
+            case "GET", "DELETE", "HEAD", "OPTIONS" -> {}
+            default -> throw new IOException("Unsupported HTTP method: " + method);
         }
 
-        // Add headers
         addHeaders(builder, inputs, context);
 
         return builder.build();
@@ -498,33 +464,27 @@ public class HttpConnector implements Connector {
         }
         builder.addHeader("Accept", "application/json");
 
-        // Resolve and inject credentials from secret resolver.
-        // If authSecretId is configured, auth is mandatory — failure to resolve
-        // the secret fails the entire request (fail-closed).
-        Function<String, SecretHandle> secretResolver = context.secretResolver();
-        if (secretResolver != null) {
-            Object authSecretId = context.config().get("authSecretId");
-            if (authSecretId instanceof String secretId && !secretId.isBlank()) {
-                SecretHandle handle = secretResolver.apply(secretId);
-                if (handle == null) {
-                    throw new IOException(
-                            "Secret resolver returned null for: " + secretId);
-                }
-                if (handle.isExpired()) {
-                    throw new IOException(
-                            "Secret handle expired for: " + secretId);
-                }
-                char[] secretValue = handle.secretValue();
-                if (secretValue == null || secretValue.length == 0) {
-                    throw new IOException(
-                            "Secret value is empty for: " + secretId);
-                }
-                try {
-                    builder.addHeader("Authorization", "Bearer " + new String(secretValue));
-                } finally {
-                    // Zero the secret value immediately after use
-                    Arrays.fill(secretValue, '\0');
-                }
+        Object authSecretId = context.config().get("authSecretId");
+        if (authSecretId instanceof String secretId && !secretId.isBlank()) {
+            Function<String, SecretHandle> secretResolver = context.secretResolver();
+            if (secretResolver == null) {
+                throw new IOException("No secret resolver configured for: " + secretId);
+            }
+            SecretHandle handle = secretResolver.apply(secretId);
+            if (handle == null) {
+                throw new IOException("Secret resolver returned null for: " + secretId);
+            }
+            if (handle.isExpired()) {
+                throw new IOException("Secret handle expired for: " + secretId);
+            }
+            char[] secretValue = handle.secretValue();
+            if (secretValue == null || secretValue.length == 0) {
+                throw new IOException("Secret value is empty for: " + secretId);
+            }
+            try {
+                builder.addHeader("Authorization", "Bearer " + new String(secretValue));
+            } finally {
+                Arrays.fill(secretValue, '\0');
             }
         }
 
@@ -589,6 +549,14 @@ public class HttpConnector implements Connector {
         };
     }
 
+    static boolean isRedirectStatus(int statusCode) {
+        return statusCode == 301
+                || statusCode == 302
+                || statusCode == 303
+                || statusCode == 307
+                || statusCode == 308;
+    }
+
     /**
      * Get the effective port of a URI, using the default port for the scheme
      * if no explicit port is specified.
@@ -607,13 +575,12 @@ public class HttpConnector implements Connector {
     // ---- Helpers ----
 
     private String buildUrl(String baseUrl, String path, Map<String, Object> inputs) {
-        // Replace path parameters
         String resolvedPath = path;
         for (Map.Entry<String, Object> entry : inputs.entrySet()) {
             String placeholder = "{" + entry.getKey() + "}";
             if (resolvedPath.contains(placeholder)) {
                 resolvedPath = resolvedPath.replace(placeholder,
-                        entry.getValue() != null ? entry.getValue().toString() : "");
+                        entry.getValue() != null ? encodePathSegment(entry.getValue().toString()) : "");
             }
         }
 
@@ -629,7 +596,7 @@ public class HttpConnector implements Connector {
                     entry.getValue() != null &&
                     !entry.getKey().equals("body") &&
                     !entry.getKey().equals("headers")) {
-                queryParams.add(entry.getKey() + "=" +
+                queryParams.add(java.net.URLEncoder.encode(entry.getKey(), StandardCharsets.UTF_8) + "=" +
                         java.net.URLEncoder.encode(entry.getValue().toString(), StandardCharsets.UTF_8));
             }
         }
@@ -641,15 +608,31 @@ public class HttpConnector implements Connector {
         return url.toString();
     }
 
-    private String buildBody(Map<String, Object> inputs) {
+    private static String encodePathSegment(String value) {
+        return java.net.URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
+    }
+
+    private String buildBody(Map<String, Object> inputs) throws IOException {
         Object body = inputs.get("body");
         if (body == null) return null;
         if (body instanceof String s) return s;
-        try {
-            return MAPPER.writeValueAsString(body);
-        } catch (Exception e) {
-            return body.toString();
+        return MAPPER.writeValueAsString(body);
+    }
+
+    private static long maxResponseBytes(ConnectorContext context) {
+        Object configured = context.config().get("maxResponseBytes");
+        if (configured == null) {
+            return MAX_RESPONSE_BYTES;
         }
+        if (!(configured instanceof Number number)) {
+            throw new IllegalArgumentException("maxResponseBytes must be numeric");
+        }
+        long value = number.longValue();
+        if (value <= 0 || value > MAX_RESPONSE_BYTES) {
+            throw new IllegalArgumentException(
+                    "maxResponseBytes must be between 1 and " + MAX_RESPONSE_BYTES);
+        }
+        return value;
     }
 
     private HttpEntity bodyEntity(String body) {
@@ -708,14 +691,9 @@ public class HttpConnector implements Connector {
      */
     private static class HttpPreparedTarget implements PreparedTarget {
         private final TargetDefinition target;
-        private final ConnectorContext context;
-        private final DestinationPolicy.CheckResult checkResult;
 
-        HttpPreparedTarget(TargetDefinition target, ConnectorContext context,
-                           DestinationPolicy.CheckResult checkResult) {
+        HttpPreparedTarget(TargetDefinition target) {
             this.target = target;
-            this.context = context;
-            this.checkResult = checkResult;
         }
 
         @Override

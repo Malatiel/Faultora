@@ -3,13 +3,41 @@ package dev.faultora.engine.evidence;
 import dev.faultora.model.security.EvidencePolicy;
 import org.junit.jupiter.api.Test;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class NodeEvidenceTest {
+
+    @Test
+    void bodyIsDefensivelyCopiedOnWriteAndRead() {
+        EvidencePolicy policy = new EvidencePolicy(
+                true, false, Set.of(), 1024, 0, List.of(), Set.of(), "session");
+        NodeEvidence evidence = new NodeEvidence(policy);
+        byte[] source = "safe".getBytes(StandardCharsets.UTF_8);
+
+        evidence.body(source);
+        source[0] = 'X';
+        byte[] firstRead = evidence.responseBody().orElseThrow();
+        firstRead[1] = 'X';
+
+        assertThat(new String(evidence.responseBody().orElseThrow(), StandardCharsets.UTF_8))
+                .isEqualTo("safe");
+    }
+
+    @Test
+    void protocolEvidenceViewIsImmutable() {
+        NodeEvidence evidence = new NodeEvidence();
+        evidence.protocolEvidence("attempt", 1);
+
+        assertThatThrownBy(() -> evidence.protocolEvidence().put("attempt", 2))
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThat(evidence.protocolEvidence()).containsEntry("attempt", 1);
+    }
 
     @Test
     void headersFilteredByDenylist() {

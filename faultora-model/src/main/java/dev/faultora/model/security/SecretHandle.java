@@ -122,12 +122,10 @@ public final class SecretHandle {
                 && Objects.equals(redacted, other.redacted)
                 && Objects.equals(sourceType, other.sourceType)
                 && expiresAt == other.expiresAt;
-        // valueSupplier is intentionally excluded from equals
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(handleId, redacted, sourceType, expiresAt);
-        // valueSupplier is intentionally excluded from hashCode
     }
 }

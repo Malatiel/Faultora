@@ -73,9 +73,9 @@ public class TestCommand implements Command {
                 case "--scenario", "-s" -> scenarioPath = Path.of(requireNext(it, "--scenario"));
                 case "--openapi", "-o" -> openApiPath = Path.of(requireNext(it, "--openapi"));
                 case "--target", "-t" -> targetUrl = requireNext(it, "--target");
-                case "--format", "-f" -> formats = List.of(requireNext(it, "--format").split(","));
+                case "--format", "-f" -> formats = parseFormats(requireNext(it, "--format"));
                 case "--output" -> outputDir = Path.of(requireNext(it, "--output"));
-                case "--seed" -> seed = Long.parseLong(requireNext(it, "--seed"));
+                case "--seed" -> seed = parseSeed(requireNext(it, "--seed"));
                 case "--allow-private" -> allowPrivate = true;
                 case "--auth-secret-id" -> authSecretId = requireNext(it, "--auth-secret-id");
                 case "--help", "-h" -> {
@@ -93,9 +93,13 @@ public class TestCommand implements Command {
             System.err.println("Error: --scenario is required");
             return FaultoraCli.EXIT_INVALID_CONFIG;
         }
+        Set<String> supportedFormats = Set.of("console", "json", "junit", "html");
+        if (formats.isEmpty() || !supportedFormats.containsAll(formats)) {
+            System.err.println("Unknown format. Supported formats: console,json,junit,html");
+            return FaultoraCli.EXIT_INVALID_CONFIG;
+        }
 
         try {
-            // 1. Parse scenario
             String scenarioContent = Files.readString(scenarioPath, StandardCharsets.UTF_8);
             ScenarioParser parser = new ScenarioParser();
             ParseResult<ScenarioDocument> parseResult = parser.parse(scenarioContent);
@@ -106,10 +110,17 @@ public class TestCommand implements Command {
                 return FaultoraCli.EXIT_INVALID_CONFIG;
             }
 
-            ScenarioDocument scenario = parseResult.document();
             parseResult.warnings().forEach(d -> System.err.println("Warning: " + d.message()));
+            ParseResult<ScenarioDocument> validation =
+                    new ScenarioValidator().validate(parseResult.document());
+            if (!validation.isSuccess()) {
+                System.err.println("Scenario validation failed:");
+                validation.errors().forEach(d -> System.err.println("  " + d.message()));
+                return FaultoraCli.EXIT_INVALID_CONFIG;
+            }
+            validation.warnings().forEach(d -> System.err.println("Warning: " + d.message()));
+            ScenarioDocument scenario = validation.document();
 
-            // 2. Load or import catalog
             ApiCatalog catalog;
             if (openApiPath != null) {
                 catalog = importCatalog(openApiPath);
@@ -117,7 +128,6 @@ public class TestCommand implements Command {
                 catalog = buildCatalogFromScenario(scenario, targetUrl);
             }
 
-            // 3. Build execution context
             TargetPolicy targetPolicy = new TargetPolicy(
                     Set.of(),
                     Set.of(SafetyClassification.READ_ONLY, SafetyClassification.MUTATING),
@@ -127,16 +137,13 @@ public class TestCommand implements Command {
             ExpressionContext exprContext = ExpressionContext.builder().build();
 
             EnvironmentSecretResolver secretResolver = new EnvironmentSecretResolver();
-            // Use a policy that captures bodies and headers so that assertions
-            // (jsonpath, header, etc.) can evaluate against actual evidence.
-            // MINIMAL strips bodies/headers before assertions run, causing
-            // INDETERMINATE to be treated as PASSED — a false-positive.
             EvidencePolicy evidencePolicy = new EvidencePolicy(
                     true, true,
                     Set.of("authorization", "cookie", "set-cookie", "proxy-authorization"),
                     10 * 1024 * 1024, 1000, List.of(), Set.of(), "session");
             Map<String, Object> connectorConfig = new LinkedHashMap<>();
             connectorConfig.put("baseUrl", targetUrl);
+            connectorConfig.put("maxResponseBytes", targetPolicy.maxPayloadBytes());
             if (authSecretId != null) {
                 connectorConfig.put("authSecretId", authSecretId);
             }
@@ -146,7 +153,6 @@ public class TestCommand implements Command {
                     5000, 30000, 60000,
                     connectorConfig);
 
-            // 4. Compile plan
             String scenarioDigest = "sha256:" + sha256Hex(scenarioContent);
             String catalogDigest = "sha256:" + sha256Hex(MAPPER.writeValueAsString(catalog));
             RunId runId = new RunId("run-" + seed);
@@ -166,42 +172,36 @@ public class TestCommand implements Command {
                     .filter(d -> d.severity() == PlanDiagnostic.Severity.WARNING)
                     .forEach(d -> System.err.println("Warning: " + d.message()));
 
-            // 5. Set up connectors and assertion providers
-            HttpConnector httpConnector = allowPrivate
-                    ? new HttpConnector(DestinationPolicy.permissive())
-                    : new HttpConnector();
-            Map<String, Connector> connectors = Map.of("http", httpConnector);
             Map<String, AssertionProvider> assertionProviders = Map.of(
                     "status", new StatusAssertionProvider(),
                     "duration", new DurationAssertionProvider(),
                     "header", new HeaderAssertionProvider(),
                     "jsonpath", new JsonPathAssertionProvider());
 
-            // 6. Execute
-            LocalEngine engine = new LocalEngine(connectors, assertionProviders);
             Files.createDirectories(outputDir);
             Path journalPath = outputDir.resolve("events.ndjson");
 
             RunResult result;
-            try (RunJournal journal = new RunJournal(journalPath, true)) {
-                System.out.println("Running scenario: " + scenario.metadata().name());
-                System.out.println("Target: " + targetUrl);
-                System.out.println("Seed: " + seed);
-                System.out.println();
+            try (HttpConnector httpConnector = allowPrivate
+                    ? new HttpConnector(DestinationPolicy.permissive())
+                    : new HttpConnector()) {
+                LocalEngine engine = new LocalEngine(
+                        Map.of("http", httpConnector), assertionProviders);
+                try (RunJournal journal = new RunJournal(journalPath, true)) {
+                    System.out.println("Running scenario: " + scenario.metadata().name());
+                    System.out.println("Target: " + targetUrl);
+                    System.out.println("Seed: " + seed);
+                    System.out.println();
 
-                result = engine.execute(
-                        compilation.plan(), journal, exprContext,
-                        connectorContext, new AtomicBoolean(false));
+                    result = engine.execute(
+                            compilation.plan(), journal, exprContext,
+                            connectorContext, new AtomicBoolean(false));
+                }
             }
 
-            // 7. Generate reports
             List<RunEvent> events = loadEvents(journalPath);
             for (String format : formats) {
-                ReportRenderer renderer = buildRenderer(format.toLowerCase(Locale.ROOT));
-                if (renderer == null) {
-                    System.err.println("Unknown format: " + format);
-                    continue;
-                }
+                ReportRenderer renderer = buildRenderer(format);
 
                 if ("console".equals(format)) {
                     renderer.render(events, new PrintWriter(System.out, true));
@@ -213,14 +213,13 @@ public class TestCommand implements Command {
                         default -> "." + format;
                     };
                     Path reportPath = outputDir.resolve("report" + ext);
-                    try (Writer w = new BufferedWriter(new FileWriter(reportPath.toFile()))) {
+                    try (Writer w = Files.newBufferedWriter(reportPath, StandardCharsets.UTF_8)) {
                         renderer.render(events, w);
                     }
                     System.out.println("Report written: " + reportPath);
                 }
             }
 
-            // 8. Summary and exit code
             System.out.printf("%nResult: %s — %d nodes, %d passed, %d failed (%dms)%n",
                     result.status(), result.totalNodes(),
                     result.passedAssertions(), result.failedAssertions(),
@@ -310,6 +309,24 @@ public class TestCommand implements Command {
             case "html" -> new HtmlRenderer();
             default -> null;
         };
+    }
+
+    private List<String> parseFormats(String value) {
+        return Arrays.stream(value.split(","))
+                .map(String::trim)
+                .filter(format -> !format.isEmpty())
+                .map(format -> format.toLowerCase(Locale.ROOT))
+                .distinct()
+                .toList();
+    }
+
+    private long parseSeed(String value) {
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException invalid) {
+            throw new CliException(
+                    "Option --seed requires an integer", FaultoraCli.EXIT_INVALID_CONFIG);
+        }
     }
 
     private String requireNext(Iterator<String> it, String flag) {

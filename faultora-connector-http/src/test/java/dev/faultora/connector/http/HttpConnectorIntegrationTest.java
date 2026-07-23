@@ -79,6 +79,46 @@ class HttpConnectorIntegrationTest {
     }
 
     @Test
+    void enforcesConfiguredResponseLimit() throws Exception {
+        server.createContext("/large", exchange -> {
+            byte[] response = "response-is-larger-than-limit".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            try (OutputStream output = exchange.getResponseBody()) {
+                output.write(response);
+            }
+        });
+        server.start();
+
+        ConnectorContext limitedContext = new ConnectorContext(
+                EvidencePolicy.MINIMAL,
+                handleId -> null,
+                5000, 30000, 60000,
+                Map.of("baseUrl", baseUrl, "maxResponseBytes", 8));
+        TargetDefinition target = new TargetDefinition(
+                new TargetId("test"), "Test", baseUrl,
+                List.of(new ProtocolId("http")), List.of(), Map.of());
+        OperationDefinition operation = new OperationDefinition(
+                new OperationId("large-response"),
+                new ProtocolId("http"),
+                new TargetId("test"),
+                SafetyClassification.READ_ONLY,
+                Map.of(), null, Map.of(),
+                Map.of("method", "GET", "path", "/large"));
+
+        try (HttpConnector connector = new HttpConnector(DestinationPolicy.permissive())) {
+            OperationResult result = connector.execute(
+                    connector.prepare(target, limitedContext),
+                    operation,
+                    Map.of(),
+                    limitedContext);
+
+            assertThat(result.isSuccess()).isFalse();
+            assertThat(result.error()).isNotNull();
+            assertThat(result.error().code()).isEqualTo("RESPONSE_TOO_LARGE");
+        }
+    }
+
+    @Test
     void redirectMethodUsesCurrentHopInsteadOfOriginalRequest() {
         assertThat(HttpConnector.redirectedMethod(302, "POST")).isEqualTo("GET");
         assertThat(HttpConnector.redirectedMethod(307, "GET")).isEqualTo("GET");
@@ -131,7 +171,7 @@ class HttpConnectorIntegrationTest {
 
             OperationResult result = connector.execute(prepared, operation, Map.of(), authContext);
 
-            assertThat(result).isNotNull();
+            assertThat(result.isSuccess()).isTrue();
             assertThat(capturedAuth.get())
                     .as("Authorization header should be injected")
                     .isEqualTo("Bearer my-secret-token");
@@ -179,7 +219,7 @@ class HttpConnectorIntegrationTest {
 
             OperationResult result = connector.execute(prepared, operation, Map.of(), noAuthContext);
 
-            assertThat(result).isNotNull();
+            assertThat(result.isSuccess()).isTrue();
             assertThat(capturedAuth.get())
                     .as("No Authorization header when authSecretId not configured")
                     .isNull();
@@ -249,7 +289,7 @@ class HttpConnectorIntegrationTest {
 
                 OperationResult result = connector.execute(prepared, operation, Map.of(), authContext);
 
-                assertThat(result).isNotNull();
+                assertThat(result.isSuccess()).isTrue();
                 // Auth header should be stripped on cross-origin redirect
                 // (different port = different origin)
                 assertThat(capturedRedirectAuth.get())
@@ -313,7 +353,7 @@ class HttpConnectorIntegrationTest {
 
             OperationResult result = connector.execute(prepared, operation, Map.of(), authContext);
 
-            assertThat(result).isNotNull();
+            assertThat(result.isSuccess()).isTrue();
             // Auth header should be preserved on same-origin redirect
             assertThat(capturedFinalAuth.get())
                     .as("Authorization should be preserved on same-origin redirect")
@@ -393,12 +433,53 @@ class HttpConnectorIntegrationTest {
 
             OperationResult result = connector.execute(prepared, operation, Map.of(), context);
 
-            assertThat(result).isNotNull();
+            assertThat(result.isSuccess()).isTrue();
             assertThat(result.statusCode()).isEqualTo(200);
             // Host header should contain 127.0.0.1:<port>
             assertThat(capturedHost.get())
                     .as("Host header should be derived from URI")
                     .contains("127.0.0.1");
+        } finally {
+            connector.close();
+        }
+    }
+
+    @Test
+    void encodesPathAndQueryInputs() throws Exception {
+        AtomicReference<String> capturedPath = new AtomicReference<>();
+        AtomicReference<String> capturedQuery = new AtomicReference<>();
+        server.createContext("/items/", exchange -> {
+            capturedPath.set(exchange.getRequestURI().getRawPath());
+            capturedQuery.set(exchange.getRequestURI().getRawQuery());
+            exchange.sendResponseHeaders(204, -1);
+        });
+        server.start();
+
+        HttpConnector connector = new HttpConnector(DestinationPolicy.permissive());
+        ConnectorContext context = new ConnectorContext(
+                EvidencePolicy.MINIMAL, handleId -> null,
+                5000, 30000, 60000, Map.of("baseUrl", baseUrl));
+        TargetDefinition target = new TargetDefinition(
+                new TargetId("test"), "Test", baseUrl,
+                List.of(new ProtocolId("http")), List.of(), Map.of());
+        OperationDefinition operation = new OperationDefinition(
+                new OperationId("encoded-inputs"),
+                new ProtocolId("http"),
+                new TargetId("test"),
+                SafetyClassification.READ_ONLY,
+                Map.of(), null, Map.of(),
+                Map.of("method", "GET", "path", "/items/{id}"));
+
+        try {
+            OperationResult result = connector.execute(
+                    connector.prepare(target, context),
+                    operation,
+                    Map.of("id", "a/b", "search term", "hello world"),
+                    context);
+
+            assertThat(result.isSuccess()).isTrue();
+            assertThat(capturedPath.get()).isEqualTo("/items/a%2Fb");
+            assertThat(capturedQuery.get()).isEqualTo("search+term=hello+world");
         } finally {
             connector.close();
         }

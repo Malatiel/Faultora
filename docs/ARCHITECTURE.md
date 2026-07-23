@@ -475,7 +475,6 @@ faultora/
 ├── faultora-engine
 ├── faultora-import-openapi
 ├── faultora-connector-http
-├── faultora-fault-toxiproxy
 ├── faultora-assertions-core
 ├── faultora-reporting
 ├── faultora-cli

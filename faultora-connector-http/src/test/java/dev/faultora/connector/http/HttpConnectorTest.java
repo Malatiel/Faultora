@@ -3,9 +3,9 @@ package dev.faultora.connector.http;
 import dev.faultora.model.catalog.*;
 import dev.faultora.model.identifier.*;
 import dev.faultora.model.security.EvidencePolicy;
-import dev.faultora.model.security.SecretHandle;
 import dev.faultora.spi.context.ConnectorContext;
 import dev.faultora.spi.result.OperationResult;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -33,6 +33,11 @@ class HttpConnectorTest {
                 5000, 30000, 60000,
                 Map.of()
         );
+    }
+
+    @AfterEach
+    void tearDown() {
+        connector.close();
     }
 
     @Test
@@ -92,42 +97,8 @@ class HttpConnectorTest {
         );
 
         OperationResult result = connector.execute(prepared, operation, Map.of(), shortCtx);
-        assertThat(result).isNotNull();
-    }
-
-    @Test
-    void executeBlockedDestinationReturnsPolicyViolation() {
-        HttpConnector blockingConnector = new HttpConnector(
-                new DestinationPolicy(false, Set.of("api.example.com"), Set.of()));
-
-        TargetDefinition target = new TargetDefinition(
-                new TargetId("test"), "Test", "http://evil.example.com",
-                List.of(new ProtocolId("http")), List.of(), Map.of()
-        );
-
-        // Use permissive prepare (policy check is on prepare for the base URL)
-        // But execute re-checks the resolved URL
-        var prepared = connector.prepare(target, context);
-
-        OperationDefinition operation = new OperationDefinition(
-                new OperationId("test-op"),
-                new ProtocolId("http"),
-                new TargetId("test"),
-                SafetyClassification.READ_ONLY,
-                Map.of(), null, Map.of(),
-                Map.of("method", "GET", "path", "/")
-        );
-
-        // The permissive connector will try to connect; the blocking one would reject
-        // Let's test the blocking connector directly
-        ConnectorContext shortCtx = new ConnectorContext(
-                EvidencePolicy.MINIMAL, handleId -> null,
-                500, 500, 1000, Map.of()
-        );
-
-        // With permissive connector, it should attempt the connection
-        OperationResult result = connector.execute(prepared, operation, Map.of(), shortCtx);
-        assertThat(result).isNotNull();
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.error()).isNotNull();
     }
 
     @Test
@@ -211,40 +182,6 @@ class HttpConnectorTest {
     // ---- Auth injection tests ----
 
     @Test
-    void executeWithAuthSecretIdInjectsAuthorization() {
-        // This test verifies that when authSecretId is in config and the resolver
-        // returns a valid handle, the Authorization header is injected.
-        // We can't fully test the header injection without a real server,
-        // but we can verify the connector doesn't crash with auth config.
-        SecretHandle handle = new SecretHandle(
-                "test-key", "***abcd", "env", -1,
-                () -> "test-secret-value".toCharArray());
-        ConnectorContext authContext = new ConnectorContext(
-                EvidencePolicy.MINIMAL,
-                handleId -> handle,
-                500, 500, 1000,
-                Map.of("baseUrl", "http://192.0.2.1:1", "authSecretId", "test-key"));
-
-        TargetDefinition target = new TargetDefinition(
-                new TargetId("auth"), "Auth", "http://192.0.2.1:1",
-                List.of(new ProtocolId("http")), List.of(), Map.of());
-        var prepared = connector.prepare(target, authContext);
-
-        OperationDefinition operation = new OperationDefinition(
-                new OperationId("test-op"),
-                new ProtocolId("http"),
-                new TargetId("auth"),
-                SafetyClassification.READ_ONLY,
-                Map.of(), null, Map.of(),
-                Map.of("method", "GET", "path", "/"));
-
-        // Should not throw — auth header is injected but connection fails
-        OperationResult result = connector.execute(prepared, operation, Map.of(), authContext);
-        assertThat(result).isNotNull();
-        // Connection to 192.0.2.1:1 should fail with a network error, not an auth error
-    }
-
-    @Test
     void executeWithFailedSecretResolutionFailsRequest() {
         // When secret resolution throws, the connector should fail the request
         // (fail-closed: auth was explicitly configured but cannot be resolved)
@@ -267,9 +204,9 @@ class HttpConnectorTest {
                 Map.of(), null, Map.of(),
                 Map.of("method", "GET", "path", "/"));
 
-        // Should return failure — secret resolution error fails the request
         OperationResult result = connector.execute(prepared, operation, Map.of(), failContext);
-        assertThat(result).isNotNull();
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.error().message()).contains("Secret not found");
     }
 
     @Test
@@ -295,8 +232,50 @@ class HttpConnectorTest {
                 Map.of(), null, Map.of(),
                 Map.of("method", "GET", "path", "/"));
 
-        // Should return failure — null secret handle fails the request
         OperationResult result = connector.execute(prepared, operation, Map.of(), nullContext);
-        assertThat(result).isNotNull();
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.error().message()).contains("returned null");
+    }
+
+    @Test
+    void executeWithMissingSecretResolverFailsRequest() {
+        ConnectorContext missingResolverContext = new ConnectorContext(
+                EvidencePolicy.MINIMAL,
+                null,
+                500, 500, 1000,
+                Map.of("baseUrl", "http://192.0.2.1:1", "authSecretId", "test-key"));
+        TargetDefinition target = new TargetDefinition(
+                new TargetId("missing-resolver"), "Missing resolver", "http://192.0.2.1:1",
+                List.of(new ProtocolId("http")), List.of(), Map.of());
+        var prepared = connector.prepare(target, missingResolverContext);
+        OperationDefinition operation = new OperationDefinition(
+                new OperationId("test-op"),
+                new ProtocolId("http"),
+                new TargetId("missing-resolver"),
+                SafetyClassification.READ_ONLY,
+                Map.of(), null, Map.of(),
+                Map.of("method", "GET", "path", "/"));
+
+        OperationResult result =
+                connector.execute(prepared, operation, Map.of(), missingResolverContext);
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.error().message()).contains("No secret resolver configured");
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "300, false",
+            "301, true",
+            "302, true",
+            "303, true",
+            "304, false",
+            "305, false",
+            "307, true",
+            "308, true",
+            "399, false"
+    })
+    void recognizesOnlyDefinedRedirectStatuses(int status, boolean expected) {
+        assertThat(HttpConnector.isRedirectStatus(status)).isEqualTo(expected);
     }
 }

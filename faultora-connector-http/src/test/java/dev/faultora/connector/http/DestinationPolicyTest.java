@@ -148,8 +148,8 @@ class DestinationPolicyTest {
     @Test
     void allowlistPermitsMatchingHost() {
         DestinationPolicy policy = new DestinationPolicy(
-                false, Set.of("api.example.com"), Set.of());
-        assertThat(policy.check(URI.create("https://api.example.com")).isAllowed()).isTrue();
+                false, Set.of("localhost"), Set.of());
+        assertThat(policy.check(URI.create("https://localhost")).isAllowed()).isTrue();
     }
 
     @Test
@@ -197,6 +197,34 @@ class DestinationPolicyTest {
         DestinationPolicy policy = DestinationPolicy.permissive();
         assertThat(policy.check(URI.create("https://this-host-does-not-exist.invalid")).isAllowed())
                 .isTrue();
+    }
+
+    @Test
+    void allowlistFailsClosedWhenHostCannotBeResolved() {
+        DestinationPolicy policy = new DestinationPolicy(
+                false, Set.of("this-host-does-not-exist.invalid"), Set.of());
+
+        assertThat(policy.check(URI.create("https://this-host-does-not-exist.invalid")).isAllowed())
+                .isFalse();
+    }
+
+    @Test
+    void rejectsCredentialsEmbeddedInDestinationUri() {
+        DestinationPolicy policy = DestinationPolicy.permissive();
+
+        assertThat(policy.check(URI.create("https://user:password@example.com")).isAllowed())
+                .isFalse();
+    }
+
+    @Test
+    void allowedAddressesAreDefensivelyCopied() throws Exception {
+        DestinationPolicy.CheckResult.Allowed result =
+                new DestinationPolicy.CheckResult.Allowed(
+                        new java.net.InetAddress[]{java.net.InetAddress.getByName("8.8.8.8")});
+        java.net.InetAddress[] first = result.resolvedAddresses();
+        first[0] = java.net.InetAddress.getByName("127.0.0.1");
+
+        assertThat(result.resolvedAddress().getHostAddress()).isEqualTo("8.8.8.8");
     }
 
     @Test

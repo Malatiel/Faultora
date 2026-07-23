@@ -30,8 +30,17 @@ public record TargetPolicy(
         Set<String> allowedEnvironments
 ) {
     public TargetPolicy {
+        allowedTargets = allowedTargets == null ? Set.of() : Set.copyOf(allowedTargets);
+        allowedOperationClasses = allowedOperationClasses == null
+                ? Set.of()
+                : Set.copyOf(allowedOperationClasses);
+        allowedFaultTypes = allowedFaultTypes == null ? Set.of() : Set.copyOf(allowedFaultTypes);
+        allowedEnvironments = allowedEnvironments == null
+                ? Set.of()
+                : Set.copyOf(allowedEnvironments);
         if (maxRequests <= 0) throw new IllegalArgumentException("maxRequests must be positive");
         if (maxConcurrency <= 0) throw new IllegalArgumentException("maxConcurrency must be positive");
         if (maxDurationMs <= 0) throw new IllegalArgumentException("maxDurationMs must be positive");
+        if (maxPayloadBytes <= 0) throw new IllegalArgumentException("maxPayloadBytes must be positive");
     }
 }

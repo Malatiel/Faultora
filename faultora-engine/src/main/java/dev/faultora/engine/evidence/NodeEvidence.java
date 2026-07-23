@@ -134,9 +134,11 @@ public class NodeEvidence implements EvidenceView {
             return;
         }
 
-        byte[] effective = body;
+        byte[] effective;
         if (exceedsCaptureLimit(body)) {
             effective = Arrays.copyOf(body, (int) evidencePolicy.maxBodyBytes());
+        } else {
+            effective = Arrays.copyOf(body, body.length);
         }
         this.body = effective;
         try {
@@ -184,7 +186,7 @@ public class NodeEvidence implements EvidenceView {
 
     @Override
     public Optional<byte[]> responseBody() {
-        return body != null ? Optional.of(body) : Optional.empty();
+        return body != null ? Optional.of(Arrays.copyOf(body, body.length)) : Optional.empty();
     }
 
     @Override
@@ -204,7 +206,7 @@ public class NodeEvidence implements EvidenceView {
 
     @Override
     public Map<String, Object> protocolEvidence() {
-        return protocolEvidence;
+        return Map.copyOf(protocolEvidence);
     }
 
     public boolean hasError() {
