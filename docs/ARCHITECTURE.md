@@ -1,7 +1,7 @@
 # Faultora architecture
 
 Status: proposed baseline  
-Audience: maintainers, implementers, and automation agents
+Audience: maintainers and implementers
 
 ## 1. Purpose
 
@@ -26,7 +26,7 @@ core execution model.
 - Compose sequential, parallel, repeated, and eventually consistent flows.
 - Inject faults at protocol, network, broker, and infrastructure boundaries.
 - Evaluate contract assertions and user-defined business invariants.
-- Run locally, in CI, through a private-network agent, or on distributed
+- Run locally, in CI, through a private-network runner, or on distributed
   workers.
 - Generate deterministic, inspectable reports and machine-readable results.
 
@@ -111,7 +111,7 @@ flowchart LR
     Q --> W1["Worker"]
     Q --> W2["Worker"]
     Q --> WN["Worker"]
-    W1 --> AG["Private-network agent"]
+    W1 --> AG["Private-network runner"]
     W2 --> AG
     AG --> SUT["Target system"]
     W1 --> OBJ["Artifact store"]
@@ -121,7 +121,7 @@ flowchart LR
 
 The controller manages metadata and coordination only. Traffic generation and
 fault execution remain in horizontally scalable workers located near the
-target. A closed deployment places the controller, queue, workers, agents,
+target. A closed deployment places the controller, queue, workers, runners,
 metadata store, artifact store, and identity provider inside the same governed
 infrastructure boundary.
 
@@ -364,7 +364,7 @@ Faults are classified by the layer at which they operate:
 | Protocol | HTTP status, malformed response, delayed webhook | HTTP test double or protocol plugin |
 | Network | latency, timeout, reset, bandwidth limit | Toxiproxy integration |
 | Broker | duplicate, delay, reorder, consumer interruption | connector-specific test facilities |
-| Process | restart, termination | container or agent capability |
+| Process | restart, termination | container or runner capability |
 | Infrastructure | pod deletion, resource pressure | Kubernetes extension |
 
 Faultora does not promise that every fault is available in every execution
@@ -492,7 +492,7 @@ Later distributed modules:
 faultora-controller
 faultora-scheduler
 faultora-worker
-faultora-agent
+faultora-runner
 faultora-plugin-protocol
 faultora-web
 ```
@@ -581,7 +581,7 @@ Before implementation reaches the affected component, record decisions for:
 6. Local event journal format.
 7. Extension discovery and capability negotiation.
 8. Distributed task transport and lease model.
-9. Agent-controller authentication and trust model.
+9. Runner-controller authentication and trust model.
 10. Persistence technology for controller metadata.
 
 Decisions should be captured as small ADRs under `docs/adr/` and referenced by

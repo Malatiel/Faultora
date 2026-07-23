@@ -12,7 +12,7 @@ when needed, inject bounded failures, verify business invariants, and receive
 reproducible CI-ready evidence.
 
 The roadmap deliberately delivers a useful local product before adding a
-controller, agents, a web interface, or Kubernetes-specific features.
+controller, runners, a web interface, or Kubernetes-specific features.
 
 Every milestone must also pass its assigned controls in
 [SECURITY.md](SECURITY.md). Closed-contour operation, secret handling, network
@@ -27,7 +27,7 @@ slice; they are not deferred to final hardening.
 | M1 — HTTP vertical slice | One OpenAPI operation can be executed and reported from CLI | CLI-to-HTML/JUnit end-to-end test |
 | M2 — Reliability runner | Scenarios express concurrency, retries, eventual assertions, and network faults | Deterministic fault scenario suite |
 | M3 — Distributed systems | Kafka and database observations verify cross-component invariants | Payment workflow recovery suite |
-| M4 — Private agent | Tests run from a controlled agent inside another network | Remote run with policy enforcement |
+| M4 — Private runner | Tests run from a controlled runner inside another network | Remote run with policy enforcement |
 | M5 — Distributed execution | Controller schedules reproducible shards across workers | Multi-worker recovery and scale tests |
 | M6 — 1.0 hardening | Stable scenario API, extension contracts, packaging, and operational docs | Release qualification suite |
 
@@ -50,7 +50,7 @@ flowchart LR
     G --> H["Evidence and reports"]
     H --> I["Fault injection"]
     I --> J["Kafka and observations"]
-    J --> K["Agent protocol"]
+    J --> K["Runner protocol"]
     K --> L["Controller and workers"]
     L --> M["1.0 hardening"]
 ```
@@ -72,7 +72,7 @@ cross-cutting security architecture workstream:
 | Test systems and qualification | example services, testkit, integration and E2E suites | production shortcuts |
 | Security architecture | threat model, policy invariants, evidence handling, supply-chain gates | feature-specific implementation ownership |
 
-For distributed milestones, add controller/agent and operations workstreams.
+For distributed milestones, add controller/runner and operations workstreams.
 Shared build files and public contracts should have a single owner within each
 integration wave.
 
@@ -474,7 +474,7 @@ Acceptance for M3:
 - Faultora verifies at least one complete distributed business invariant.
 - Async operations have deterministic observation windows and cleanup.
 
-## 9. M4 — Private-network agent
+## 9. M4 — Private-network runner
 
 ### User story
 
@@ -483,7 +483,7 @@ controller without exposing target services publicly.
 
 ### Work packages
 
-#### M4-01 — Agent protocol
+#### M4-01 — Runner protocol
 
 - Versioned registration and capability advertisement.
 - Outbound mutually authenticated connection.
@@ -493,7 +493,7 @@ controller without exposing target services publicly.
 - Mutually authenticated service identity, certificate rotation, replay
   protection, and signed effective policy.
 
-#### M4-02 — Agent policy enforcement
+#### M4-02 — Runner policy enforcement
 
 - Network and target allowlists.
 - Operation and fault capability allowlists.
@@ -501,7 +501,7 @@ controller without exposing target services publicly.
 - Signed effective execution policy.
 - Local refusal independent of controller behavior.
 
-#### M4-03 — Agent packaging
+#### M4-03 — Runner packaging
 
 - Container image.
 - Docker Compose example.
@@ -511,7 +511,7 @@ controller without exposing target services publicly.
 
 #### M4-04 — Remote-run qualification
 
-- Run the M2 and M3 suites through an agent.
+- Run the M2 and M3 suites through a runner.
 - Interrupt controller connectivity during execution.
 - Verify bounded autonomous behavior, reconnection, result delivery, and
   cleanup.
@@ -520,8 +520,8 @@ controller without exposing target services publicly.
 
 - No inbound connection to the private network is required.
 - Disconnection cannot extend a run or active fault beyond policy limits.
-- Local and agent modes produce the same normalized result model.
-- Agent deployment passes network-isolation and credential-rotation tests.
+- Local and runner modes produce the same normalized result model.
+- Runner deployment passes network-isolation and credential-rotation tests.
 
 ## 10. M5 — Distributed controller and workers
 
@@ -579,7 +579,7 @@ target, and the controller returns one reproducible result.
 - Controller restart.
 - Duplicate task delivery.
 - Artifact-store interruption.
-- Agent disconnect.
+- Runner disconnect.
 - Cancellation while faults are active.
 
 ### Exit gate
@@ -614,7 +614,7 @@ target, and the controller returns one reproducible result.
 - Signed artifacts, checksums, CycloneDX SBOM, and SLSA-compatible build
   provenance.
 - Verifiable offline bundle with no runtime downloads.
-- Helm chart for controller, workers, and agents.
+- Helm chart for controller, workers, and runners.
 - Upgrade and rollback documentation.
 
 #### M6-04 — Operational readiness
@@ -649,7 +649,7 @@ target, and the controller returns one reproducible result.
 
 - A new team completes the documented onboarding flow without source changes.
 - Scenario API and result schema compatibility are tested.
-- Local, CI, agent, and distributed modes pass the shared qualification suite.
+- Local, CI, runner, and distributed modes pass the shared qualification suite.
 - Cleanup, cancellation, replay, and upgrade paths are verified.
 - The release has no unresolved critical security or data-integrity findings.
 - Release signatures, SBOM, provenance, and offline installation are verified
@@ -657,7 +657,7 @@ target, and the controller returns one reproducible result.
 
 ## 12. First implementation wave
 
-The first agent team should execute this exact sequence.
+The first implementation team should execute this exact sequence.
 
 ### Wave A — Contracts
 
@@ -712,7 +712,7 @@ Can run in parallel once the vertical slice passes:
 3. Packaging and container execution.
 4. Documentation and CI examples.
 
-## 13. Work-package contract for agents
+## 13. Work-package contract
 
 Every assigned work package should state:
 
@@ -725,7 +725,7 @@ Every assigned work package should state:
 - artifacts or documentation to update;
 - known follow-up work explicitly left out.
 
-An agent should stop and request an architecture decision when:
+An implementer should stop and request an architecture decision when:
 
 - a public contract must change;
 - module dependency direction would be violated;

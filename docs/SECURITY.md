@@ -72,7 +72,7 @@ operator policy.
 
 ### 3.3 Distributed closed environment
 
-Controller, workers, agents, queue, metadata storage, artifact storage, and
+Controller, workers, runners, queue, metadata storage, artifact storage, and
 identity provider remain inside approved network zones. Workers are scheduled
 according to target locality and cannot receive tasks requiring capabilities or
 network destinations outside their policy.
@@ -102,7 +102,7 @@ The threat model assumes:
   schemas;
 - a vulnerable or malicious extension;
 - a user attempting to exceed approved targets or load limits;
-- a worker or agent operating with stale policy;
+- a worker or runner operating with stale policy;
 - an attacker reading or modifying stored evidence;
 - a compromised dependency or release artifact;
 - accidental disclosure through logs, reports, exceptions, or diagnostic
@@ -278,7 +278,7 @@ identity is not passed through to targets.
 
 ### 8.3 Service identity
 
-Controller, worker, agent, plugin host, metadata store, and artifact store use
+Controller, worker, runner, plugin host, metadata store, and artifact store use
 distinct service identities. Mutual authentication is required across remote
 service boundaries, with short-lived credentials and rotation supported by the
 hosting organization.
@@ -292,8 +292,8 @@ hosting organization.
 - Define behavior for DNS rebinding and address changes during a run.
 - Separate management, worker, target, artifact, and audit traffic where the
   platform supports network zoning.
-- Disable controller-to-target traffic; only workers or agents invoke targets.
-- Do not expose agent management endpoints to the target network.
+- Disable controller-to-target traffic; only workers or runners invoke targets.
+- Do not expose runner management endpoints to the target network.
 - Provide Kubernetes NetworkPolicy examples, while documenting that enforcement
   depends on the installed network plugin.
 - Support organization-provided trust stores and private certificate
@@ -464,7 +464,7 @@ licenses, SBOM, provenance, signatures, checksums, and verification tooling.
 | Offline/zero-egress execution | design | required | required | required | required | required | qualified |
 | Opaque secret handling | contract | required | required | required | required | required | qualified |
 | Evidence minimization/redaction | schema | required | extended | extended | required | required | qualified |
-| Target and resource policy | contract | required | extended | extended | enforced by agent | distributed enforcement | qualified |
+| Target and resource policy | contract | required | extended | extended | enforced by runner | distributed enforcement | qualified |
 | Fault hard expiry and rollback | contract | N/A | required | required | required | required | qualified |
 | Service identity and mTLS | design | N/A | N/A | N/A | required | required | qualified |
 | RBAC and audit | event schema | local audit | local audit | extended | service audit | required | qualified |
