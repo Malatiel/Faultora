@@ -48,6 +48,11 @@ The executable artifact is written to:
 faultora-cli/target/faultora-0.1.0.jar
 ```
 
+The regular CI build can run without repository secrets. Configure the
+`NVD_API_KEY` repository secret to enable OWASP Dependency Check on every push.
+Release publication always requires this secret and fails closed when it is
+missing.
+
 ## Quick start
 
 Check the executable and validate the example scenario:
