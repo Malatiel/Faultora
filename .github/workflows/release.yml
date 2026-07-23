@@ -31,7 +31,7 @@ jobs:
           echo "VERSION=${version}" >> "${GITHUB_ENV}"
 
       - name: Build and verify
-        run: ./mvnw verify -B
+        run: ./mvnw install -B
 
       - name: Dependency vulnerability gate
         env:
@@ -41,7 +41,7 @@ jobs:
             echo "NVD_API_KEY repository secret is required"
             exit 1
           }
-          ./mvnw org.owasp:dependency-check-maven:12.2.2:check \
+          ./mvnw org.owasp:dependency-check-maven:12.2.2:aggregate \
             -DnvdApiKeyEnvironmentVariable=NVD_API_KEY \
             -B
 
