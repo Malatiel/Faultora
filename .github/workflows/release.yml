@@ -93,6 +93,7 @@ jobs:
           sha256sum "faultora-${VERSION}.jar" "faultora-${VERSION}-sbom.json" LICENSE > SHA256SUMS
 
       - name: Attest release artifacts
+        if: github.event.repository.private == false
         uses: actions/attest@v4
         with:
           subject-path: 'dist/*'
