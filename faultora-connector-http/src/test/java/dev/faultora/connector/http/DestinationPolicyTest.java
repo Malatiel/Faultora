@@ -237,7 +237,11 @@ class DestinationPolicyTest {
             "http://169.254.0.1", "http://169.254.255.255",
             "http://127.0.0.2", "http://127.0.0.254",
             "http://224.0.0.1", "http://240.0.0.1",
-            "http://192.0.2.1", "http://198.51.100.1", "http://203.0.113.1"
+            "http://192.0.2.1", "http://198.51.100.1", "http://203.0.113.1",
+            "http://100.64.0.1", "http://100.127.255.254",
+            "http://192.0.0.1", "http://192.88.99.1",
+            "http://198.18.0.1", "http://198.19.255.254",
+            "http://[100::1]", "http://[2001:db8::1]"
     })
     void defaultPolicyBlocksPrivateAddresses(String uri) {
         DestinationPolicy policy = DestinationPolicy.defaultPolicy();

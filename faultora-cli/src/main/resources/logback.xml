@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- Never emit Apache HttpClient headers or wire payloads. They may contain
+         credentials, cookies, personal data, or regulated financial data. -->
+    <logger name="org.apache.hc.client5.http.wire" level="OFF"/>
+    <logger name="org.apache.hc.client5.http.headers" level="OFF"/>
+    <logger name="org.apache.hc" level="WARN"/>
+
+    <appender name="STDERR" class="ch.qos.logback.core.ConsoleAppender">
+        <target>System.err</target>
+        <encoder>
+            <pattern>%date{ISO8601} %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="STDERR"/>
+    </root>
+</configuration>

@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Verify tag matches project version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout)"
+          test "${GITHUB_REF_NAME}" = "v${version}"
+          echo "VERSION=${version}" >> "${GITHUB_ENV}"
+
+      - name: Build and verify
+        run: ./mvnw verify -B
+
+      - name: Dependency vulnerability gate
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: |
+          test -n "${NVD_API_KEY}" || {
+            echo "NVD_API_KEY repository secret is required"
+            exit 1
+          }
+          ./mvnw org.owasp:dependency-check-maven:12.2.2:check \
+            -DnvdApiKeyEnvironmentVariable=NVD_API_KEY \
+            -B
+
+      - name: Generate CycloneDX SBOM
+        run: >
+          ./mvnw org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom
+          -DoutputFormat=json
+          -DoutputName=faultora-${VERSION}-sbom
+          -DincludeBomSerialNumber=false
+          -DincludeTestScope=false
+          -B
+
+      - name: Prepare release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp "faultora-cli/target/faultora-${VERSION}.jar" dist/
+          cp "target/faultora-${VERSION}-sbom.json" dist/
+          cp LICENSE dist/
+          cd dist
+          sha256sum "faultora-${VERSION}.jar" "faultora-${VERSION}-sbom.json" LICENSE > SHA256SUMS
+
+      - name: Attest release artifacts
+        uses: actions/attest@v4
+        with:
+          subject-path: 'dist/*'
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "${GITHUB_REF_NAME}"
+          "dist/faultora-${VERSION}.jar"
+          "dist/faultora-${VERSION}-sbom.json"
+          dist/LICENSE
+          dist/SHA256SUMS
+          --verify-tag
+          --generate-notes

@@ -67,21 +67,19 @@ class EnvironmentSecretResolverTest {
     }
 
     @Test
-    void secretValueReturnsDefensiveCopyAndZeroesOnFirstAccess() {
+    void secretValueReturnsFreshDefensiveCopyOnEveryAccess() {
         SecretHandle handle = EnvironmentSecretResolver.createHandle("test-key", "my-secret");
         char[] first = handle.secretValue();
         assertThat(first).isNotNull();
         assertThat(new String(first)).isEqualTo("my-secret");
 
-        // After first access, the internal value is zeroed — subsequent calls
-        // return a zeroed array (security: secret material doesn't persist)
         char[] second = handle.secretValue();
         assertThat(second).isNotNull();
-        assertThat(second).containsExactly(new char[9]); // new char[9] is all zeros
+        assertThat(new String(second)).isEqualTo("my-secret");
+        assertThat(second).isNotSameAs(first);
 
-        // Modifying the first copy should not affect anything (it's independent)
         first[0] = 'X';
-        assertThat(first[0]).isEqualTo('X');
+        assertThat(second[0]).isEqualTo('m');
     }
 
     @Test

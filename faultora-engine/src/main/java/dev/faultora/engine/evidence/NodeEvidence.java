@@ -90,7 +90,7 @@ public class NodeEvidence implements EvidenceView {
                     break;
                 }
             }
-            if (!allowed && !mimeType.isEmpty()) {
+            if (!allowed) {
                 this.body = null;
                 this.responseJson = null;
                 return;
@@ -105,29 +105,55 @@ public class NodeEvidence implements EvidenceView {
             this.responseJson = null;
             return;
         }
-        // Enforce maxBodyBytes — truncate if the body exceeds the policy limit
+        if (body == null) {
+            this.body = null;
+            this.responseJson = null;
+            return;
+        }
+
+        List<String> redactPaths = evidencePolicy.redactPaths();
+        boolean redactionRequired = redactPaths != null && !redactPaths.isEmpty();
+        if (redactionRequired) {
+            try {
+                // Parse and redact the complete JSON before applying the storage
+                // limit. Truncating first could make JSON invalid and persist raw
+                // secret fields without applying redactPaths.
+                JsonNode json = MAPPER.readTree(body);
+                applyRedaction(json, redactPaths);
+                byte[] redacted = MAPPER.writeValueAsBytes(json);
+                if (exceedsCaptureLimit(redacted)) {
+                    omitBody();
+                    return;
+                }
+                this.body = redacted;
+                this.responseJson = json;
+            } catch (Exception unsafeToCapture) {
+                // Fail closed: content that cannot be parsed cannot be proven redacted.
+                omitBody();
+            }
+            return;
+        }
+
         byte[] effective = body;
-        if (body != null && evidencePolicy.maxBodyBytes() > 0
-                && body.length > evidencePolicy.maxBodyBytes()) {
-            effective = new byte[(int) evidencePolicy.maxBodyBytes()];
-            System.arraycopy(body, 0, effective, 0, effective.length);
+        if (exceedsCaptureLimit(body)) {
+            effective = Arrays.copyOf(body, (int) evidencePolicy.maxBodyBytes());
         }
         this.body = effective;
-        if (effective != null) {
-            try {
-                JsonNode json = MAPPER.readTree(effective);
-                // Apply redactPaths — replace values at matching paths with "***"
-                List<String> redactPaths = evidencePolicy.redactPaths();
-                if (redactPaths != null && !redactPaths.isEmpty()) {
-                    applyRedaction(json, redactPaths);
-                    // Re-serialize after redaction
-                    this.body = MAPPER.writeValueAsBytes(json);
-                }
-                this.responseJson = json;
-            } catch (Exception ignored) {
-                this.responseJson = null;
-            }
+        try {
+            this.responseJson = MAPPER.readTree(effective);
+        } catch (Exception ignored) {
+            this.responseJson = null;
         }
+    }
+
+    private boolean exceedsCaptureLimit(byte[] value) {
+        return evidencePolicy.maxBodyBytes() > 0
+                && value.length > evidencePolicy.maxBodyBytes();
+    }
+
+    private void omitBody() {
+        this.body = null;
+        this.responseJson = null;
     }
 
     public void durationMs(long durationMs) {

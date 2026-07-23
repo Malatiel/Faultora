@@ -36,7 +36,16 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
       - name: OWASP Dependency Check
-        run: ./mvnw org.owasp:dependency-check-maven:check -B
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: |
+          test -n "${NVD_API_KEY}" || {
+            echo "NVD_API_KEY repository secret is required"
+            exit 1
+          }
+          ./mvnw org.owasp:dependency-check-maven:12.2.2:check \
+            -DnvdApiKeyEnvironmentVariable=NVD_API_KEY \
+            -B
 
   secret-scan:
     runs-on: ubuntu-latest
@@ -59,4 +68,3 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
       - run: ./mvnw spotless:check -B
-        continue-on-error: true

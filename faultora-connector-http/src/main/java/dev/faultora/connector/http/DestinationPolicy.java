@@ -300,6 +300,19 @@ public final class DestinationPolicy {
 
             // IPv6 ULA (fc00::/7)
             if ((raw[0] & 0xfe) == 0xfc) return true;
+
+            // IPv6 discard-only prefix (100::/64)
+            boolean discardOnly = raw[0] == 0x01 && raw[1] == 0x00;
+            for (int i = 2; discardOnly && i < 8; i++) {
+                discardOnly = raw[i] == 0;
+            }
+            if (discardOnly) return true;
+
+            // IPv6 documentation prefix (2001:db8::/32)
+            if ((raw[0] & 0xff) == 0x20 && (raw[1] & 0xff) == 0x01
+                    && (raw[2] & 0xff) == 0x0d && (raw[3] & 0xff) == 0xb8) {
+                return true;
+            }
         }
 
         // Documentation ranges: 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24
@@ -312,10 +325,19 @@ public final class DestinationPolicy {
         // - 0.0.0.0/8 (current network, except 0.0.0.0 itself which is caught above)
         if (raw.length == 4) {
             int first = raw[0] & 0xFF;
+            int second = raw[1] & 0xFF;
             // 240.0.0.0/4: first octet 240-255
             if (first >= 240) return true;
             // 0.0.0.0/8: first octet 0 (but not all-zero, already checked)
             if (first == 0) return true;
+            // 100.64.0.0/10: shared address space (CGNAT)
+            if (first == 100 && second >= 64 && second <= 127) return true;
+            // 192.0.0.0/24: IETF protocol assignments
+            if (first == 192 && second == 0 && (raw[2] & 0xFF) == 0) return true;
+            // 192.88.99.0/24: deprecated 6to4 relay anycast
+            if (first == 192 && second == 88 && (raw[2] & 0xFF) == 99) return true;
+            // 198.18.0.0/15: network benchmark testing
+            if (first == 198 && (second == 18 || second == 19)) return true;
         }
 
         return false;

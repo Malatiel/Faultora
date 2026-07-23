@@ -10,6 +10,7 @@ import dev.faultora.spi.context.ConnectorContext;
 import dev.faultora.spi.result.OperationResult;
 
 import org.apache.hc.client5.http.classic.methods.*;
+import org.apache.hc.client5.http.config.ConnectionConfig;
 import org.apache.hc.client5.http.config.RequestConfig;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
@@ -17,7 +18,7 @@ import org.apache.hc.client5.http.DnsResolver;
 import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder;
 import org.apache.hc.client5.http.io.HttpClientConnectionManager;
 import org.apache.hc.client5.http.protocol.HttpClientContext;
-import org.apache.hc.client5.http.ssl.SSLConnectionSocketFactoryBuilder;
+import org.apache.hc.client5.http.ssl.ClientTlsStrategyBuilder;
 import org.apache.hc.core5.http.*;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.apache.hc.core5.http.io.entity.StringEntity;
@@ -26,7 +27,9 @@ import org.apache.hc.core5.util.Timeout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -75,6 +78,7 @@ public class HttpConnector implements Connector {
      * The DnsResolver reads from this to return pre-verified addresses.
      */
     private static final ThreadLocal<InetAddress[]> PINNED_ADDRESSES = new ThreadLocal<>();
+    private static final ThreadLocal<Timeout> CONNECT_TIMEOUT = new ThreadLocal<>();
 
     private final CloseableHttpClient client;
     private final DestinationPolicy destinationPolicy;
@@ -95,7 +99,10 @@ public class HttpConnector implements Connector {
      */
     private static CloseableHttpClient createClient() {
         HttpClientConnectionManager connManager = PoolingHttpClientConnectionManagerBuilder.create()
-                .setSSLSocketFactory(SSLConnectionSocketFactoryBuilder.create()
+                .setTlsSocketStrategy(ClientTlsStrategyBuilder.create().buildClassic())
+                .setConnectionConfigResolver(route -> ConnectionConfig.custom()
+                        .setConnectTimeout(Optional.ofNullable(CONNECT_TIMEOUT.get())
+                                .orElse(Timeout.ofMilliseconds(DEFAULT_CONNECT_TIMEOUT_MS)))
                         .build())
                 .setDnsResolver(new DnsResolver() {
                     @Override
@@ -117,7 +124,6 @@ public class HttpConnector implements Connector {
 
         RequestConfig requestConfig = RequestConfig.custom()
                 .setConnectionRequestTimeout(Timeout.ofMilliseconds(DEFAULT_CONNECT_TIMEOUT_MS))
-                .setConnectTimeout(Timeout.ofMilliseconds(DEFAULT_CONNECT_TIMEOUT_MS))
                 .setResponseTimeout(Timeout.ofMilliseconds(DEFAULT_REQUEST_TIMEOUT_MS))
                 .setRedirectsEnabled(false) // Manual redirect handling
                 .build();
@@ -159,6 +165,7 @@ public class HttpConnector implements Connector {
     ) {
         HttpPreparedTarget httpTarget = (HttpPreparedTarget) preparedTarget;
         long startTime = System.nanoTime();
+        ClassicHttpResponse response = null;
 
         try {
             // Build the request URL
@@ -185,11 +192,11 @@ public class HttpConnector implements Connector {
 
             // Build the ClassicHttpRequest with DNS pinning
             InetAddress[] pinnedAddresses = extractPinnedAddresses(policyResult);
-            ClassicHttpRequest request = buildRequest(method, resolvedUri, pinnedAddresses, inputs, context);
+            String currentMethod = method;
+            ClassicHttpRequest request = buildRequest(currentMethod, resolvedUri, inputs, context);
 
             // Execute with manual redirect following
             URI currentUri = resolvedUri;
-            ClassicHttpResponse response = null;
             int redirectCount = 0;
 
             while (true) {
@@ -209,6 +216,8 @@ public class HttpConnector implements Connector {
                 try {
                     EntityUtils.consume(response.getEntity());
                 } catch (IOException ignored) {}
+                response.close();
+                response = null;
 
                 redirectCount++;
                 if (redirectCount > MAX_REDIRECTS) {
@@ -267,13 +276,8 @@ public class HttpConnector implements Connector {
 
                 // Build redirect request with DNS pinning
                 pinnedAddresses = extractPinnedAddresses(redirectResult);
-                String redirectMethod;
-                if (statusCode == 307 || statusCode == 308) {
-                    redirectMethod = method;
-                } else {
-                    redirectMethod = "GET";
-                }
-                request = buildRequest(redirectMethod, redirectUri, pinnedAddresses, inputs, context);
+                String redirectMethod = redirectedMethod(statusCode, currentMethod);
+                request = buildRequest(redirectMethod, redirectUri, inputs, context);
 
                 // Strip sensitive headers on cross-origin redirect
                 if (crossOrigin) {
@@ -281,6 +285,7 @@ public class HttpConnector implements Connector {
                 }
 
                 currentUri = redirectUri;
+                currentMethod = redirectMethod;
             }
 
             long durationMs = (System.nanoTime() - startTime) / 1_000_000;
@@ -288,21 +293,7 @@ public class HttpConnector implements Connector {
             // Parse response
             int statusCode = response.getCode();
             HttpEntity entity = response.getEntity();
-            byte[] responseBytes = (entity != null)
-                    ? EntityUtils.toByteArray(entity)
-                    : new byte[0];
-            EntityUtils.consumeQuietly(entity);
-
-            // Enforce response size limit
-            if (responseBytes.length > maxPayload) {
-                NormalizedError error = new NormalizedError(
-                        NormalizedError.ErrorCategory.POLICY_VIOLATION,
-                        "RESPONSE_TOO_LARGE",
-                        "Response exceeds maximum payload size of " + maxPayload + " bytes",
-                        false, Map.of());
-                return OperationResult.failure(error,
-                        (System.nanoTime() - startTime) / 1_000_000);
-            }
+            byte[] responseBytes = readBounded(entity, maxPayload);
 
             // Parse JSON if possible
             JsonNode responseJson = null;
@@ -330,6 +321,14 @@ public class HttpConnector implements Connector {
                     statusCode, responseHeaders, responseBytes,
                     durationMs, Map.of());
 
+        } catch (ResponseTooLargeException e) {
+            long durationMs = (System.nanoTime() - startTime) / 1_000_000;
+            NormalizedError error = new NormalizedError(
+                    NormalizedError.ErrorCategory.POLICY_VIOLATION,
+                    "RESPONSE_TOO_LARGE",
+                    "Response exceeds maximum payload size of " + e.maxBytes() + " bytes",
+                    false, Map.of());
+            return OperationResult.failure(error, durationMs);
         } catch (java.net.ConnectException e) {
             long durationMs = (System.nanoTime() - startTime) / 1_000_000;
             NormalizedError error = new NormalizedError(
@@ -363,8 +362,16 @@ public class HttpConnector implements Connector {
                     "Execution error: " + e.getMessage(), false, Map.of());
             return OperationResult.failure(error, durationMs);
         } finally {
+            if (response != null) {
+                try {
+                    response.close();
+                } catch (IOException closeFailure) {
+                    LOG.debug("Failed to close HTTP response: {}", closeFailure.getMessage());
+                }
+            }
             // Always clear pinned addresses from ThreadLocal to prevent leaks
             PINNED_ADDRESSES.remove();
+            CONNECT_TIMEOUT.remove();
         }
     }
 
@@ -419,19 +426,20 @@ public class HttpConnector implements Connector {
         if (pinnedAddresses != null && pinnedAddresses.length > 0) {
             PINNED_ADDRESSES.set(pinnedAddresses);
         }
+        CONNECT_TIMEOUT.set(Timeout.ofMilliseconds(context.connectTimeoutMs()));
         try {
             // Build per-request config from ConnectorContext timeouts
             RequestConfig perRequestConfig = RequestConfig.custom()
                     .setConnectionRequestTimeout(Timeout.ofMilliseconds(context.connectTimeoutMs()))
-                    .setConnectTimeout(Timeout.ofMilliseconds(context.connectTimeoutMs()))
                     .setResponseTimeout(Timeout.ofMilliseconds(context.requestTimeoutMs()))
                     .setRedirectsEnabled(false)
                     .build();
             HttpClientContext httpContext = HttpClientContext.create();
             httpContext.setRequestConfig(perRequestConfig);
-            return client.execute(request, httpContext);
+            return client.executeOpen(null, request, httpContext);
         } finally {
             PINNED_ADDRESSES.remove();
+            CONNECT_TIMEOUT.remove();
         }
     }
 
@@ -445,7 +453,6 @@ public class HttpConnector implements Connector {
     private ClassicHttpRequest buildRequest(
             String method,
             URI uri,
-            InetAddress[] pinnedAddresses,
             Map<String, Object> inputs,
             ConnectorContext context
     ) throws IOException {
@@ -568,6 +575,21 @@ public class HttpConnector implements Connector {
     }
 
     /**
+     * Apply RFC redirect method semantics to the method of the current hop.
+     * In particular, a POST changed to GET by a 301/302 must stay GET if a
+     * later hop returns 307/308.
+     */
+    static String redirectedMethod(int statusCode, String currentMethod) {
+        String normalized = currentMethod.toUpperCase(Locale.ROOT);
+        return switch (statusCode) {
+            case 303 -> "HEAD".equals(normalized) ? "HEAD" : "GET";
+            case 301, 302 -> "POST".equals(normalized) ? "GET" : normalized;
+            case 307, 308 -> normalized;
+            default -> normalized;
+        };
+    }
+
+    /**
      * Get the effective port of a URI, using the default port for the scheme
      * if no explicit port is specified.
      */
@@ -638,6 +660,50 @@ public class HttpConnector implements Connector {
     }
 
     /**
+     * Read an HTTP entity without ever buffering more than {@code maxBytes}.
+     * Content length is checked first when supplied by the server, but the
+     * streaming limit remains authoritative because that header is untrusted
+     * and may be absent or incorrect.
+     */
+    static byte[] readBounded(HttpEntity entity, long maxBytes)
+            throws IOException, ResponseTooLargeException {
+        if (entity == null) {
+            return new byte[0];
+        }
+        if (maxBytes < 0 || maxBytes > Integer.MAX_VALUE - 1L) {
+            throw new IllegalArgumentException("maxBytes must be between 0 and Integer.MAX_VALUE - 1");
+        }
+        if (entity.getContentLength() > maxBytes) {
+            EntityUtils.consumeQuietly(entity);
+            throw new ResponseTooLargeException(maxBytes);
+        }
+
+        int initialCapacity = entity.getContentLength() > 0
+                ? (int) Math.min(entity.getContentLength(), maxBytes)
+                : (int) Math.min(8192, maxBytes);
+        try (InputStream input = entity.getContent();
+             ByteArrayOutputStream output = new ByteArrayOutputStream(initialCapacity)) {
+            byte[] buffer = new byte[8192];
+            long total = 0;
+            while (true) {
+                long remaining = maxBytes - total;
+                int requested = (int) Math.min(buffer.length, remaining + 1);
+                int read = input.read(buffer, 0, requested);
+                if (read == -1) {
+                    return output.toByteArray();
+                }
+                if (read > remaining) {
+                    throw new ResponseTooLargeException(maxBytes);
+                }
+                output.write(buffer, 0, read);
+                total += read;
+            }
+        } finally {
+            EntityUtils.consumeQuietly(entity);
+        }
+    }
+
+    /**
      * Prepared target for HTTP operations.
      */
     private static class HttpPreparedTarget implements PreparedTarget {
@@ -658,7 +724,16 @@ public class HttpConnector implements Connector {
         }
     }
 
-    private static class ResponseTooLargeException extends Exception {
-        ResponseTooLargeException() { super("Response too large"); }
+    static final class ResponseTooLargeException extends Exception {
+        private final long maxBytes;
+
+        ResponseTooLargeException(long maxBytes) {
+            super("Response exceeds " + maxBytes + " bytes");
+            this.maxBytes = maxBytes;
+        }
+
+        long maxBytes() {
+            return maxBytes;
+        }
     }
 }

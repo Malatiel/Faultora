@@ -175,8 +175,7 @@ class NodeEvidenceTest {
     }
 
     @Test
-    void bodyCapturedWhenContentTypeNullWithAllowlist() {
-        // Null content type with non-empty allowlist — allow (defensive)
+    void bodySkippedWhenContentTypeNullWithAllowlist() {
         EvidencePolicy policy = new EvidencePolicy(
                 true, false,
                 Set.of(),
@@ -186,7 +185,8 @@ class NodeEvidenceTest {
         NodeEvidence evidence = new NodeEvidence(policy);
         evidence.body("{\"ok\":true}".getBytes(), null);
 
-        assertThat(evidence.responseBody()).isPresent();
+        assertThat(evidence.responseBody()).isEmpty();
+        assertThat(evidence.responseJson()).isEmpty();
     }
 
     @Test
@@ -296,5 +296,39 @@ class NodeEvidenceTest {
         assertThat(redacted).contains("***");
         assertThat(redacted).doesNotContain("secret123");
         assertThat(redacted).contains("\"id\":42");
+    }
+
+    @Test
+    void oversizedJsonWithRedactionIsOmittedInsteadOfStoredRaw() {
+        EvidencePolicy policy = new EvidencePolicy(
+                true, false,
+                Set.of(),
+                20, 0,
+                List.of("token"),
+                Set.of("application/json"), "session");
+
+        NodeEvidence evidence = new NodeEvidence(policy);
+        evidence.body(
+                "{\"token\":\"must-never-leak\",\"padding\":\"0123456789\"}".getBytes(),
+                "application/json");
+
+        assertThat(evidence.responseBody()).isEmpty();
+        assertThat(evidence.responseJson()).isEmpty();
+    }
+
+    @Test
+    void invalidJsonWithRedactionIsOmitted() {
+        EvidencePolicy policy = new EvidencePolicy(
+                true, false,
+                Set.of(),
+                1024, 0,
+                List.of("token"),
+                Set.of("application/json"), "session");
+
+        NodeEvidence evidence = new NodeEvidence(policy);
+        evidence.body("{\"token\":\"must-never-leak\"".getBytes(), "application/json");
+
+        assertThat(evidence.responseBody()).isEmpty();
+        assertThat(evidence.responseJson()).isEmpty();
     }
 }

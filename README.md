@@ -2,86 +2,138 @@
 
 **Break it here. Trust it everywhere.**
 
-Faultora is a planned self-hosted reliability testing platform for APIs and
-distributed systems. It will import machine-readable API descriptions, execute
-repeatable failure scenarios, verify technical and business invariants, and
-produce CI-friendly evidence. The platform is designed to run entirely inside
-restricted customer infrastructure, including disconnected and zero-egress
-environments.
+Faultora is a self-hosted reliability testing CLI for HTTP APIs. It imports
+OpenAPI descriptions, runs repeatable scenarios, checks technical and business
+invariants, and produces console, JSON, HTML, and JUnit reports. Execution stays
+inside your infrastructure and does not require a hosted control plane or
+telemetry.
 
-The project is currently in the architecture and repository-foundation stage.
-No runnable release exists yet.
+Version 0.1.0 is the first runnable release candidate. It targets local
+development and CI use on Java 21.
 
-## Product direction
+## What 0.1.0 includes
 
-Faultora is intended to let a team:
+- OpenAPI 3.x import and operation discovery;
+- versioned YAML scenarios;
+- HTTP GET, POST, PUT, PATCH, DELETE, HEAD, and OPTIONS operations;
+- status, header, JSONPath, and duration assertions;
+- sequential, parallel, repeat, and eventual execution blocks;
+- environment-backed bearer-token resolution;
+- console, JSON, HTML, and JUnit reports;
+- SSRF protection with DNS resolution and address pinning;
+- bounded HTTP response streaming;
+- metadata-only evidence capture by default;
+- header filtering, content-type allowlists, body limits, and JSON redaction;
+- manual redirect handling with cross-origin credential stripping.
 
-1. import an OpenAPI description;
-2. bind operations to a test environment;
-3. describe credentials through external secret references;
-4. compose scenarios from requests, concurrency, faults, observations, and
-   assertions;
-5. run the same scenario locally, in CI, or on distributed workers;
-6. receive HTML, JSON, and JUnit reports with reproducible evidence.
+Distributed workers, Kafka, Kubernetes orchestration, and the web interface are
+not part of this release.
 
-The initial release focuses on local and CI execution against HTTP APIs. Kafka,
-distributed agents, Kubernetes orchestration, and a web interface are later
-milestones.
+## Requirements
 
-Security is a release invariant rather than a final hardening phase. Faultora
-will not require a hosted control plane, mandatory telemetry, runtime downloads,
-or transmission of target traffic and reports outside the customer's chosen
-storage boundary.
+- Java 21 or newer;
+- Maven is not required when using the release JAR.
 
-## Architecture at a glance
+## Build
 
-```text
-OpenAPI / AsyncAPI / Protobuf
-              |
-              v
-        Import adapters
-              |
-              v
-     Canonical API catalog
-              |
-              v
-        Scenario compiler
-              |
-              v
-        Execution engine
-       /       |        \
- connectors  faults   assertions
-              |
-              v
-           reports
+```bash
+./mvnw verify -B
 ```
 
-The execution engine depends only on Faultora's canonical model and extension
-contracts. Protocol support and infrastructure integrations live behind
-plugins, allowing the local runner and future distributed platform to execute
-the same scenario format.
+The executable artifact is written to:
 
-## Documentation
+```text
+faultora-cli/target/faultora-0.1.0.jar
+```
+
+## Quick start
+
+Check the executable and validate the example scenario:
+
+```bash
+java -jar faultora-cli/target/faultora-0.1.0.jar --version
+
+java -jar faultora-cli/target/faultora-0.1.0.jar \
+  validate \
+  --scenario examples/payment-service/scenarios/passing.yaml
+```
+
+Generate a starter scenario from an OpenAPI document:
+
+```bash
+java -jar faultora-cli/target/faultora-0.1.0.jar \
+  init \
+  --from-openapi examples/payment-service/openapi.yaml \
+  --output ./generated
+```
+
+Run a scenario against an API:
+
+```bash
+java -jar faultora-cli/target/faultora-0.1.0.jar \
+  test \
+  --scenario examples/payment-service/scenarios/passing.yaml \
+  --openapi examples/payment-service/openapi.yaml \
+  --target https://api.example.com \
+  --format console,json,junit,html \
+  --output faultora-results
+```
+
+Private, loopback, and link-local destinations are blocked by default. Use
+`--allow-private` only for an explicitly trusted local test environment.
+
+## Credentials
+
+Faultora accepts a secret handle rather than a token on the command line. A
+handle is mapped to an environment variable with the `FAULTORA_SECRET_` prefix:
+
+```bash
+export FAULTORA_SECRET_PAYMENTS_API='replace-with-a-real-token'
+
+java -jar faultora-cli/target/faultora-0.1.0.jar \
+  test \
+  --scenario scenario.yaml \
+  --openapi openapi.yaml \
+  --target https://api.example.com \
+  --auth-secret-id payments-api
+```
+
+For `payments-api`, Faultora reads `FAULTORA_SECRET_PAYMENTS_API`. Secret values
+are never written to scenario files or normal diagnostic output. Apache
+HttpClient header and wire logging is disabled in the release configuration.
+
+## Exit codes
+
+| Code | Meaning |
+|---:|---|
+| `0` | All tests passed |
+| `1` | A scenario assertion failed |
+| `2` | Invalid scenario or CLI configuration |
+| `3` | Runner or infrastructure failure |
+
+## Security model
+
+The default policy is intentionally restrictive:
+
+- private and special-purpose network ranges are rejected;
+- every redirect hop is checked and pinned independently;
+- HTTPS-to-HTTP redirects are rejected;
+- credentials are removed on cross-origin redirects;
+- HTTP responses are read with a hard byte limit;
+- response bodies and headers are not captured unless enabled by policy;
+- configured redaction fails closed when content cannot be safely processed.
+
+See [Security architecture](docs/SECURITY.md) for the threat model and trust
+boundaries. Please report vulnerabilities through GitHub's private security
+advisory flow; do not open a public issue with exploit details.
+
+## Project documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Security architecture](docs/SECURITY.md)
 - [Delivery roadmap](docs/ROADMAP.md)
+- [Changelog](CHANGELOG.md)
 
-## Planned first release
+## License
 
-The first usable vertical slice will provide:
-
-- a Java 21 command-line runner;
-- a versioned YAML scenario format;
-- OpenAPI import;
-- an HTTP connector;
-- schema, status, header, and JSONPath assertions;
-- sequential, parallel, repeat, and eventual execution blocks;
-- environment-based secret resolution;
-- zero-egress execution with explicit target allowlists;
-- metadata-only evidence capture by default;
-- JSON, HTML, and JUnit reports;
-- a deterministic example service and end-to-end test suite;
-- containerized execution suitable for CI.
-
-See the roadmap for the release gates and implementation work packages.
+Apache License 2.0. See [LICENSE](LICENSE).

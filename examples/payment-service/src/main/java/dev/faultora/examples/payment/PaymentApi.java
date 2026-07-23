@@ -1,5 +1,6 @@
 package dev.faultora.examples.payment;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
@@ -83,7 +84,7 @@ public class PaymentApi {
         String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
         Map<String, Object> request = body.isBlank()
                 ? Map.of()
-                : MAPPER.readValue(body, Map.class);
+                : MAPPER.readValue(body, new TypeReference<Map<String, Object>>() {});
 
         String id = "pay-" + idCounter.incrementAndGet();
         Map<String, Object> payment = new LinkedHashMap<>();

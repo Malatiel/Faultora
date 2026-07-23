@@ -100,8 +100,13 @@ public final class SecretHandle {
         if (valueSupplier == null) return null;
         char[] value = valueSupplier.get();
         if (value == null) return null;
-        // Return a defensive copy — caller can't corrupt the original
-        return Arrays.copyOf(value, value.length);
+        try {
+            // Return a defensive copy — caller can't corrupt the supplier's value.
+            return Arrays.copyOf(value, value.length);
+        } finally {
+            // The supplier contract is scoped: its temporary value is destroyed here.
+            Arrays.fill(value, '\0');
+        }
     }
 
     @Override

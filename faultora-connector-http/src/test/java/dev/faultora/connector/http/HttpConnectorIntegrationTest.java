@@ -10,16 +10,21 @@ import dev.faultora.model.security.SecretHandle;
 import dev.faultora.spi.context.ConnectorContext;
 import dev.faultora.spi.result.OperationResult;
 import org.junit.jupiter.api.*;
+import org.apache.hc.core5.http.ContentType;
+import org.apache.hc.core5.http.io.entity.InputStreamEntity;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Integration tests for HttpConnector using a local HTTP server.
@@ -47,6 +52,39 @@ class HttpConnectorIntegrationTest {
     }
 
     // ---- Auth injection ----
+
+    @Test
+    void boundedReaderStopsAfterLimitWithoutDrainingResponse() {
+        AtomicInteger bytesRead = new AtomicInteger();
+        InputStream unbounded = new InputStream() {
+            @Override
+            public int read() {
+                bytesRead.incrementAndGet();
+                return 'x';
+            }
+
+            @Override
+            public int read(byte[] buffer, int offset, int length) {
+                Arrays.fill(buffer, offset, offset + length, (byte) 'x');
+                bytesRead.addAndGet(length);
+                return length;
+            }
+        };
+        InputStreamEntity entity = new InputStreamEntity(
+                unbounded, -1, ContentType.APPLICATION_OCTET_STREAM);
+
+        assertThatThrownBy(() -> HttpConnector.readBounded(entity, 16))
+                .isInstanceOf(HttpConnector.ResponseTooLargeException.class);
+        assertThat(bytesRead.get()).isEqualTo(17);
+    }
+
+    @Test
+    void redirectMethodUsesCurrentHopInsteadOfOriginalRequest() {
+        assertThat(HttpConnector.redirectedMethod(302, "POST")).isEqualTo("GET");
+        assertThat(HttpConnector.redirectedMethod(307, "GET")).isEqualTo("GET");
+        assertThat(HttpConnector.redirectedMethod(303, "HEAD")).isEqualTo("HEAD");
+        assertThat(HttpConnector.redirectedMethod(308, "PATCH")).isEqualTo("PATCH");
+    }
 
     @Test
     void authHeaderInjectedWhenSecretConfigured() throws Exception {

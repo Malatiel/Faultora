@@ -107,7 +107,7 @@ public class OpenApiImporter implements SourceImporter {
                 JsonNode variables = server.get("variables");
                 if (variables != null) {
                     Map<String, Object> vars = new LinkedHashMap<>();
-                    variables.fields().forEachRemaining(entry -> {
+                    variables.properties().forEach(entry -> {
                         JsonNode defaultVal = entry.getValue().get("default");
                         if (defaultVal != null) {
                             vars.put(entry.getKey(), defaultVal.asText());
@@ -157,7 +157,7 @@ public class OpenApiImporter implements SourceImporter {
 
         String defaultTargetId = targets.isEmpty() ? "default" : targets.get(0).id().value();
 
-        paths.fields().forEachRemaining(pathEntry -> {
+        paths.properties().forEach(pathEntry -> {
             String path = pathEntry.getKey();
             JsonNode pathItem = pathEntry.getValue();
 
@@ -238,7 +238,7 @@ public class OpenApiImporter implements SourceImporter {
                 Map<String, SchemaId> outcomes = new LinkedHashMap<>();
                 JsonNode responses = operation.get("responses");
                 if (responses != null && responses.isObject()) {
-                    responses.fields().forEachRemaining(respEntry -> {
+                    responses.properties().forEach(respEntry -> {
                         String statusCode = respEntry.getKey();
                         JsonNode response = respEntry.getValue();
                         if (response != null && response.isObject()) {
@@ -308,7 +308,7 @@ public class OpenApiImporter implements SourceImporter {
         JsonNode schemaDefs = components.get("schemas");
         if (schemaDefs == null || !schemaDefs.isObject()) return schemas;
 
-        schemaDefs.fields().forEachRemaining(entry -> {
+        schemaDefs.properties().forEach(entry -> {
             String name = entry.getKey();
             JsonNode schema = entry.getValue();
 
@@ -346,7 +346,7 @@ public class OpenApiImporter implements SourceImporter {
         JsonNode secSchemes = components.get("securitySchemes");
         if (secSchemes == null || !secSchemes.isObject()) return schemes;
 
-        secSchemes.fields().forEachRemaining(entry -> {
+        secSchemes.properties().forEach(entry -> {
             String name = entry.getKey();
             JsonNode scheme = entry.getValue();
 

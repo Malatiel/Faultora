@@ -4,7 +4,6 @@ import dev.faultora.model.security.SecretHandle;
 import dev.faultora.spi.contract.SecretResolutionException;
 import dev.faultora.spi.contract.SecretResolver;
 
-import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -102,17 +101,10 @@ public class EnvironmentSecretResolver implements SecretResolver {
      */
     static SecretHandle createHandle(String handleId, String value) {
         String redacted = redact(value);
-        // Capture the value as a char[] supplier. The char[] is created on first call
-        // and zeroed immediately after the defensive copy is made, so the original
-        // secret material does not persist in memory beyond the first access.
-        // The caller must still zero-fill the returned copy after use.
-        char[] valueChars = value.toCharArray();
-        return new SecretHandle(handleId, redacted, "env", -1, () -> {
-            if (valueChars == null) return null;
-            char[] copy = Arrays.copyOf(valueChars, valueChars.length);
-            Arrays.fill(valueChars, '\0');
-            return copy;
-        });
+        // Environment values are supplied by the JVM as immutable Strings. Create a
+        // fresh scoped char[] for each request; SecretHandle destroys this supplier
+        // value after copying it, and the connector destroys the returned copy.
+        return new SecretHandle(handleId, redacted, "env", -1, value::toCharArray);
     }
 
     /**
