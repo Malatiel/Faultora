@@ -28,7 +28,7 @@ jobs:
 
   dependency-check:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     concurrency:
       group: faultora-odc-database
       cancel-in-progress: false
