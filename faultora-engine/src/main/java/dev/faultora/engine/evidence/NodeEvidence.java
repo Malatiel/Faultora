@@ -6,17 +6,22 @@ import dev.faultora.model.catalog.NormalizedError;
 import dev.faultora.model.security.EvidencePolicy;
 import dev.faultora.spi.context.EvidenceView;
 
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.*;
 
 /**
  * In-memory evidence store for a single node execution.
  * Captures status code, headers, body, duration, and errors.
  * Respects evidence policy — bodies and headers are omitted when
- * the policy specifies captureBodies=false / captureHeaders=false.
+ * the policy specifies captureBodies=false / captureHeaders=false,
+ * content type is not in the allowlist, or body exceeds maxBodyBytes.
+ * Sensitive JSON paths specified in redactPaths are replaced with "***"
+ * before the body is stored.
  */
 public class NodeEvidence implements EvidenceView {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final String REDACTED_MARKER = "***";
 
     private final EvidencePolicy evidencePolicy;
     private int statusCode = -1;
@@ -59,6 +64,41 @@ public class NodeEvidence implements EvidenceView {
         this.headers = Map.copyOf(filtered);
     }
 
+    /**
+     * Set the response body with content type check.
+     * Enforces captureBodies, contentTypeAllowlist, maxBodyBytes, and redactPaths.
+     *
+     * @param body        raw response body bytes
+     * @param contentType MIME type from response headers (may be null)
+     */
+    public void body(byte[] body, String contentType) {
+        if (!evidencePolicy.captureBodies()) {
+            this.body = null;
+            this.responseJson = null;
+            return;
+        }
+        // contentTypeAllowlist: if non-empty, only capture body for allowed MIME types
+        Set<String> allowlist = evidencePolicy.contentTypeAllowlist();
+        if (!allowlist.isEmpty()) {
+            String ct = contentType != null ? contentType.toLowerCase() : "";
+            // Strip parameters: "application/json; charset=utf-8" → "application/json"
+            String mimeType = ct.contains(";") ? ct.substring(0, ct.indexOf(';')).trim() : ct;
+            boolean allowed = false;
+            for (String allowedType : allowlist) {
+                if (mimeType.equals(allowedType.toLowerCase()) || mimeType.startsWith(allowedType.toLowerCase() + "/")) {
+                    allowed = true;
+                    break;
+                }
+            }
+            if (!allowed && !mimeType.isEmpty()) {
+                this.body = null;
+                this.responseJson = null;
+                return;
+            }
+        }
+        body(body);
+    }
+
     public void body(byte[] body) {
         if (!evidencePolicy.captureBodies()) {
             this.body = null;
@@ -75,7 +115,15 @@ public class NodeEvidence implements EvidenceView {
         this.body = effective;
         if (effective != null) {
             try {
-                this.responseJson = MAPPER.readTree(effective);
+                JsonNode json = MAPPER.readTree(effective);
+                // Apply redactPaths — replace values at matching paths with "***"
+                List<String> redactPaths = evidencePolicy.redactPaths();
+                if (redactPaths != null && !redactPaths.isEmpty()) {
+                    applyRedaction(json, redactPaths);
+                    // Re-serialize after redaction
+                    this.body = MAPPER.writeValueAsBytes(json);
+                }
+                this.responseJson = json;
             } catch (Exception ignored) {
                 this.responseJson = null;
             }
@@ -135,5 +183,56 @@ public class NodeEvidence implements EvidenceView {
 
     public boolean hasError() {
         return error != null;
+    }
+
+    /**
+     * Apply JSON path redaction to a parsed JSON tree.
+     * Each path is a dot-separated field path (e.g. "creditCard.number",
+     * "user.ssn"). Paths may optionally start with "$." (JSONPath root).
+     * Matching leaf values are replaced with "***".
+     * Array elements are traversed: a path "items.price" redacts the
+     * "price" field in every element of the "items" array.
+     *
+     * @param node  the JSON tree to redact in-place
+     * @param paths dot-separated paths to redact
+     */
+    static void applyRedaction(JsonNode node, List<String> paths) {
+        if (node == null || paths == null) return;
+        for (String path : paths) {
+            if (path == null || path.isBlank()) continue;
+            // Strip JSONPath root prefix
+            String normalized = path.startsWith("$.") ? path.substring(2) : path;
+            if (normalized.startsWith("$")) normalized = normalized.substring(1);
+            if (normalized.startsWith(".")) normalized = normalized.substring(1);
+            if (normalized.isEmpty()) continue;
+            redactPath(node, normalized.split("\\."), 0);
+        }
+    }
+
+    private static void redactPath(JsonNode current, String[] segments, int index) {
+        if (current == null || index >= segments.length) return;
+
+        String segment = segments[index];
+        boolean lastSegment = (index == segments.length - 1);
+
+        if (current.isArray()) {
+            // Traverse all array elements
+            for (JsonNode item : current) {
+                redactPath(item, segments, index);
+            }
+            return;
+        }
+
+        if (!current.isObject()) return;
+        ObjectNode obj = (ObjectNode) current;
+
+        if (!obj.has(segment)) return;
+
+        if (lastSegment) {
+            // Replace value with redaction marker
+            obj.put(segment, REDACTED_MARKER);
+        } else {
+            redactPath(obj.get(segment), segments, index + 1);
+        }
     }
 }

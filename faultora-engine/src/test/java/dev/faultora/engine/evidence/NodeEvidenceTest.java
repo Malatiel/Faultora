@@ -126,4 +126,175 @@ class NodeEvidenceTest {
         assertThat(evidence.responseBody()).isPresent();
         assertThat(evidence.responseBody().get().length).isEqualTo(body.length);
     }
+
+    // ---- contentTypeAllowlist tests ----
+
+    @Test
+    void bodyCapturedWhenContentTypeInAllowlist() {
+        EvidencePolicy policy = new EvidencePolicy(
+                true, false,
+                Set.of(),
+                0, 0, List.of(),
+                Set.of("application/json"), "session");
+
+        NodeEvidence evidence = new NodeEvidence(policy);
+        evidence.body("{\"ok\":true}".getBytes(), "application/json");
+
+        assertThat(evidence.responseBody()).isPresent();
+        assertThat(evidence.responseJson()).isPresent();
+    }
+
+    @Test
+    void bodySkippedWhenContentTypeNotInAllowlist() {
+        EvidencePolicy policy = new EvidencePolicy(
+                true, false,
+                Set.of(),
+                0, 0, List.of(),
+                Set.of("application/json"), "session");
+
+        NodeEvidence evidence = new NodeEvidence(policy);
+        evidence.body("<html>secret</html>".getBytes(), "text/html");
+
+        assertThat(evidence.responseBody()).isEmpty();
+        assertThat(evidence.responseJson()).isEmpty();
+    }
+
+    @Test
+    void bodyCapturedWhenAllowlistEmpty() {
+        // Empty allowlist = all content types allowed
+        EvidencePolicy policy = new EvidencePolicy(
+                true, false,
+                Set.of(),
+                0, 0, List.of(),
+                Set.of(), "session");
+
+        NodeEvidence evidence = new NodeEvidence(policy);
+        evidence.body("{\"ok\":true}".getBytes(), "application/xml");
+
+        assertThat(evidence.responseBody()).isPresent();
+    }
+
+    @Test
+    void bodyCapturedWhenContentTypeNullWithAllowlist() {
+        // Null content type with non-empty allowlist — allow (defensive)
+        EvidencePolicy policy = new EvidencePolicy(
+                true, false,
+                Set.of(),
+                0, 0, List.of(),
+                Set.of("application/json"), "session");
+
+        NodeEvidence evidence = new NodeEvidence(policy);
+        evidence.body("{\"ok\":true}".getBytes(), null);
+
+        assertThat(evidence.responseBody()).isPresent();
+    }
+
+    @Test
+    void bodyCapturedWithContentTypeParameters() {
+        // "application/json; charset=utf-8" should match "application/json"
+        EvidencePolicy policy = new EvidencePolicy(
+                true, false,
+                Set.of(),
+                0, 0, List.of(),
+                Set.of("application/json"), "session");
+
+        NodeEvidence evidence = new NodeEvidence(policy);
+        evidence.body("{\"ok\":true}".getBytes(), "application/json; charset=utf-8");
+
+        assertThat(evidence.responseBody()).isPresent();
+    }
+
+    // ---- redactPaths tests ----
+
+    @Test
+    void redactPathsRedactsMatchingFields() {
+        EvidencePolicy policy = new EvidencePolicy(
+                true, false,
+                Set.of(),
+                0, 0,
+                List.of("creditCard.cvv", "ssn"),
+                Set.of(), "session");
+
+        NodeEvidence evidence = new NodeEvidence(policy);
+        evidence.body("{\"creditCard\":{\"number\":\"4111\",\"cvv\":\"123\"},\"ssn\":\"123-45-6789\",\"name\":\"Alice\"}".getBytes());
+
+        assertThat(evidence.responseJson()).isPresent();
+        var json = evidence.responseJson().get();
+        assertThat(json.path("creditCard").path("cvv").asText()).isEqualTo("***");
+        assertThat(json.path("ssn").asText()).isEqualTo("***");
+        // Non-redacted fields preserved
+        assertThat(json.path("creditCard").path("number").asText()).isEqualTo("4111");
+        assertThat(json.path("name").asText()).isEqualTo("Alice");
+    }
+
+    @Test
+    void redactPathsHandlesDollarPrefix() {
+        EvidencePolicy policy = new EvidencePolicy(
+                true, false,
+                Set.of(),
+                0, 0,
+                List.of("$.secret"),
+                Set.of(), "session");
+
+        NodeEvidence evidence = new NodeEvidence(policy);
+        evidence.body("{\"secret\":\"top\",\"public\":\"info\"}".getBytes());
+
+        var json = evidence.responseJson().get();
+        assertThat(json.path("secret").asText()).isEqualTo("***");
+        assertThat(json.path("public").asText()).isEqualTo("info");
+    }
+
+    @Test
+    void redactPathsHandlesArrayElements() {
+        EvidencePolicy policy = new EvidencePolicy(
+                true, false,
+                Set.of(),
+                0, 0,
+                List.of("items.cardNumber"),
+                Set.of(), "session");
+
+        NodeEvidence evidence = new NodeEvidence(policy);
+        evidence.body("{\"items\":[{\"cardNumber\":\"4111\",\"qty\":1},{\"cardNumber\":\"5555\",\"qty\":2}]}".getBytes());
+
+        var json = evidence.responseJson().get();
+        assertThat(json.path("items").get(0).path("cardNumber").asText()).isEqualTo("***");
+        assertThat(json.path("items").get(1).path("cardNumber").asText()).isEqualTo("***");
+        assertThat(json.path("items").get(0).path("qty").asInt()).isEqualTo(1);
+    }
+
+    @Test
+    void redactPathsNoopWhenEmpty() {
+        EvidencePolicy policy = new EvidencePolicy(
+                true, false,
+                Set.of(),
+                0, 0,
+                List.of(),
+                Set.of(), "session");
+
+        NodeEvidence evidence = new NodeEvidence(policy);
+        evidence.body("{\"a\":1}".getBytes());
+
+        var json = evidence.responseJson().get();
+        assertThat(json.path("a").asInt()).isEqualTo(1);
+    }
+
+    @Test
+    void redactPathsAppliedToSerializedBody() {
+        // After redaction, responseBody() should contain the redacted JSON
+        EvidencePolicy policy = new EvidencePolicy(
+                true, false,
+                Set.of(),
+                0, 0,
+                List.of("token"),
+                Set.of(), "session");
+
+        NodeEvidence evidence = new NodeEvidence(policy);
+        evidence.body("{\"token\":\"secret123\",\"id\":42}".getBytes());
+
+        assertThat(evidence.responseBody()).isPresent();
+        String redacted = new String(evidence.responseBody().get());
+        assertThat(redacted).contains("***");
+        assertThat(redacted).doesNotContain("secret123");
+        assertThat(redacted).contains("\"id\":42");
+    }
 }

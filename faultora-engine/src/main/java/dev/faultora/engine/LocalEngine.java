@@ -450,7 +450,15 @@ public class LocalEngine {
     private void populateEvidence(NodeEvidence evidence, OperationResult result) {
         evidence.statusCode(result.statusCode());
         evidence.headers(result.headers());
-        evidence.body(result.body());
+        // Extract content type from response headers for contentTypeAllowlist enforcement
+        String contentType = null;
+        if (result.headers() != null) {
+            List<String> ctValues = result.headers().get("content-type");
+            if (ctValues != null && !ctValues.isEmpty()) {
+                contentType = ctValues.get(0);
+            }
+        }
+        evidence.body(result.body(), contentType);
         evidence.durationMs(result.durationMs());
         evidence.error(result.error());
     }
