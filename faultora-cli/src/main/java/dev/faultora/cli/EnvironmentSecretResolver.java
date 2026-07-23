@@ -4,6 +4,7 @@ import dev.faultora.model.security.SecretHandle;
 import dev.faultora.spi.contract.SecretResolutionException;
 import dev.faultora.spi.contract.SecretResolver;
 
+import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -14,15 +15,16 @@ import java.util.concurrent.ConcurrentHashMap;
  * For example, with prefix {@code FAULTORA_SECRET_}, handle ID {@code api-key}
  * maps to environment variable {@code FAULTORA_SECRET_API_KEY}.
  * <p>
- * The raw secret value is never exposed through the returned {@link SecretHandle}.
- * Only a redacted representation (last 4 characters, masked) is stored in the handle.
+ * The raw secret value is accessible via {@link SecretHandle#secretValue()} which
+ * returns a defensive copy. The redacted form (last 4 characters, masked) is stored
+ * directly in the handle for safe display.
  * <p>
  * Thread-safe: handles are cached after first resolution.
  */
 public class EnvironmentSecretResolver implements SecretResolver {
 
     private static final String DEFAULT_PREFIX = "FAULTORA_SECRET_";
-    private static final int MIN_SECRET_LENGTH =4;
+    private static final int MIN_SECRET_LENGTH = 4;
 
     private final String prefix;
     private final Map<String, Object> resolvedCache = new ConcurrentHashMap<>();
@@ -94,11 +96,17 @@ public class EnvironmentSecretResolver implements SecretResolver {
 
     /**
      * Create a SecretHandle from a raw secret value.
+     * The raw value is captured via a supplier so it can be retrieved
+     * when needed (e.g., for Authorization header injection).
      * The redacted form shows only the last 4 characters (or fewer if shorter).
      */
     static SecretHandle createHandle(String handleId, String value) {
         String redacted = redact(value);
-        return new SecretHandle(handleId, redacted, "env", -1);
+        // Capture the value as a char[] supplier. The char[] is created on each call
+        // to avoid holding a reference to the original String (which stays in the
+        // String pool). The caller must zero-fill after use.
+        char[] valueChars = value.toCharArray();
+        return new SecretHandle(handleId, redacted, "env", -1, () -> Arrays.copyOf(valueChars, valueChars.length));
     }
 
     /**

@@ -59,6 +59,33 @@ class EnvironmentSecretResolverTest {
     }
 
     @Test
+    void createHandleProvidesSecretValue() {
+        SecretHandle handle = EnvironmentSecretResolver.createHandle("test-key", "super-secret-value-1234");
+        char[] value = handle.secretValue();
+        assertThat(value).isNotNull();
+        assertThat(new String(value)).isEqualTo("super-secret-value-1234");
+    }
+
+    @Test
+    void secretValueReturnsDefensiveCopy() {
+        SecretHandle handle = EnvironmentSecretResolver.createHandle("test-key", "my-secret");
+        char[] first = handle.secretValue();
+        char[] second = handle.secretValue();
+        // Should be equal but not the same array
+        assertThat(first).isEqualTo(second);
+        assertThat(first).isNotSameAs(second);
+        // Modifying the copy should not affect subsequent calls
+        first[0] = 'X';
+        assertThat(handle.secretValue()[0]).isEqualTo('m');
+    }
+
+    @Test
+    void valuelessHandleReturnsNullSecret() {
+        SecretHandle handle = new SecretHandle("test", "***", "env", -1);
+        assertThat(handle.secretValue()).isNull();
+    }
+
+    @Test
     void resolveThrowsForNullHandleId() {
         EnvironmentSecretResolver resolver = new EnvironmentSecretResolver();
         assertThatThrownBy(() -> resolver.resolve(null))

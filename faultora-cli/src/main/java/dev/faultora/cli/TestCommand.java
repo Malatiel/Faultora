@@ -125,8 +125,16 @@ public class TestCommand implements Command {
             ExpressionContext exprContext = ExpressionContext.builder().build();
 
             EnvironmentSecretResolver secretResolver = new EnvironmentSecretResolver();
+            // Use a policy that captures bodies and headers so that assertions
+            // (jsonpath, header, etc.) can evaluate against actual evidence.
+            // MINIMAL strips bodies/headers before assertions run, causing
+            // INDETERMINATE to be treated as PASSED — a false-positive.
+            EvidencePolicy evidencePolicy = new EvidencePolicy(
+                    true, true,
+                    Set.of("authorization", "cookie", "set-cookie", "proxy-authorization"),
+                    10 * 1024 * 1024, 1000, List.of(), Set.of(), "session");
             ConnectorContext connectorContext = new ConnectorContext(
-                    EvidencePolicy.MINIMAL,
+                    evidencePolicy,
                     secretResolver::resolve,
                     5000, 30000, 60000,
                     Map.of("baseUrl", targetUrl));

@@ -124,7 +124,8 @@ public class LocalEngine {
             for (AssertionResult ar : result.assertions()) {
                 if (ar.outcome() == AssertionResult.Outcome.PASS) {
                     passedAssertions.incrementAndGet();
-                } else if (ar.outcome() == AssertionResult.Outcome.FAIL) {
+                } else if (ar.outcome() == AssertionResult.Outcome.FAIL
+                        || ar.outcome() == AssertionResult.Outcome.INDETERMINATE) {
                     failedAssertions.incrementAndGet();
                 }
             }
@@ -286,8 +287,12 @@ public class LocalEngine {
 
                     evidenceMap.put(nodeId, evidence);
 
-                    RunResult.Status nodeStatus = result.outcome() == AssertionResult.Outcome.FAIL ?
-                            RunResult.Status.FAILED : RunResult.Status.PASSED;
+                    // Treat INDETERMINATE as failure — an assertion that cannot be
+                    // evaluated (e.g., missing evidence) must not silently pass.
+                    RunResult.Status nodeStatus =
+                            (result.outcome() == AssertionResult.Outcome.FAIL
+                             || result.outcome() == AssertionResult.Outcome.INDETERMINATE)
+                                    ? RunResult.Status.FAILED : RunResult.Status.PASSED;
 
                     emitEvent(journal, new RunEvent.NodeCompleted(
                             "NODE_COMPLETED", System.currentTimeMillis(),
