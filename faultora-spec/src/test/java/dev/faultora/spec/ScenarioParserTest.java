@@ -144,6 +144,83 @@ class ScenarioParserTest {
                         "Wait step requires a positive duration");
     }
 
+    @Test
+    void validatorAcceptsCompleteFaultStep() {
+        ScenarioDocument document = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("faults", "faults", Map.of(), Map.of()),
+                Map.of(),
+                List.of(),
+                List.of(new ScenarioStep(
+                        "call", "operation", "operation",
+                        Map.of(), null, List.of("inject"), null, null, Map.of())),
+                List.of(new FaultStep(
+                        "inject", "http-latency", "default",
+                        Map.of("delayMs", 200), "2s", List.of(), Map.of())),
+                List.of(), List.of());
+
+        ParseResult<ScenarioDocument> result = validator.validate(document);
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.errors()).isEmpty();
+    }
+
+    @Test
+    void validatorRejectsFaultStepWithoutTypeOrDuration() {
+        ScenarioDocument document = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("faults", "faults", Map.of(), Map.of()),
+                Map.of(),
+                List.of(),
+                List.of(new ScenarioStep(
+                        "call", "operation", "operation",
+                        Map.of(), null, List.of(), null, null, Map.of())),
+                List.of(new FaultStep(
+                        "inject", " ", "default", Map.of(), null, List.of(), Map.of())),
+                List.of(), List.of());
+
+        ParseResult<ScenarioDocument> result = validator.validate(document);
+
+        assertThat(result.errors()).extracting(Diagnostic::message)
+                .contains(
+                        "Fault step requires a faultType",
+                        "Fault step requires a positive duration (e.g. 500ms, 5s)");
+    }
+
+    @Test
+    void parserReadsFaultStepsAndExpectError() {
+        String yaml = """
+                apiVersion: faultora.dev/v1alpha1
+                kind: Scenario
+                metadata:
+                  name: fault-scenario
+                execute:
+                  - id: first-call
+                    type: operation
+                    operationId: create-payment
+                    expectError: true
+                    dependsOn: [inject-loss]
+                faults:
+                  - id: inject-loss
+                    faultType: http-response-loss
+                    targetScope: default
+                    duration: 5s
+                assertions: []
+                """;
+
+        ParseResult<ScenarioDocument> result = parser.parse(yaml);
+
+        assertThat(result.isSuccess()).isTrue();
+        ScenarioDocument document = result.document();
+        assertThat(document.execute().get(0).expectError()).isTrue();
+        assertThat(document.faults()).hasSize(1);
+        assertThat(document.faults().get(0).faultType()).isEqualTo("http-response-loss");
+        assertThat(document.faults().get(0).duration()).isEqualTo("5s");
+
+        ParseResult<ScenarioDocument> validation = validator.validate(document);
+        assertThat(validation.isSuccess()).isTrue();
+    }
+
     private String loadFixture(String name) throws IOException {
         try (InputStream is = getClass().getResourceAsStream("/fixtures/spec/" + name)) {
             assertThat(is).isNotNull();

@@ -87,7 +87,7 @@ java -jar faultora-0.1.1.jar validate --scenario scenario.yaml
 | `inputs` | no | Input declarations. Parsed in 0.1.1, but the CLI does not yet expose runtime input binding. |
 | `setup` | no | Operation or wait steps executed before the main section. |
 | `execute` | yes | Main operation or wait steps. Must contain at least one step. |
-| `faults` | no | Reserved for fault injection. Any fault step is rejected in 0.1.1. |
+| `faults` | no | In-process fault injection steps. See [Faults](#faults). |
 | `assertions` | no | Checks evaluated against operation evidence. |
 | `cleanup` | no | Final operation or wait steps. |
 
@@ -156,6 +156,7 @@ Operation steps may appear in `setup`, `execute`, and `cleanup`.
 | `timeout` | no | Positive duration: milliseconds, `ms`, `s`, or `m`. |
 | `outputAs` | no | Reserved; output binding is not active in the 0.1.1 CLI. |
 | `retry` | no | Reserved. Omit it from 0.1.1 release scenarios; attempts greater than one are rejected. |
+| `expectError` | no | When `true`, the step passes only if the operation fails with a normalized error, and its dependents still run. Use for requests executed under an injected fault. If the operation succeeds instead, the step fails with `EXPECTED_ERROR`. |
 | `metadata` | no | Arbitrary step metadata. |
 
 Operation timeout examples:
@@ -206,6 +207,55 @@ Wait steps pause local execution without making a network request.
 ```
 
 `timeout` is required and must be greater than zero.
+
+## Faults
+
+Fault steps inject bounded failures into Faultora's own outbound requests. The
+built-in provider is in-process: it never touches the target system, its
+infrastructure, or any traffic other than the requests this run sends. Injected
+failures surface as normalized errors whose code starts with `FAULT_`, so
+evidence cannot be mistaken for target behavior.
+
+```yaml
+faults:
+  - id: lose-response
+    faultType: http-response-loss
+    targetScope: "*"
+    duration: 1s
+```
+
+| Field | Required | Description |
+|---|---:|---|
+| `id` | yes | Stable ID, unique across every scenario section. |
+| `faultType` | yes | One of the fault types below. |
+| `targetScope` | no | Catalog target ID the fault applies to, or `*` (default) for all targets. |
+| `duration` | yes | Positive duration of the fault window. |
+| `params` | no | Fault-specific parameters. |
+| `dependsOn` | no | IDs that must complete before the fault activates. |
+
+Fault types:
+
+| Type | Effect | Parameters |
+|---|---|---|
+| `http-latency` | Delays each matching request before it is sent; the delay is included in the observed duration. | `delayMs` (required, 1–60000) |
+| `http-error` | Fails each matching request before it reaches the target (`FAULT_INJECTED_ERROR`, retryable). | none |
+| `http-response-loss` | Delivers the request to the target, then discards the response and reports a timeout-category error (`FAULT_RESPONSE_LOSS`). The metadata records the discarded status code. | none |
+
+Semantics:
+
+- a fault with no `dependsOn` activates before the first `execute` step;
+- the fault window starts at activation and ends after `duration`;
+- rollback is guaranteed and exactly once: a hard-expiry watchdog fires even if
+  the scenario hangs, and every remaining fault is rolled back when the run
+  ends;
+- steps that should run under the fault must declare `dependsOn` on the fault
+  step ID; steps that should run after it can wait out the window with a
+  `wait` step;
+- requests that fail because of `http-error` or `http-response-loss` should be
+  marked with `expectError: true`, otherwise the step failure stops dependents;
+- fault windows and the nodes that ran during them appear in the console and
+  HTML reports and as `FAULT_INJECTED` / `FAULT_ROLLED_BACK` journal events.
+  Attribution states overlap in time, not causation.
 
 ## Dependencies and targets
 
@@ -384,11 +434,11 @@ params:
   max: 1000
 ```
 
-## Unsupported execution features in 0.1.1
+## Unsupported execution features
 
 Faultora fails validation or plan compilation instead of silently ignoring:
 
-- fault injection through `faults`;
+- network-level fault injection (the built-in provider is in-process only);
 - retry policies with more than one attempt;
 - parallel and repeat blocks;
 - runtime scenario input binding;

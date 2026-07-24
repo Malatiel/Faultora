@@ -46,6 +46,7 @@ public class ScenarioValidator {
         validateSteps(document.setup(), "setup", diagnostics);
         validateSteps(document.execute(), "execute", diagnostics);
         validateSteps(document.cleanup(), "cleanup", diagnostics);
+        validateFaultSteps(document.faults(), diagnostics);
 
         if (diagnostics.stream().anyMatch(Diagnostic::isError)) {
             return new ParseResult<>(null, diagnostics);
@@ -172,6 +173,21 @@ public class ScenarioValidator {
                     diagnostics.add(Diagnostic.error(path + ".retry",
                             "Retry values are out of range"));
                 }
+            }
+        }
+    }
+
+    private void validateFaultSteps(List<FaultStep> steps, List<Diagnostic> diagnostics) {
+        if (steps == null) return;
+        for (FaultStep step : steps) {
+            String path = "faults." + step.id();
+            if (step.faultType() == null || step.faultType().isBlank()) {
+                diagnostics.add(Diagnostic.error(path + ".faultType",
+                        "Fault step requires a faultType"));
+            }
+            if (!isPositiveDuration(step.duration())) {
+                diagnostics.add(Diagnostic.error(path + ".duration",
+                        "Fault step requires a positive duration (e.g. 500ms, 5s)"));
             }
         }
     }

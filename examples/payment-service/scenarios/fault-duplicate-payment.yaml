@@ -1,0 +1,70 @@
+apiVersion: faultora.dev/v1alpha1
+kind: Scenario
+
+metadata:
+  name: payment-duplicate-under-response-loss
+  description: >-
+    The first create-payment request reaches the API but its response is lost.
+    The client retries with the same Idempotency-Key after the fault expires.
+    The business invariant: exactly one payment exists afterwards.
+  labels:
+    team: payments
+    suite: reliability
+
+faults:
+  - id: lose-response
+    faultType: http-response-loss
+    targetScope: "*"
+    duration: 1s
+
+execute:
+  - id: first-attempt
+    type: operation
+    operationId: create-payment
+    expectError: true
+    dependsOn: [lose-response]
+    inputs:
+      headers:
+        Idempotency-Key: retry-demo-001
+      body:
+        amount: 4200
+        currency: EUR
+
+  - id: wait-for-fault-expiry
+    type: wait
+    timeout: 1500ms
+    dependsOn: [first-attempt]
+
+  - id: retry-with-same-key
+    type: operation
+    operationId: create-payment
+    dependsOn: [wait-for-fault-expiry]
+    inputs:
+      headers:
+        Idempotency-Key: retry-demo-001
+      body:
+        amount: 4200
+        currency: EUR
+
+  - id: list-payments
+    type: operation
+    operationId: list-payments
+    dependsOn: [retry-with-same-key]
+
+assertions:
+  - id: retry-is-replayed
+    assertionType: status
+    targetStep: retry-with-same-key
+    params:
+      expected: 200
+    message: >-
+      The retry must be replayed (200), proving the first request was delivered
+      even though its response was lost
+
+  - id: no-duplicate-payment
+    assertionType: jsonpath
+    targetStep: list-payments
+    params:
+      path: "@"
+      count: 1
+    message: Exactly one payment exists after the retry

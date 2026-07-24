@@ -10,22 +10,22 @@
         <version>0.2.0-SNAPSHOT</version>
     </parent>
 
-    <artifactId>faultora-reporting</artifactId>
-    <name>Faultora :: Reporting</name>
-    <description>Report renderers: console, JSON, JUnit XML, HTML</description>
+    <artifactId>faultora-faults-local</artifactId>
+    <name>Faultora :: Faults :: Local</name>
+    <description>In-process fault provider acting on Faultora's own outbound requests</description>
 
     <dependencies>
-        <dependency>
-            <groupId>dev.faultora</groupId>
-            <artifactId>faultora-spi</artifactId>
-        </dependency>
         <dependency>
             <groupId>dev.faultora</groupId>
             <artifactId>faultora-model</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
+            <groupId>dev.faultora</groupId>
+            <artifactId>faultora-spi</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>

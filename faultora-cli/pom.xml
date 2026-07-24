@@ -7,7 +7,7 @@
     <parent>
         <groupId>dev.faultora</groupId>
         <artifactId>faultora-parent</artifactId>
-        <version>0.1.1</version>
+        <version>0.2.0-SNAPSHOT</version>
     </parent>
 
     <artifactId>faultora-cli</artifactId>
@@ -38,6 +38,10 @@
         <dependency>
             <groupId>dev.faultora</groupId>
             <artifactId>faultora-connector-http</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.faultora</groupId>
+            <artifactId>faultora-faults-local</artifactId>
         </dependency>
         <dependency>
             <groupId>dev.faultora</groupId>

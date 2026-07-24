@@ -1,0 +1,45 @@
+apiVersion: faultora.dev/v1alpha1
+kind: Scenario
+
+metadata:
+  name: payment-latency-fault
+  description: >-
+    Inject 400ms of client-observed latency and verify the payment API still
+    completes the operation within its SLA budget.
+  labels:
+    team: payments
+    suite: reliability
+
+faults:
+  - id: inject-latency
+    faultType: http-latency
+    targetScope: "*"
+    duration: 10s
+    params:
+      delayMs: 400
+
+execute:
+  - id: create-payment
+    type: operation
+    operationId: create-payment
+    dependsOn: [inject-latency]
+    inputs:
+      body:
+        amount: 1500
+        currency: EUR
+
+assertions:
+  - id: created
+    assertionType: status
+    targetStep: create-payment
+    params:
+      expected: 201
+    message: Payment is created even under injected latency
+
+  - id: latency-is-visible
+    assertionType: duration
+    targetStep: create-payment
+    params:
+      min: 400
+      max: 10000
+    message: Observed duration includes the injected 400ms delay

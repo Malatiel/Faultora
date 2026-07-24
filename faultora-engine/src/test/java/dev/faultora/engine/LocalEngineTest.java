@@ -428,26 +428,10 @@ class LocalEngineTest {
     }
 
     @Test
-    void unsupportedFaultNodeFailsInsteadOfPassingSilently() throws Exception {
-        ExecutionPlan plan = ExecutionPlan.builder()
-                .runId(new RunId("run-fault"))
-                .scenario(buildScenario())
-                .catalog(catalog)
-                .targetPolicy(policy)
-                .seed(42L)
-                .scenarioDigest("sha256:abc")
-                .catalogDigest("sha256:def")
-                .addNode(new PlanNode.FaultStartNode(
-                        new NodeId("fault"),
-                        "latency",
-                        "default",
-                        Map.of(),
-                        100,
-                        List.of(),
-                        SafetyClassification.MUTATING,
-                        0,
-                        0))
-                .build();
+    void faultNodeWithoutMatchingProviderFailsInsteadOfPassingSilently() throws Exception {
+        ExecutionPlan plan = planWithNodes("run-fault", new PlanNode.FaultStartNode(
+                new NodeId("fault"), "latency", "default", Map.of(), 100,
+                List.of(), SafetyClassification.MUTATING, 0, 0));
         LocalEngine engine = new LocalEngine(Map.of(), Map.of());
 
         try (RunJournal journal = new RunJournal(tempDir.resolve("fault.ndjson"), true)) {
@@ -456,11 +440,182 @@ class LocalEngineTest {
 
             assertThat(result.status()).isEqualTo(RunResult.Status.FAILED);
             assertThat(result.nodeResults().get(new NodeId("fault")).error().message())
-                    .contains("not supported");
+                    .contains("No fault provider supports fault type");
+        }
+    }
+
+    @Test
+    void faultIsInjectedAndRolledBackAtRunEnd() throws Exception {
+        StubFaultProvider provider = new StubFaultProvider();
+        ExecutionPlan plan = planWithNodes("run-fault-lifecycle",
+                new PlanNode.FaultStartNode(
+                        new NodeId("inject"), "stub-fault", "default",
+                        Map.of("delayMs", 10), 60_000,
+                        List.of(), SafetyClassification.MUTATING, 0, 0),
+                new PlanNode.OperationNode(
+                        new NodeId("op"), new OperationId("create-payment"),
+                        findOp("create-payment"), Map.of(), null,
+                        List.of(new NodeId("inject")),
+                        SafetyClassification.MUTATING, 0, 0));
+        LocalEngine engine = new LocalEngine(
+                Map.of("http", new SuccessConnector()), Map.of(),
+                Map.of("stub", provider));
+
+        try (RunJournal journal = new RunJournal(tempDir.resolve("fault-lc.ndjson"), true)) {
+            RunResult result = engine.execute(
+                    plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+
+            assertThat(result.status()).isEqualTo(RunResult.Status.PASSED);
+            assertThat(provider.injections.get()).isEqualTo(1);
+            assertThat(provider.rollbacks.get()).isEqualTo(1);
+
+            List<RunEvent> events = journal.events();
+            assertThat(events).anyMatch(e -> e instanceof RunEvent.FaultInjected fi
+                    && fi.faultType().equals("stub-fault"));
+            assertThat(events).anyMatch(e -> e instanceof RunEvent.FaultRolledBack rb
+                    && rb.rollbackStatus().equals("run-end"));
+        }
+    }
+
+    @Test
+    void watchdogRollsBackFaultAtHardExpiryWhileRunContinues() throws Exception {
+        StubFaultProvider provider = new StubFaultProvider();
+        ExecutionPlan plan = planWithNodes("run-fault-expiry",
+                new PlanNode.FaultStartNode(
+                        new NodeId("inject"), "stub-fault", "default",
+                        Map.of(), 100,
+                        List.of(), SafetyClassification.MUTATING, 0, 0),
+                new PlanNode.OperationNode(
+                        new NodeId("wait"), new OperationId("_wait"), null,
+                        Map.of("waitMs", 700L), null,
+                        List.of(new NodeId("inject")),
+                        SafetyClassification.READ_ONLY, 0, 0));
+        LocalEngine engine = new LocalEngine(Map.of(), Map.of(), Map.of("stub", provider));
+
+        try (RunJournal journal = new RunJournal(tempDir.resolve("fault-exp.ndjson"), true)) {
+            RunResult result = engine.execute(
+                    plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+
+            assertThat(result.status()).isEqualTo(RunResult.Status.PASSED);
+            assertThat(provider.rollbacks.get()).isEqualTo(1);
+            assertThat(journal.events()).anyMatch(e -> e instanceof RunEvent.FaultRolledBack rb
+                    && rb.rollbackStatus().equals("hard-expiry"));
+        }
+    }
+
+    @Test
+    void faultStopNodeRollsBackExactlyOnce() throws Exception {
+        StubFaultProvider provider = new StubFaultProvider();
+        ExecutionPlan plan = planWithNodes("run-fault-stop",
+                new PlanNode.FaultStartNode(
+                        new NodeId("inject"), "stub-fault", "default",
+                        Map.of(), 60_000,
+                        List.of(), SafetyClassification.MUTATING, 0, 0),
+                new PlanNode.FaultStopNode(
+                        new NodeId("stop"), new NodeId("inject"),
+                        List.of(new NodeId("inject")),
+                        SafetyClassification.MUTATING, 0, 0));
+        LocalEngine engine = new LocalEngine(Map.of(), Map.of(), Map.of("stub", provider));
+
+        try (RunJournal journal = new RunJournal(tempDir.resolve("fault-stop.ndjson"), true)) {
+            RunResult result = engine.execute(
+                    plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+
+            assertThat(result.status()).isEqualTo(RunResult.Status.PASSED);
+            assertThat(provider.rollbacks.get()).isEqualTo(1);
+
+            List<RunEvent.FaultRolledBack> rollbackEvents = journal.events().stream()
+                    .filter(e -> e instanceof RunEvent.FaultRolledBack)
+                    .map(e -> (RunEvent.FaultRolledBack) e)
+                    .toList();
+            assertThat(rollbackEvents).hasSize(1);
+            assertThat(rollbackEvents.get(0).rollbackStatus()).isEqualTo("fault-stop");
+        }
+    }
+
+    @Test
+    void expectErrorStepPassesWhenOperationFails() throws Exception {
+        ExecutionPlan plan = planWithNodes("run-expect-error",
+                new PlanNode.OperationNode(
+                        new NodeId("failing"), new OperationId("create-payment"),
+                        findOp("create-payment"), Map.of(), null, true,
+                        List.of(), SafetyClassification.MUTATING, 0, 0),
+                new PlanNode.OperationNode(
+                        new NodeId("after"), new OperationId("get-payment"),
+                        findOp("get-payment"), Map.of(), null,
+                        List.of(new NodeId("failing")),
+                        SafetyClassification.READ_ONLY, 0, 0));
+        LocalEngine engine = new LocalEngine(
+                Map.of("http", new FailCreatePaymentConnector()), Map.of());
+
+        try (RunJournal journal = new RunJournal(tempDir.resolve("expect-err.ndjson"), true)) {
+            RunResult result = engine.execute(
+                    plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+
+            assertThat(result.nodeResults().get(new NodeId("failing")).status())
+                    .isEqualTo(RunResult.Status.PASSED);
+            // The dependent step runs because the expected failure counts as success.
+            assertThat(result.nodeResults()).containsKey(new NodeId("after"));
+            assertThat(result.status()).isEqualTo(RunResult.Status.PASSED);
+        }
+    }
+
+    @Test
+    void expectErrorStepFailsWhenOperationSucceeds() throws Exception {
+        ExecutionPlan plan = planWithNodes("run-expect-error-miss",
+                new PlanNode.OperationNode(
+                        new NodeId("unexpected-success"), new OperationId("create-payment"),
+                        findOp("create-payment"), Map.of(), null, true,
+                        List.of(), SafetyClassification.MUTATING, 0, 0));
+        LocalEngine engine = new LocalEngine(
+                Map.of("http", new SuccessConnector()), Map.of());
+
+        try (RunJournal journal = new RunJournal(tempDir.resolve("expect-miss.ndjson"), true)) {
+            RunResult result = engine.execute(
+                    plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+
+            RunResult.NodeResult node = result.nodeResults().get(new NodeId("unexpected-success"));
+            assertThat(node.status()).isEqualTo(RunResult.Status.FAILED);
+            assertThat(node.error().code()).isEqualTo("EXPECTED_ERROR");
+            assertThat(result.status()).isEqualTo(RunResult.Status.FAILED);
+        }
+    }
+
+    @Test
+    void failedOperationEmitsNodeFailedEvent() throws Exception {
+        ExecutionPlan plan = planWithNodes("run-node-failed",
+                new PlanNode.OperationNode(
+                        new NodeId("failing"), new OperationId("create-payment"),
+                        findOp("create-payment"), Map.of(), null,
+                        List.of(), SafetyClassification.MUTATING, 0, 0));
+        LocalEngine engine = new LocalEngine(
+                Map.of("http", new FailingConnector()), Map.of());
+
+        try (RunJournal journal = new RunJournal(tempDir.resolve("node-failed.ndjson"), true)) {
+            engine.execute(plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+
+            assertThat(journal.events()).anyMatch(e -> e instanceof RunEvent.NodeFailed nf
+                    && nf.nodeId().value().equals("failing")
+                    && nf.error().code().equals("CONNECTION_REFUSED"));
         }
     }
 
     // --- Helpers ---
+
+    private ExecutionPlan planWithNodes(String runId, PlanNode... nodes) {
+        ExecutionPlan.Builder builder = ExecutionPlan.builder()
+                .runId(new RunId(runId))
+                .scenario(buildScenario())
+                .catalog(catalog)
+                .targetPolicy(policy)
+                .seed(42L)
+                .scenarioDigest("sha256:abc")
+                .catalogDigest("sha256:def");
+        for (PlanNode node : nodes) {
+            builder.addNode(node);
+        }
+        return builder.build();
+    }
 
     private OperationDefinition findOp(String id) {
         return catalog.operations().stream()
@@ -572,6 +727,58 @@ class LocalEngineTest {
 
         @Override
         public void close() {}
+    }
+
+    /**
+     * Connector that fails create-payment and succeeds for everything else.
+     */
+    static class FailCreatePaymentConnector extends SuccessConnector {
+        @Override
+        public OperationResult execute(PreparedTarget preparedTarget, OperationDefinition operation,
+                                        Map<String, Object> inputs, ConnectorContext context) {
+            if (operation.id().value().equals("create-payment")) {
+                return OperationResult.failure(new NormalizedError(
+                        NormalizedError.ErrorCategory.TIMEOUT,
+                        "FAULT_RESPONSE_LOSS",
+                        "Simulated lost response",
+                        true, Map.of()), 5);
+            }
+            return super.execute(preparedTarget, operation, inputs, context);
+        }
+    }
+
+    /**
+     * Fault provider stub recording inject and rollback calls.
+     */
+    static class StubFaultProvider implements dev.faultora.spi.contract.FaultProvider {
+        final java.util.concurrent.atomic.AtomicInteger injections =
+                new java.util.concurrent.atomic.AtomicInteger();
+        final java.util.concurrent.atomic.AtomicInteger rollbacks =
+                new java.util.concurrent.atomic.AtomicInteger();
+
+        @Override
+        public Set<String> capabilities() {
+            return Set.of("stub-fault");
+        }
+
+        @Override
+        public dev.faultora.spi.result.ActiveFault inject(
+                String faultType, Map<String, Object> params,
+                dev.faultora.spi.context.FaultContext context) {
+            int id = injections.incrementAndGet();
+            long activatedAtMs = Math.min(
+                    System.currentTimeMillis(), context.hardExpiryMs() - 1);
+            return new dev.faultora.spi.result.ActiveFault(
+                    "stub-" + id, faultType, context.targetScope(),
+                    activatedAtMs, context.hardExpiryMs(),
+                    "forget stub fault");
+        }
+
+        @Override
+        public void rollback(dev.faultora.spi.result.ActiveFault fault,
+                             dev.faultora.spi.context.FaultContext context) {
+            rollbacks.incrementAndGet();
+        }
     }
 
     /**

@@ -136,6 +136,28 @@ public class HtmlRenderer implements ReportRenderer {
         }
         output.write("</tbody>\n</table>\n</section>\n");
 
+        // Fault windows and attribution
+        List<FaultTimeline.Window> faultWindows = FaultTimeline.windows(events);
+        if (!faultWindows.isEmpty()) {
+            output.write("<section class=\"nodes\">\n<h2>Faults</h2>\n");
+            output.write("<table>\n<thead><tr>");
+            output.write("<th>Fault</th><th>Target</th><th>Active</th>");
+            output.write("<th>Rollback</th><th>Nodes during fault</th></tr></thead>\n<tbody>\n");
+            for (FaultTimeline.Window window : faultWindows) {
+                output.write("<tr>");
+                output.write("<td>" + escapeHtml(window.faultType())
+                        + " <span class=\"muted\">(" + escapeHtml(window.handle()) + ")</span></td>");
+                output.write("<td>" + escapeHtml(window.targetScope()) + "</td>");
+                output.write("<td>" + Math.max(0, window.endAtMs() - window.injectedAtMs())
+                        + "ms</td>");
+                output.write("<td>" + escapeHtml(window.rollbackStatus()) + "</td>");
+                output.write("<td>" + escapeHtml(String.join(", ", window.affectedNodes()))
+                        + "</td>");
+                output.write("</tr>\n");
+            }
+            output.write("</tbody>\n</table>\n</section>\n");
+        }
+
         // Error details if run failed
         if (failed != null && failed.error() != null) {
             output.write("<section class=\"error\">\n<h2>Error</h2>\n");
@@ -213,6 +235,7 @@ public class HtmlRenderer implements ReportRenderer {
             .nodes th, .nodes td { padding: 0.5rem; border-bottom: 1px solid #e0e0e0;
                                    text-align: left; }
             .nodes th { background: #f0f0f0; }
+            .muted { color: #888; font-size: 0.85rem; }
             .error pre { background: #f8f8f8; padding: 1rem; border-radius: 4px;
                          overflow-x: auto; font-size: 0.9rem; }
             footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #e0e0e0;

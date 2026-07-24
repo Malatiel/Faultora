@@ -317,26 +317,94 @@ class PlanCompilerTest {
     }
 
     @Test
-    void compileRejectsFaultsUntilProviderExecutionIsImplemented() {
-        ScenarioDocument scenario = new ScenarioDocument(
-                "faultora.dev/v1alpha1", "Scenario",
-                new ScenarioMetadata("fault", "fault", Map.of(), Map.of()),
-                Map.of(),
-                List.of(),
-                List.of(new ScenarioStep(
-                        "execute", "operation", "create-payment",
-                        Map.of(), null, List.of(), null, null, Map.of())),
-                List.of(new FaultStep(
-                        "latency", "latency", "default",
-                        Map.of(), "1s", List.of("execute"), Map.of())),
-                List.of(),
-                List.of());
+    void compileRejectsFaultTypeNotAllowedByPolicy() {
+        // The default policy allows no fault types (empty allowlist = none).
+        ScenarioDocument scenario = scenarioWithFault(
+                new FaultStep("latency", "http-latency", "default",
+                        Map.of("delayMs", 100), "1s", List.of(), Map.of()));
 
         PlanCompilationResult result = compile(scenario, policy);
 
         assertThat(result.isSuccess()).isFalse();
         assertThat(result.errors()).extracting(PlanDiagnostic::message)
-                .contains("Fault injection is not supported in this release");
+                .contains("Fault type is not allowed by execution policy: http-latency");
+    }
+
+    @Test
+    void compileProducesFaultStartNodeWhenPolicyAllows() {
+        ScenarioDocument scenario = scenarioWithFault(
+                new FaultStep("latency", "http-latency", "default",
+                        Map.of("delayMs", 100), "2s", List.of(), Map.of()));
+
+        PlanCompilationResult result = compile(scenario, faultPolicy("http-latency"));
+
+        assertThat(result.isSuccess()).isTrue();
+        PlanNode.FaultStartNode fault = (PlanNode.FaultStartNode)
+                result.plan().node(new NodeId("latency")).orElseThrow();
+        assertThat(fault.faultType()).isEqualTo("http-latency");
+        assertThat(fault.targetScope()).isEqualTo("default");
+        assertThat(fault.durationMs()).isEqualTo(2000);
+        assertThat(fault.params()).containsEntry("delayMs", 100);
+
+        // A fault with no dependencies is ordered before the execute step.
+        List<String> order = result.plan().nodes().stream()
+                .map(n -> n.nodeId().value()).toList();
+        assertThat(order.indexOf("latency")).isLessThan(order.indexOf("execute"));
+    }
+
+    @Test
+    void compileRejectsFaultWithoutPositiveDuration() {
+        ScenarioDocument scenario = scenarioWithFault(
+                new FaultStep("latency", "http-latency", "default",
+                        Map.of("delayMs", 100), null, List.of(), Map.of()));
+
+        PlanCompilationResult result = compile(scenario, faultPolicy("http-latency"));
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.errors()).extracting(PlanDiagnostic::message)
+                .contains("Fault step requires a positive duration");
+    }
+
+    @Test
+    void compileOrdersFaultAfterItsDependencies() {
+        // Fault depends on the execute step; the topological sort must move it
+        // after that step even though faults compile before the execute section.
+        ScenarioDocument scenario = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("fault-order", "fault-order", Map.of(), Map.of()),
+                Map.of(),
+                List.of(),
+                List.of(
+                        new ScenarioStep("warm-up", "operation", "get-payment",
+                                Map.of(), null, List.of(), null, null, Map.of()),
+                        new ScenarioStep("under-fault", "operation", "create-payment",
+                                Map.of(), null, List.of("inject"), null, null, Map.of())),
+                List.of(new FaultStep("inject", "http-latency", "default",
+                        Map.of("delayMs", 50), "1s", List.of("warm-up"), Map.of())),
+                List.of(),
+                List.of());
+
+        PlanCompilationResult result = compile(scenario, faultPolicy("http-latency"));
+
+        assertThat(result.isSuccess()).isTrue();
+        List<String> order = result.plan().nodes().stream()
+                .map(n -> n.nodeId().value()).toList();
+        assertThat(order.indexOf("warm-up")).isLessThan(order.indexOf("inject"));
+        assertThat(order.indexOf("inject")).isLessThan(order.indexOf("under-fault"));
+    }
+
+    @Test
+    void compilePropagatesExpectErrorToOperationNode() {
+        ScenarioDocument scenario = scenarioWithExecuteStep(new ScenarioStep(
+                "execute", "operation", "create-payment",
+                Map.of(), null, List.of(), null, null, true, Map.of()));
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isTrue();
+        PlanNode.OperationNode node = (PlanNode.OperationNode)
+                result.plan().node(new NodeId("execute")).orElseThrow();
+        assertThat(node.expectError()).isTrue();
     }
 
     @Test
@@ -424,6 +492,32 @@ class PlanCompilerTest {
         return compiler.compile(
                 scenario, catalog, targetPolicy,
                 new RunId("run-001"), 42L, "sha256:abc", "sha256:def");
+    }
+
+    private TargetPolicy faultPolicy(String... allowedFaultTypes) {
+        return new TargetPolicy(
+                policy.allowedTargets(),
+                policy.allowedOperationClasses(),
+                policy.maxRequests(),
+                policy.maxConcurrency(),
+                policy.maxDurationMs(),
+                policy.maxPayloadBytes(),
+                Set.of(allowedFaultTypes),
+                policy.allowedEnvironments());
+    }
+
+    private ScenarioDocument scenarioWithFault(FaultStep fault) {
+        return new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("fault", "fault", Map.of(), Map.of()),
+                Map.of(),
+                List.of(),
+                List.of(new ScenarioStep(
+                        "execute", "operation", "create-payment",
+                        Map.of(), null, List.of(), null, null, Map.of())),
+                List.of(fault),
+                List.of(),
+                List.of());
     }
 
     private ScenarioDocument scenarioWithExecuteStep(ScenarioStep step) {

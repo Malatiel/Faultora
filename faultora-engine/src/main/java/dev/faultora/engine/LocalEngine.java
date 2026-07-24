@@ -2,6 +2,7 @@ package dev.faultora.engine;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.faultora.engine.evidence.NodeEvidence;
+import dev.faultora.engine.fault.FaultSession;
 import dev.faultora.engine.journal.RunJournal;
 import dev.faultora.engine.plan.ExecutionPlan;
 import dev.faultora.engine.plan.PlanNode;
@@ -16,8 +17,10 @@ import dev.faultora.spec.expression.ExpressionContext;
 import dev.faultora.spec.expression.ExpressionEvaluator;
 import dev.faultora.spi.contract.AssertionProvider;
 import dev.faultora.spi.contract.Connector;
+import dev.faultora.spi.contract.FaultProvider;
 import dev.faultora.spi.context.AssertionContext;
 import dev.faultora.spi.context.ConnectorContext;
+import dev.faultora.spi.result.ActiveFault;
 import dev.faultora.spi.result.AssertionResult;
 import dev.faultora.spi.result.OperationResult;
 import org.slf4j.Logger;
@@ -43,14 +46,24 @@ public class LocalEngine {
 
     private final Map<String, Connector> connectors;
     private final Map<String, AssertionProvider> assertionProviders;
+    private final Map<String, FaultProvider> faultProviders;
     private final ExpressionEvaluator expressionEvaluator;
 
     public LocalEngine(
             Map<String, Connector> connectors,
             Map<String, AssertionProvider> assertionProviders
     ) {
+        this(connectors, assertionProviders, Map.of());
+    }
+
+    public LocalEngine(
+            Map<String, Connector> connectors,
+            Map<String, AssertionProvider> assertionProviders,
+            Map<String, FaultProvider> faultProviders
+    ) {
         this.connectors = Map.copyOf(connectors);
         this.assertionProviders = Map.copyOf(assertionProviders);
+        this.faultProviders = Map.copyOf(faultProviders);
         this.expressionEvaluator = new ExpressionEvaluator();
     }
 
@@ -91,77 +104,88 @@ public class LocalEngine {
         // Build execution order (topological)
         List<PlanNode> nodes = plan.topologicalOrder();
 
-        // Phase 1: Execute all non-cleanup nodes
+        // Fault rollback is guaranteed by the session: fault-stop nodes,
+        // the hard-expiry watchdog, and the end-of-run sweep in close().
+        FaultSession faultSession = new FaultSession((fault, rollbackStatus) ->
+                emitEvent(journal, new RunEvent.FaultRolledBack(
+                        "FAULT_ROLLED_BACK", System.currentTimeMillis(), runId,
+                        fault.handle(), rollbackStatus)));
+
         List<PlanNode> cleanupNodes = new ArrayList<>();
-        for (PlanNode node : nodes) {
-            if (cancellation.get()) {
-                break;
-            }
-
-            if (node instanceof PlanNode.CleanupNode) {
-                cleanupNodes.add(node);
-                continue;
-            }
-
-            // Check if dependencies completed successfully
-            if (!dependenciesSatisfied(node, nodeResults)) {
-                continue;
-            }
-
-            RunResult.NodeResult result = executeNode(
-                    node, plan, journal, context, connectorContext,
-                    nodeEvidenceMap, cancellation
-            );
-
-            nodeResults.put(node.nodeId(), result);
-
-            if (result.status() == RunResult.Status.FAILED ||
-                    result.status() == RunResult.Status.ERROR) {
-                hasFailure.set(true);
-            }
-
-            // Count assertions
-            for (AssertionResult ar : result.assertions()) {
-                if (ar.outcome() == AssertionResult.Outcome.PASS) {
-                    passedAssertions.incrementAndGet();
-                } else if (ar.outcome() == AssertionResult.Outcome.FAIL
-                        || ar.outcome() == AssertionResult.Outcome.INDETERMINATE) {
-                    failedAssertions.incrementAndGet();
+        try {
+            // Phase 1: Execute all non-cleanup nodes
+            for (PlanNode node : nodes) {
+                if (cancellation.get()) {
+                    break;
                 }
-            }
-        }
 
-        // Phase 2: Always run cleanup nodes, even if there were failures
-        if (!cancellation.get()) {
-            emitEvent(journal, new RunEvent.CleanupStarted(
-                    "CLEANUP_STARTED", System.currentTimeMillis(), runId,
-                    cleanupNodes.size()
-            ));
+                if (node instanceof PlanNode.CleanupNode) {
+                    cleanupNodes.add(node);
+                    continue;
+                }
 
-            long cleanupStart = System.currentTimeMillis();
-            int cleanupSucceeded = 0;
-            int cleanupFailed = 0;
+                // Check if dependencies completed successfully
+                if (!dependenciesSatisfied(node, nodeResults)) {
+                    continue;
+                }
 
-            for (PlanNode cleanupNode : cleanupNodes) {
                 RunResult.NodeResult result = executeNode(
-                        cleanupNode, plan, journal, context, connectorContext,
-                        nodeEvidenceMap, cancellation
+                        node, plan, journal, context, connectorContext,
+                        nodeEvidenceMap, faultSession, cancellation
                 );
-                nodeResults.put(cleanupNode.nodeId(), result);
 
-                if (result.status() == RunResult.Status.PASSED) {
-                    cleanupSucceeded++;
-                } else {
-                    cleanupFailed++;
-                    cleanupFailedCount.incrementAndGet();
+                nodeResults.put(node.nodeId(), result);
+
+                if (result.status() == RunResult.Status.FAILED ||
+                        result.status() == RunResult.Status.ERROR) {
+                    hasFailure.set(true);
+                }
+
+                // Count assertions
+                for (AssertionResult ar : result.assertions()) {
+                    if (ar.outcome() == AssertionResult.Outcome.PASS) {
+                        passedAssertions.incrementAndGet();
+                    } else if (ar.outcome() == AssertionResult.Outcome.FAIL
+                            || ar.outcome() == AssertionResult.Outcome.INDETERMINATE) {
+                        failedAssertions.incrementAndGet();
+                    }
                 }
             }
 
-            long cleanupDuration = System.currentTimeMillis() - cleanupStart;
-            emitEvent(journal, new RunEvent.CleanupCompleted(
-                    "CLEANUP_COMPLETED", System.currentTimeMillis(), runId,
-                    cleanupSucceeded, cleanupFailed, cleanupDuration
-            ));
+            // Phase 2: Always run cleanup nodes, even if there were failures
+            if (!cancellation.get()) {
+                emitEvent(journal, new RunEvent.CleanupStarted(
+                        "CLEANUP_STARTED", System.currentTimeMillis(), runId,
+                        cleanupNodes.size()
+                ));
+
+                long cleanupStart = System.currentTimeMillis();
+                int cleanupSucceeded = 0;
+                int cleanupFailed = 0;
+
+                for (PlanNode cleanupNode : cleanupNodes) {
+                    RunResult.NodeResult result = executeNode(
+                            cleanupNode, plan, journal, context, connectorContext,
+                            nodeEvidenceMap, faultSession, cancellation
+                    );
+                    nodeResults.put(cleanupNode.nodeId(), result);
+
+                    if (result.status() == RunResult.Status.PASSED) {
+                        cleanupSucceeded++;
+                    } else {
+                        cleanupFailed++;
+                        cleanupFailedCount.incrementAndGet();
+                    }
+                }
+
+                long cleanupDuration = System.currentTimeMillis() - cleanupStart;
+                emitEvent(journal, new RunEvent.CleanupCompleted(
+                        "CLEANUP_COMPLETED", System.currentTimeMillis(), runId,
+                        cleanupSucceeded, cleanupFailed, cleanupDuration
+                ));
+            }
+        } finally {
+            faultSession.close();
         }
 
         long totalDuration = System.currentTimeMillis() - startTime;
@@ -228,6 +252,7 @@ public class LocalEngine {
             ExpressionContext context,
             ConnectorContext connectorContext,
             Map<NodeId, NodeEvidence> evidenceMap,
+            FaultSession faultSession,
             AtomicBoolean cancellation
     ) {
         NodeId nodeId = node.nodeId();
@@ -317,14 +342,41 @@ public class LocalEngine {
                     );
                 }
                 case PlanNode.FaultStartNode faultNode -> {
-                    return nodeFailed(nodeId, node,
-                            "Fault injection is not supported in this release",
-                            NormalizedError.ErrorCategory.VALIDATION, nodeStart);
+                    FaultProvider provider = findFaultProvider(faultNode.faultType());
+                    if (provider == null) {
+                        return nodeFailed(nodeId, node,
+                                "No fault provider supports fault type: " + faultNode.faultType(),
+                                NormalizedError.ErrorCategory.VALIDATION, nodeStart);
+                    }
+                    ActiveFault fault;
+                    try {
+                        fault = faultSession.start(
+                                provider, nodeId, faultNode.faultType(),
+                                faultNode.targetScope(), faultNode.params(),
+                                faultNode.durationMs());
+                    } catch (IllegalArgumentException e) {
+                        return nodeFailed(nodeId, node,
+                                "Fault injection rejected: " + e.getMessage(),
+                                NormalizedError.ErrorCategory.VALIDATION, nodeStart);
+                    }
+                    emitEvent(journal, new RunEvent.FaultInjected(
+                            "FAULT_INJECTED", System.currentTimeMillis(),
+                            plan.runId(), fault.handle(), fault.faultType(),
+                            fault.targetScope(), fault.hardExpiryMs()
+                    ));
+                    evidence.durationMs(System.currentTimeMillis() - nodeStart);
                 }
                 case PlanNode.FaultStopNode faultStopNode -> {
-                    return nodeFailed(nodeId, node,
-                            "Fault rollback is not supported in this release",
-                            NormalizedError.ErrorCategory.VALIDATION, nodeStart);
+                    String handle = faultSession.handleForNode(faultStopNode.faultStartNode());
+                    if (handle == null) {
+                        return nodeFailed(nodeId, node,
+                                "No fault was started by node: "
+                                        + faultStopNode.faultStartNode().value(),
+                                NormalizedError.ErrorCategory.VALIDATION, nodeStart);
+                    }
+                    // Idempotent: an already-expired fault is a successful stop.
+                    faultSession.rollback(handle, FaultSession.REASON_FAULT_STOP);
+                    evidence.durationMs(System.currentTimeMillis() - nodeStart);
                 }
                 case PlanNode.CleanupNode cleanupNode -> {
                     // Look up the operation definition from the catalog
@@ -363,6 +415,38 @@ public class LocalEngine {
                 ));
             }
 
+            boolean expectError = node instanceof PlanNode.OperationNode op && op.expectError();
+
+            if (evidence.hasError() && !expectError) {
+                NormalizedError error = evidence.error().orElse(null);
+                emitEvent(journal, new RunEvent.NodeFailed(
+                        "NODE_FAILED", System.currentTimeMillis(),
+                        plan.runId(), nodeId, error, durationMs
+                ));
+                return new RunResult.NodeResult(
+                        nodeId, nodeType(node), RunResult.Status.FAILED,
+                        evidence.statusCode().orElse(-1), durationMs,
+                        List.of(), error
+                );
+            }
+
+            if (!evidence.hasError() && expectError) {
+                NormalizedError error = new NormalizedError(
+                        NormalizedError.ErrorCategory.VALIDATION,
+                        "EXPECTED_ERROR",
+                        "Step declared expectError but the operation succeeded",
+                        false, Map.of());
+                emitEvent(journal, new RunEvent.NodeFailed(
+                        "NODE_FAILED", System.currentTimeMillis(),
+                        plan.runId(), nodeId, error, durationMs
+                ));
+                return new RunResult.NodeResult(
+                        nodeId, nodeType(node), RunResult.Status.FAILED,
+                        evidence.statusCode().orElse(-1), durationMs,
+                        List.of(), error
+                );
+            }
+
             emitEvent(journal, new RunEvent.NodeCompleted(
                     "NODE_COMPLETED", System.currentTimeMillis(),
                     plan.runId(), nodeId, durationMs,
@@ -370,18 +454,12 @@ public class LocalEngine {
                     evidence.responseBody().map(b -> (long) b.length).orElse(0L)
             ));
 
-            if (evidence.hasError()) {
-                return new RunResult.NodeResult(
-                        nodeId, nodeType(node), RunResult.Status.FAILED,
-                        evidence.statusCode().orElse(-1), durationMs,
-                        List.of(), evidence.error().orElse(null)
-                );
-            }
-
+            // expectError with an actual error: the node passes, and the
+            // expected error stays visible in the result for the reports.
             return new RunResult.NodeResult(
                     nodeId, nodeType(node), RunResult.Status.PASSED,
                     evidence.statusCode().orElse(-1), durationMs,
-                    List.of(), null
+                    List.of(), expectError ? evidence.error().orElse(null) : null
             );
 
         } catch (Exception e) {
@@ -458,6 +536,15 @@ public class LocalEngine {
         } finally {
             connector.release(prepared);
         }
+    }
+
+    private FaultProvider findFaultProvider(String faultType) {
+        for (FaultProvider provider : faultProviders.values()) {
+            if (provider.capabilities().contains(faultType)) {
+                return provider;
+            }
+        }
+        return null;
     }
 
     private dev.faultora.model.catalog.TargetDefinition findTarget(

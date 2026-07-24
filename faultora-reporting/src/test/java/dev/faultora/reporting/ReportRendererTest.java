@@ -226,6 +226,60 @@ class ReportRendererTest {
 
     // --- Helpers ---
 
+    @Test
+    void consoleRendererShowsFaultWindowsAndAttribution() throws IOException {
+        StringWriter out = new StringWriter();
+        new ConsoleRenderer().render(faultEvents(), out);
+
+        String text = out.toString();
+        assertThat(text).contains("--- Faults ---");
+        assertThat(text).contains("[http-latency] target default — active 900ms, rollback: fault-stop");
+        assertThat(text).contains("During fault: step-1");
+        // step-2 ran after the rollback and must not be attributed.
+        assertThat(text).doesNotContain("During fault: step-1, step-2");
+    }
+
+    @Test
+    void htmlRendererShowsFaultWindows() throws IOException {
+        StringWriter out = new StringWriter();
+        new HtmlRenderer().render(faultEvents(), out);
+
+        String html = out.toString();
+        assertThat(html).contains("<h2>Faults</h2>");
+        assertThat(html).contains("http-latency");
+        assertThat(html).contains("fault-stop");
+        assertThat(html).contains("step-1");
+    }
+
+    @Test
+    void consoleRendererOmitsFaultSectionWithoutFaults() throws IOException {
+        StringWriter out = new StringWriter();
+        new ConsoleRenderer().render(sampleEvents(), out);
+
+        assertThat(out.toString()).doesNotContain("--- Faults ---");
+    }
+
+    private List<RunEvent> faultEvents() {
+        return List.of(
+                new RunEvent.RunStarted("RUN_STARTED", 1000, RUN_ID,
+                        "sha256:abc", "sha256:def", 42, Map.of()),
+                new RunEvent.FaultInjected("FAULT_INJECTED", 1100, RUN_ID,
+                        "http-latency-1", "http-latency", "default", 61_100),
+                new RunEvent.NodeStarted("NODE_STARTED", 1200, RUN_ID,
+                        NODE_1, "operation", new OperationId("create-payment")),
+                new RunEvent.NodeCompleted("NODE_COMPLETED", 1600, RUN_ID,
+                        NODE_1, 400, 201, 256),
+                new RunEvent.FaultRolledBack("FAULT_ROLLED_BACK", 2000, RUN_ID,
+                        "http-latency-1", "fault-stop"),
+                new RunEvent.NodeStarted("NODE_STARTED", 2100, RUN_ID,
+                        NODE_2, "operation", new OperationId("list-payments")),
+                new RunEvent.NodeCompleted("NODE_COMPLETED", 2200, RUN_ID,
+                        NODE_2, 100, 200, 64),
+                new RunEvent.RunCompleted("RUN_COMPLETED", 2300, RUN_ID,
+                        3, 1, 0, 1300)
+        );
+    }
+
     private List<RunEvent> sampleEvents() {
         return List.of(
                 new RunEvent.RunStarted("RUN_STARTED", 1000, RUN_ID,

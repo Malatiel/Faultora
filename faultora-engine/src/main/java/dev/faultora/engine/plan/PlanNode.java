@@ -46,6 +46,8 @@ public sealed interface PlanNode permits
 
     /**
      * Node representing an operation execution.
+     * When {@code expectError} is set, the node passes only if the operation
+     * fails with a normalized error (used for steps run under injected faults).
      */
     record OperationNode(
             NodeId nodeId,
@@ -53,11 +55,28 @@ public sealed interface PlanNode permits
             OperationDefinition operation,
             Map<String, Object> inputExpressions,
             String outputBinding,
+            boolean expectError,
             List<NodeId> dependencies,
             SafetyClassification safety,
             long deadlineMs,
             int maxRetries
-    ) implements PlanNode {}
+    ) implements PlanNode {
+        /** Convenience constructor for nodes that expect success. */
+        public OperationNode(
+                NodeId nodeId,
+                OperationId operationId,
+                OperationDefinition operation,
+                Map<String, Object> inputExpressions,
+                String outputBinding,
+                List<NodeId> dependencies,
+                SafetyClassification safety,
+                long deadlineMs,
+                int maxRetries
+        ) {
+            this(nodeId, operationId, operation, inputExpressions, outputBinding,
+                    false, dependencies, safety, deadlineMs, maxRetries);
+        }
+    }
 
     /**
      * Node representing an assertion evaluation.

@@ -2,6 +2,34 @@
 
 All notable changes to Faultora are documented in this file.
 
+## Unreleased (0.2.0)
+
+First slice of the reliability engine: in-process fault injection.
+
+### Added
+
+- `faults:` scenario steps compile and execute with the built-in in-process
+  provider: `http-latency`, `http-error`, and `http-response-loss`.
+- Guaranteed exactly-once fault rollback through a hard-expiry watchdog,
+  explicit fault-stop plan nodes, and an unconditional end-of-run sweep.
+- `expectError` step field for operations that must fail under an injected
+  fault while keeping their dependents runnable.
+- Fault windows with fault-to-node attribution in console and HTML reports;
+  `FAULT_INJECTED` and `FAULT_ROLLED_BACK` events in the run journal.
+- Fault-type allowlist enforcement in the execution policy.
+- Reference reliability scenarios and end-to-end tests: SLA under injected
+  latency, and duplicate-payment prevention under response loss with an
+  idempotency-key retry (the example payment API now honors
+  `Idempotency-Key`).
+
+### Fixed
+
+- The compiled plan is now sorted topologically, so `dependsOn` references to
+  later steps or across sections execute in dependency order instead of being
+  silently skipped.
+- A failed operation node now emits `NODE_FAILED` to the journal (previously
+  it emitted `NODE_COMPLETED`, and console/HTML reports showed it as passed).
+
 ## 0.1.1 — 2026-07-23
 
 Maintenance release focused on public documentation and report correctness.

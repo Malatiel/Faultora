@@ -23,6 +23,7 @@ public class PaymentApi {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private final Map<String, Map<String, Object>> payments = new ConcurrentHashMap<>();
+    private final Map<String, String> paymentIdsByIdempotencyKey = new ConcurrentHashMap<>();
     private final AtomicInteger idCounter = new AtomicInteger(0);
     private HttpServer server;
     private int port;
@@ -86,6 +87,20 @@ public class PaymentApi {
                 ? Map.of()
                 : MAPPER.readValue(body, new TypeReference<Map<String, Object>>() {});
 
+        // Replaying a known Idempotency-Key returns the original payment
+        // instead of creating a duplicate.
+        String idempotencyKey = exchange.getRequestHeaders().getFirst("Idempotency-Key");
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+            String existingId = paymentIdsByIdempotencyKey.get(idempotencyKey);
+            if (existingId != null) {
+                Map<String, Object> existing = payments.get(existingId);
+                if (existing != null) {
+                    respond(exchange, 200, existing);
+                    return;
+                }
+            }
+        }
+
         String id = "pay-" + idCounter.incrementAndGet();
         Map<String, Object> payment = new LinkedHashMap<>();
         payment.put("id", id);
@@ -95,6 +110,9 @@ public class PaymentApi {
         payment.put("createdAt", System.currentTimeMillis());
 
         payments.put(id, payment);
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+            paymentIdsByIdempotencyKey.put(idempotencyKey, id);
+        }
         respond(exchange, 201, payment);
     }
 

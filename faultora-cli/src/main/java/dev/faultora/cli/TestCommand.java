@@ -8,6 +8,8 @@ import dev.faultora.connector.http.DestinationPolicy;
 import dev.faultora.connector.http.HttpConnector;
 import dev.faultora.engine.LocalEngine;
 import dev.faultora.engine.journal.RunJournal;
+import dev.faultora.faults.local.FaultInjectingConnector;
+import dev.faultora.faults.local.LocalFaultProvider;
 import dev.faultora.engine.plan.PlanCompilationResult;
 import dev.faultora.engine.plan.PlanCompiler;
 import dev.faultora.engine.plan.PlanDiagnostic;
@@ -128,11 +130,14 @@ public class TestCommand implements Command {
                 catalog = buildCatalogFromScenario(scenario, targetUrl);
             }
 
+            // Local faults act only on Faultora's own outbound requests, so the
+            // default policy allows every capability of the in-process provider.
+            LocalFaultProvider faultProvider = new LocalFaultProvider();
             TargetPolicy targetPolicy = new TargetPolicy(
                     Set.of(),
                     Set.of(SafetyClassification.READ_ONLY, SafetyClassification.MUTATING),
                     1000, 10, 300_000, 1_048_576,
-                    Set.of(), Set.of());
+                    faultProvider.capabilities(), Set.of());
 
             ExpressionContext exprContext = ExpressionContext.builder().build();
 
@@ -186,8 +191,11 @@ public class TestCommand implements Command {
             try (HttpConnector httpConnector = allowPrivate
                     ? new HttpConnector(DestinationPolicy.permissive())
                     : new HttpConnector()) {
+                Connector faultAwareConnector =
+                        new FaultInjectingConnector(httpConnector, faultProvider);
                 LocalEngine engine = new LocalEngine(
-                        Map.of("http", httpConnector), assertionProviders);
+                        Map.of("http", faultAwareConnector), assertionProviders,
+                        Map.of("local", faultProvider));
                 try (RunJournal journal = new RunJournal(journalPath, true)) {
                     System.out.println("Running scenario: " + scenario.metadata().name());
                     System.out.println("Target: " + targetUrl);

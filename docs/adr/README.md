@@ -10,3 +10,4 @@
 | [ADR-006](ADR-006-security-trust-boundaries.md) | Security trust boundaries | Accepted |
 | [ADR-007](ADR-007-secret-lifecycle.md) | Secret value lifecycle | Accepted |
 | [ADR-008](ADR-008-target-evidence-policy.md) | Target and evidence policy model | Accepted |
+| [ADR-009](ADR-009-in-process-fault-provider.md) | In-process fault provider for the first fault-injection slice | Accepted |

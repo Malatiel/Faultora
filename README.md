@@ -9,7 +9,8 @@ inside your infrastructure and does not require a hosted control plane or
 telemetry.
 
 Version 0.1.1 is a runnable technical preview. It targets local
-development and CI use on Java 21.
+development and CI use on Java 21. The unreleased 0.2.0 line on this branch
+adds in-process fault injection.
 
 ## What 0.1.1 includes
 
@@ -26,10 +27,26 @@ development and CI use on Java 21.
 - header filtering, content-type allowlists, body limits, and JSON redaction;
 - manual redirect handling with cross-origin credential stripping.
 
-Fault injection, retries, parallel/repeat blocks, distributed workers, Kafka,
-Kubernetes orchestration, and the web interface are not part of this release.
-Scenarios that request unsupported execution features are rejected during
-validation or plan compilation rather than being silently accepted.
+## What 0.2.0 adds (unreleased)
+
+- in-process fault injection: `http-latency`, `http-error`, and
+  `http-response-loss` fault steps with hard-expiry watchdog and guaranteed
+  exactly-once rollback;
+- `expectError` steps for requests that are supposed to fail under a fault;
+- fault windows and fault-to-node attribution in console and HTML reports,
+  plus `FAULT_INJECTED` / `FAULT_ROLLED_BACK` journal events;
+- reference reliability scenarios: SLA under injected latency, and
+  "duplicate payment is not created" under a lost response with an
+  idempotency-key retry.
+
+The built-in fault provider acts only on Faultora's own outbound requests. It
+never touches the target system, its infrastructure, or other traffic, so no
+extra privileges are needed.
+
+Network-level faults, retries, parallel/repeat blocks, distributed workers,
+Kafka, Kubernetes orchestration, and the web interface are not part of these
+releases. Scenarios that request unsupported execution features are rejected
+during validation or plan compilation rather than being silently accepted.
 
 ## Requirements
 
@@ -69,7 +86,7 @@ Every release also includes a CycloneDX SBOM and the Apache 2.0 license.
 The executable artifact is written to:
 
 ```text
-faultora-cli/target/faultora-0.1.1.jar
+faultora-cli/target/faultora-0.2.0-SNAPSHOT.jar
 ```
 
 The regular CI build can run without repository secrets. Configure the
@@ -82,9 +99,9 @@ missing.
 Check the executable and validate the example scenario:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.1.1.jar --version
+java -jar faultora-cli/target/faultora-0.2.0-SNAPSHOT.jar --version
 
-java -jar faultora-cli/target/faultora-0.1.1.jar \
+java -jar faultora-cli/target/faultora-0.2.0-SNAPSHOT.jar \
   validate \
   --scenario examples/payment-service/scenarios/passing.yaml
 ```
@@ -92,7 +109,7 @@ java -jar faultora-cli/target/faultora-0.1.1.jar \
 Generate a starter scenario from an OpenAPI document:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.1.1.jar \
+java -jar faultora-cli/target/faultora-0.2.0-SNAPSHOT.jar \
   init \
   --from-openapi examples/payment-service/openapi.yaml \
   --output ./generated
@@ -101,7 +118,7 @@ java -jar faultora-cli/target/faultora-0.1.1.jar \
 Run a scenario against an API:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.1.1.jar \
+java -jar faultora-cli/target/faultora-0.2.0-SNAPSHOT.jar \
   test \
   --scenario examples/payment-service/scenarios/passing.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -112,6 +129,44 @@ java -jar faultora-cli/target/faultora-0.1.1.jar \
 
 Private, loopback, and link-local destinations are blocked by default. Use
 `--allow-private` only for an explicitly trusted local test environment.
+
+## Fault injection
+
+The reference reliability scenarios run against the bundled payment example:
+
+```bash
+java -jar faultora-cli/target/faultora-0.2.0-SNAPSHOT.jar \
+  test \
+  --scenario examples/payment-service/scenarios/fault-duplicate-payment.yaml \
+  --openapi examples/payment-service/openapi.yaml \
+  --target http://localhost:8080 \
+  --allow-private
+```
+
+The scenario delivers a `create-payment` request whose response is lost,
+retries it with the same `Idempotency-Key`, and asserts the business invariant
+that exactly one payment exists. The report shows the fault window and every
+node that ran while the fault was active:
+
+```text
+--- Nodes ---
+  [PASSED] lose-response (0ms)
+  [PASSED] first-attempt (2ms)
+  [PASSED] wait-for-fault-expiry (1502ms)
+  [PASSED] retry-with-same-key (7ms)
+  [PASSED] list-payments (3ms)
+  [PASSED] retry-is-replayed (1ms)
+         Assertion: PASS — Status 200 matches expected 200
+  [PASSED] no-duplicate-payment (43ms)
+         Assertion: PASS — Path '@' has 1 elements
+
+--- Faults ---
+  [http-response-loss] target * — active 1003ms, rollback: hard-expiry
+         During fault: first-attempt, wait-for-fault-expiry
+```
+
+See the [scenario reference](docs/SCENARIO_REFERENCE.md#faults) for fault
+types, parameters, and rollback guarantees.
 
 ## Reports
 
@@ -161,7 +216,7 @@ handle is mapped to an environment variable with the `FAULTORA_SECRET_` prefix:
 ```bash
 export FAULTORA_SECRET_PAYMENTS_API='replace-with-a-real-token'
 
-java -jar faultora-cli/target/faultora-0.1.1.jar \
+java -jar faultora-cli/target/faultora-0.2.0-SNAPSHOT.jar \
   test \
   --scenario scenario.yaml \
   --openapi openapi.yaml \

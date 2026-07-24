@@ -96,6 +96,23 @@ public class ConsoleRenderer implements ReportRenderer {
         }
         output.write("\n");
 
+        // Fault windows and attribution
+        List<FaultTimeline.Window> faultWindows = FaultTimeline.windows(events);
+        if (!faultWindows.isEmpty()) {
+            output.write("--- Faults ---\n");
+            for (FaultTimeline.Window window : faultWindows) {
+                output.write(String.format("  [%s] target %s — active %dms, rollback: %s\n",
+                        window.faultType(), window.targetScope(),
+                        Math.max(0, window.endAtMs() - window.injectedAtMs()),
+                        window.rollbackStatus()));
+                if (!window.affectedNodes().isEmpty()) {
+                    output.write("         During fault: "
+                            + String.join(", ", window.affectedNodes()) + "\n");
+                }
+            }
+            output.write("\n");
+        }
+
         // Summary
         if (completed != null) {
             output.write(String.format(

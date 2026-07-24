@@ -47,11 +47,12 @@ public class PlanCompiler {
         // Compile setup steps
         compileSteps(scenario.setup(), "setup", operationIndex, targetPolicy, nodes, diagnostics);
 
+        // Compile fault steps before execute: a fault with no dependencies
+        // activates before the first execute step runs.
+        compileFaultSteps(scenario.faults(), targetPolicy, nodes, diagnostics);
+
         // Compile execute steps
         compileSteps(scenario.execute(), "execute", operationIndex, targetPolicy, nodes, diagnostics);
-
-        // Compile fault steps
-        compileFaultSteps(scenario.faults(), diagnostics);
 
         // Compile assertion steps
         compileAssertionSteps(
@@ -83,6 +84,11 @@ public class PlanCompiler {
         if (diagnostics.stream().anyMatch(PlanDiagnostic::isError)) {
             return new PlanCompilationResult(null, diagnostics);
         }
+
+        // The engine executes nodes in list order and never revisits a node
+        // whose dependencies were unmet, so the list must be a true topological
+        // order regardless of how dependsOn crosses section boundaries.
+        nodes = topologicalSort(nodes);
 
         ExecutionPlan plan = ExecutionPlan.builder()
                 .runId(runId)
@@ -171,7 +177,7 @@ public class PlanCompiler {
                 } else {
                     nodes.add(new PlanNode.OperationNode(
                             nodeId, new OperationId(opId), operation,
-                            inputExpressions, step.outputAs(),
+                            inputExpressions, step.outputAs(), step.expectError(),
                             deps, operation.safety(), deadlineMs, maxRetries
                     ));
                 }
@@ -199,14 +205,91 @@ public class PlanCompiler {
 
     private void compileFaultSteps(
             List<FaultStep> steps,
+            TargetPolicy targetPolicy,
+            List<PlanNode> nodes,
             List<PlanDiagnostic> diagnostics
     ) {
         if (steps == null) return;
 
         for (FaultStep step : steps) {
-            diagnostics.add(PlanDiagnostic.error(
-                    "faults", step.id(), "Fault injection is not supported in this release"));
+            if (step.faultType() == null || step.faultType().isBlank()) {
+                diagnostics.add(PlanDiagnostic.error("faults", step.id(),
+                        "Fault step has no faultType"));
+                continue;
+            }
+            if (targetPolicy != null
+                    && !targetPolicy.allowedFaultTypes().contains(step.faultType())) {
+                diagnostics.add(PlanDiagnostic.error("faults", step.id(),
+                        "Fault type is not allowed by execution policy: " + step.faultType()));
+                continue;
+            }
+
+            long durationMs = parseTimeout(
+                    step.duration(), "faults", step.id(), "duration", diagnostics);
+            if (durationMs <= 0) {
+                diagnostics.add(PlanDiagnostic.error("faults", step.id(),
+                        "Fault step requires a positive duration"));
+                continue;
+            }
+
+            nodes.add(new PlanNode.FaultStartNode(
+                    new NodeId(step.id()), step.faultType(),
+                    step.targetScope() == null || step.targetScope().isBlank()
+                            ? "*" : step.targetScope(),
+                    step.params() != null ? new LinkedHashMap<>(step.params()) : Map.of(),
+                    durationMs,
+                    resolveDependencies(step.dependsOn()),
+                    SafetyClassification.MUTATING, 0, 0
+            ));
         }
+    }
+
+    /**
+     * Stable Kahn topological sort: dependencies come before dependents, and
+     * nodes that are not ordered relative to each other keep compilation order.
+     * Dependencies that do not resolve to a plan node are treated as satisfied.
+     */
+    private List<PlanNode> topologicalSort(List<PlanNode> nodes) {
+        Map<NodeId, PlanNode> index = new LinkedHashMap<>();
+        for (PlanNode node : nodes) {
+            index.put(node.nodeId(), node);
+        }
+
+        Map<NodeId, Integer> inDegree = new LinkedHashMap<>();
+        Map<NodeId, List<PlanNode>> dependents = new LinkedHashMap<>();
+        for (PlanNode node : nodes) {
+            int degree = 0;
+            for (NodeId dep : node.dependencies()) {
+                if (index.containsKey(dep)) {
+                    degree++;
+                    dependents.computeIfAbsent(dep, k -> new ArrayList<>()).add(node);
+                }
+            }
+            inDegree.put(node.nodeId(), degree);
+        }
+
+        Deque<PlanNode> ready = new ArrayDeque<>();
+        for (PlanNode node : nodes) {
+            if (inDegree.get(node.nodeId()) == 0) {
+                ready.addLast(node);
+            }
+        }
+
+        List<PlanNode> ordered = new ArrayList<>(nodes.size());
+        while (!ready.isEmpty()) {
+            PlanNode node = ready.pollFirst();
+            ordered.add(node);
+            for (PlanNode dependent : dependents.getOrDefault(node.nodeId(), List.of())) {
+                int remaining = inDegree.merge(dependent.nodeId(), -1, Integer::sum);
+                if (remaining == 0) {
+                    ready.addLast(dependent);
+                }
+            }
+        }
+
+        // A cycle was already reported by hasCycles; keep the original order
+        // as a defensive fallback if anything remains unordered.
+        return ordered.size() == nodes.size() ? ordered : nodes;
     }
 
     private void compileAssertionSteps(
