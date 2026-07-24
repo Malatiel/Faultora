@@ -689,7 +689,164 @@ class LocalEngineTest {
                 .isLessThanOrEqualTo(150);
     }
 
+    @Test
+    void outputBindingExposesPriorStepResponseToLaterInputs() throws Exception {
+        CapturingConnector connector = new CapturingConnector();
+        ExecutionPlan plan = planWithNodes("run-output-binding",
+                new PlanNode.OperationNode(
+                        new NodeId("create"), new OperationId("create-payment"),
+                        findOp("create-payment"), Map.of(), "first",
+                        List.of(), SafetyClassification.MUTATING, 0, 0),
+                new PlanNode.OperationNode(
+                        new NodeId("read"), new OperationId("get-payment"),
+                        findOp("get-payment"),
+                        Map.of(
+                                "paymentId", "{{steps.first.body.id}}",
+                                "note", "status was {{steps.first.status}}",
+                                "body", Map.of("copyOf", "{{steps.first.body.id}}")),
+                        null,
+                        List.of(new NodeId("create")),
+                        SafetyClassification.READ_ONLY, 0, 0));
+        LocalEngine engine = new LocalEngine(Map.of("http", connector), Map.of());
+
+        EvidencePolicy capturing = new EvidencePolicy(
+                true, true, Set.of(), 1_048_576, 100, List.of(), Set.of(), "session");
+        ConnectorContext capturingContext = new ConnectorContext(
+                capturing, handleId -> null, 5000, 30000, 60000,
+                Map.of("baseUrl", "http://localhost:8080"));
+
+        try (RunJournal journal = new RunJournal(tempDir.resolve("binding.ndjson"), true)) {
+            RunResult result = engine.execute(
+                    plan, journal, exprContext, capturingContext, new AtomicBoolean(false));
+
+            assertThat(result.status()).isEqualTo(RunResult.Status.PASSED);
+            Map<String, Object> readInputs = connector.captured.get("get-payment");
+            assertThat(readInputs).isNotNull();
+            assertThat(readInputs.get("paymentId")).isEqualTo("pay-1");
+            assertThat(readInputs.get("note")).isEqualTo("status was 200");
+            // Templates resolve inside nested maps too.
+            assertThat(readInputs.get("body"))
+                    .isEqualTo(Map.of("copyOf", "pay-1"));
+        }
+    }
+
+    @Test
+    void outputOfFailedStepIsNotBound() throws Exception {
+        ExecutionPlan plan = planWithNodes("run-no-binding-on-failure",
+                new PlanNode.OperationNode(
+                        new NodeId("create"), new OperationId("create-payment"),
+                        findOp("create-payment"), Map.of(), "first",
+                        List.of(), SafetyClassification.MUTATING, 0, 0));
+        LocalEngine engine = new LocalEngine(
+                Map.of("http", new FailingConnector()), Map.of());
+
+        try (RunJournal journal = new RunJournal(tempDir.resolve("binding-f.ndjson"), true)) {
+            RunResult result = engine.execute(
+                    plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+
+            // The run fails on the node itself; nothing is bound and nothing throws.
+            assertThat(result.status()).isEqualTo(RunResult.Status.FAILED);
+        }
+    }
+
+    @Test
+    void parallelChildrenExecuteConcurrently() throws Exception {
+        ConcurrencyTrackingConnector connector = new ConcurrencyTrackingConnector(200);
+        ExecutionPlan plan = planWithNodes("run-parallel",
+                new PlanNode.ParallelNode(
+                        new NodeId("race"),
+                        List.of(
+                                childOp("first", "create-payment"),
+                                childOp("second", "create-payment")),
+                        List.of(), SafetyClassification.MUTATING, 0, 0));
+        LocalEngine engine = new LocalEngine(Map.of("http", connector), Map.of());
+
+        try (RunJournal journal = new RunJournal(tempDir.resolve("parallel.ndjson"), true)) {
+            RunResult result = engine.execute(
+                    plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+
+            assertThat(result.status()).isEqualTo(RunResult.Status.PASSED);
+            assertThat(result.nodeResults()).containsKeys(
+                    new NodeId("race"), new NodeId("first"), new NodeId("second"));
+            // Both requests were in flight at the same time.
+            assertThat(connector.maxObservedConcurrency.get()).isEqualTo(2);
+            // Journal has lifecycle events for group and children.
+            assertThat(journal.events()).anyMatch(e -> e instanceof RunEvent.NodeStarted ns
+                    && ns.nodeId().value().equals("race") && ns.nodeType().equals("parallel"));
+            assertThat(journal.events()).anyMatch(e -> e instanceof RunEvent.NodeCompleted nc
+                    && nc.nodeId().value().equals("first"));
+        }
+    }
+
+    @Test
+    void parallelChildFailureFailsTheGroupButAllChildrenRun() throws Exception {
+        ExecutionPlan plan = planWithNodes("run-parallel-fail",
+                new PlanNode.ParallelNode(
+                        new NodeId("race"),
+                        List.of(
+                                childOp("failing", "create-payment"),
+                                childOp("passing", "get-payment")),
+                        List.of(), SafetyClassification.MUTATING, 0, 0));
+        LocalEngine engine = new LocalEngine(
+                Map.of("http", new FailCreatePaymentConnector()), Map.of());
+
+        try (RunJournal journal = new RunJournal(tempDir.resolve("parallel-f.ndjson"), true)) {
+            RunResult result = engine.execute(
+                    plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+
+            assertThat(result.status()).isEqualTo(RunResult.Status.FAILED);
+            assertThat(result.nodeResults().get(new NodeId("race")).status())
+                    .isEqualTo(RunResult.Status.FAILED);
+            assertThat(result.nodeResults().get(new NodeId("failing")).status())
+                    .isEqualTo(RunResult.Status.FAILED);
+            assertThat(result.nodeResults().get(new NodeId("passing")).status())
+                    .isEqualTo(RunResult.Status.PASSED);
+        }
+    }
+
+    @Test
+    void parallelChildOutputsAreBoundForLaterSteps() throws Exception {
+        CapturingConnector connector = new CapturingConnector();
+        ExecutionPlan plan = planWithNodes("run-parallel-binding",
+                new PlanNode.ParallelNode(
+                        new NodeId("race"),
+                        List.of(new PlanNode.OperationNode(
+                                new NodeId("first"), new OperationId("create-payment"),
+                                findOp("create-payment"), Map.of(), "winner",
+                                List.of(), SafetyClassification.MUTATING, 0, 0)),
+                        List.of(), SafetyClassification.MUTATING, 0, 0),
+                new PlanNode.OperationNode(
+                        new NodeId("after"), new OperationId("get-payment"),
+                        findOp("get-payment"),
+                        Map.of("paymentId", "{{steps.winner.body.id}}"), null,
+                        List.of(new NodeId("race")),
+                        SafetyClassification.READ_ONLY, 0, 0));
+        LocalEngine engine = new LocalEngine(Map.of("http", connector), Map.of());
+
+        EvidencePolicy capturing = new EvidencePolicy(
+                true, true, Set.of(), 1_048_576, 100, List.of(), Set.of(), "session");
+        ConnectorContext capturingContext = new ConnectorContext(
+                capturing, handleId -> null, 5000, 30000, 60000,
+                Map.of("baseUrl", "http://localhost:8080"));
+
+        try (RunJournal journal = new RunJournal(tempDir.resolve("parallel-b.ndjson"), true)) {
+            RunResult result = engine.execute(
+                    plan, journal, exprContext, capturingContext, new AtomicBoolean(false));
+
+            assertThat(result.status()).isEqualTo(RunResult.Status.PASSED);
+            assertThat(connector.captured.get("get-payment"))
+                    .containsEntry("paymentId", "pay-1");
+        }
+    }
+
     // --- Helpers ---
+
+    private PlanNode.OperationNode childOp(String id, String operationId) {
+        return new PlanNode.OperationNode(
+                new NodeId(id), new OperationId(operationId),
+                findOp(operationId), Map.of(), null,
+                List.of(), SafetyClassification.MUTATING, 0, 0);
+    }
 
     private ExecutionPlan planWithNodes(String runId, PlanNode... nodes) {
         ExecutionPlan.Builder builder = ExecutionPlan.builder()
@@ -816,6 +973,51 @@ class LocalEngineTest {
 
         @Override
         public void close() {}
+    }
+
+    /**
+     * Connector that sleeps per request and records peak concurrency.
+     */
+    static class ConcurrencyTrackingConnector extends SuccessConnector {
+        final java.util.concurrent.atomic.AtomicInteger inFlight =
+                new java.util.concurrent.atomic.AtomicInteger();
+        final java.util.concurrent.atomic.AtomicInteger maxObservedConcurrency =
+                new java.util.concurrent.atomic.AtomicInteger();
+        private final long sleepMs;
+
+        ConcurrencyTrackingConnector(long sleepMs) {
+            this.sleepMs = sleepMs;
+        }
+
+        @Override
+        public OperationResult execute(PreparedTarget preparedTarget, OperationDefinition operation,
+                                        Map<String, Object> inputs, ConnectorContext context) {
+            int current = inFlight.incrementAndGet();
+            maxObservedConcurrency.accumulateAndGet(current, Math::max);
+            try {
+                Thread.sleep(sleepMs);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                inFlight.decrementAndGet();
+            }
+            return super.execute(preparedTarget, operation, inputs, context);
+        }
+    }
+
+    /**
+     * Connector recording the resolved inputs it receives, keyed by operation ID.
+     */
+    static class CapturingConnector extends SuccessConnector {
+        final Map<String, Map<String, Object>> captured =
+                new java.util.concurrent.ConcurrentHashMap<>();
+
+        @Override
+        public OperationResult execute(PreparedTarget preparedTarget, OperationDefinition operation,
+                                        Map<String, Object> inputs, ConnectorContext context) {
+            captured.put(operation.id().value(), inputs);
+            return super.execute(preparedTarget, operation, inputs, context);
+        }
     }
 
     /**

@@ -6,6 +6,23 @@ All notable changes to Faultora are documented in this file.
 
 ### Added
 
+- Step output binding: `outputAs: name` exposes a step's response as
+  `steps.<name>.status/body/headers` to later steps' `{{...}}` templates,
+  including inside nested `body` and `headers` maps.
+- Runtime scenario inputs: `faultora test --input key=value` binds declared
+  inputs (with defaults and required-input enforcement) as
+  `{{inputs.<name>}}`.
+- Bounded parallel groups: `type: parallel` steps run child operations
+  concurrently under the policy's `maxConcurrency`, with per-child retry,
+  `expectError`, `outputAs`, events, and evidence; the group passes only when
+  every child passes.
+- Flagship reference scenario `fault-concurrent-duplicate.yaml`: two
+  concurrent create-payment requests with one `Idempotency-Key` under
+  injected latency must produce exactly one payment. The example payment API
+  gained a concurrent executor, an atomic idempotency implementation, and a
+  deliberately broken check-then-act variant that the same scenario detects
+  end to end.
+
 - Retry policies on `setup` and `execute` operation steps: exponential
   backoff with deterministic seed-derived jitter, capped attempts (max 10),
   retry only for retryable errors, and `OPERATION_RETRIED` journal events.

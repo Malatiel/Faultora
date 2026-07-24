@@ -112,6 +112,8 @@ public class LocalEngine {
                         fault.handle(), rollbackStatus)));
 
         List<PlanNode> cleanupNodes = new ArrayList<>();
+        // Step outputs accumulate into the expression context as nodes finish.
+        ExpressionContext currentContext = context;
         try {
             // Phase 1: Execute all non-cleanup nodes
             for (PlanNode node : nodes) {
@@ -129,10 +131,29 @@ public class LocalEngine {
                     continue;
                 }
 
-                RunResult.NodeResult result = executeNode(
-                        node, plan, journal, context, connectorContext,
-                        nodeEvidenceMap, faultSession, cancellation
-                );
+                RunResult.NodeResult result;
+                if (node instanceof PlanNode.ParallelNode parallelNode) {
+                    Map<NodeId, RunResult.NodeResult> childResults = new LinkedHashMap<>();
+                    result = executeParallelGroup(
+                            parallelNode, plan, journal, currentContext, connectorContext,
+                            nodeEvidenceMap, childResults, faultSession, cancellation);
+                    nodeResults.putAll(childResults);
+                    // Bind child outputs in declaration order once all children
+                    // finished; children never observe each other's outputs.
+                    for (PlanNode.OperationNode child : parallelNode.children()) {
+                        RunResult.NodeResult childResult = childResults.get(child.nodeId());
+                        if (childResult != null) {
+                            currentContext = bindStepOutput(
+                                    child, childResult, nodeEvidenceMap, currentContext);
+                        }
+                    }
+                } else {
+                    result = executeNode(
+                            node, plan, journal, currentContext, connectorContext,
+                            nodeEvidenceMap, faultSession, cancellation
+                    );
+                    currentContext = bindStepOutput(node, result, nodeEvidenceMap, currentContext);
+                }
 
                 nodeResults.put(node.nodeId(), result);
 
@@ -165,7 +186,7 @@ public class LocalEngine {
 
                 for (PlanNode cleanupNode : cleanupNodes) {
                     RunResult.NodeResult result = executeNode(
-                            cleanupNode, plan, journal, context, connectorContext,
+                            cleanupNode, plan, journal, currentContext, connectorContext,
                             nodeEvidenceMap, faultSession, cancellation
                     );
                     nodeResults.put(cleanupNode.nodeId(), result);
@@ -243,6 +264,100 @@ public class LocalEngine {
                 nodeResults, totalDuration,
                 runError
         );
+    }
+
+    /**
+     * Execute a parallel group: children start together on a bounded pool and
+     * run concurrently; the group passes only if every child passes. Child
+     * events, evidence, retries, and expectError behave exactly as for
+     * standalone operation nodes.
+     */
+    private RunResult.NodeResult executeParallelGroup(
+            PlanNode.ParallelNode group,
+            ExecutionPlan plan,
+            RunJournal journal,
+            ExpressionContext context,
+            ConnectorContext connectorContext,
+            Map<NodeId, NodeEvidence> evidenceMap,
+            Map<NodeId, RunResult.NodeResult> childResultsOut,
+            FaultSession faultSession,
+            AtomicBoolean cancellation
+    ) {
+        long groupStart = System.currentTimeMillis();
+        emitEvent(journal, new RunEvent.NodeStarted(
+                "NODE_STARTED", System.currentTimeMillis(),
+                plan.runId(), group.nodeId(), "parallel", null));
+
+        int policyConcurrency = plan.targetPolicy() != null
+                ? plan.targetPolicy().maxConcurrency() : group.children().size();
+        int poolSize = Math.max(1, Math.min(group.children().size(), policyConcurrency));
+        ExecutorService pool = Executors.newFixedThreadPool(poolSize, runnable -> {
+            Thread thread = new Thread(runnable, "faultora-parallel");
+            thread.setDaemon(true);
+            return thread;
+        });
+
+        ConcurrentMap<NodeId, NodeEvidence> childEvidence = new ConcurrentHashMap<>();
+        List<Future<RunResult.NodeResult>> futures = new ArrayList<>();
+        try {
+            for (PlanNode.OperationNode child : group.children()) {
+                futures.add(pool.submit(() -> executeNode(
+                        child, plan, journal, context, connectorContext,
+                        childEvidence, faultSession, cancellation)));
+            }
+            for (int i = 0; i < futures.size(); i++) {
+                PlanNode.OperationNode child = group.children().get(i);
+                try {
+                    childResultsOut.put(child.nodeId(), futures.get(i).get());
+                } catch (ExecutionException e) {
+                    NormalizedError error = new NormalizedError(
+                            NormalizedError.ErrorCategory.INTERNAL,
+                            "EXECUTION_ERROR",
+                            "Parallel child failed: " + e.getCause(),
+                            false, Map.of());
+                    childResultsOut.put(child.nodeId(), new RunResult.NodeResult(
+                            child.nodeId(), "operation", RunResult.Status.ERROR,
+                            -1, System.currentTimeMillis() - groupStart,
+                            List.of(), error));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    cancellation.set(true);
+                    break;
+                }
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+        evidenceMap.putAll(childEvidence);
+
+        long durationMs = System.currentTimeMillis() - groupStart;
+        long failedChildren = group.children().stream()
+                .map(child -> childResultsOut.get(child.nodeId()))
+                .filter(result -> result == null
+                        || result.status() != RunResult.Status.PASSED)
+                .count();
+
+        if (failedChildren == 0) {
+            emitEvent(journal, new RunEvent.NodeCompleted(
+                    "NODE_COMPLETED", System.currentTimeMillis(),
+                    plan.runId(), group.nodeId(), durationMs, -1, 0));
+            return new RunResult.NodeResult(
+                    group.nodeId(), "parallel", RunResult.Status.PASSED,
+                    -1, durationMs, List.of(), null);
+        }
+
+        NormalizedError groupError = new NormalizedError(
+                NormalizedError.ErrorCategory.INTERNAL,
+                "PARALLEL_CHILD_FAILED",
+                failedChildren + " of " + group.children().size()
+                        + " parallel children failed",
+                false, Map.of("failedChildren", failedChildren));
+        emitEvent(journal, new RunEvent.NodeFailed(
+                "NODE_FAILED", System.currentTimeMillis(),
+                plan.runId(), group.nodeId(), groupError, durationMs));
+        return new RunResult.NodeResult(
+                group.nodeId(), "parallel", RunResult.Status.FAILED,
+                -1, durationMs, List.of(), groupError);
     }
 
     private RunResult.NodeResult executeNode(
@@ -379,6 +494,12 @@ public class LocalEngine {
                     // Idempotent: an already-expired fault is a successful stop.
                     faultSession.rollback(handle, FaultSession.REASON_FAULT_STOP);
                     evidence.durationMs(System.currentTimeMillis() - nodeStart);
+                }
+                case PlanNode.ParallelNode ignored -> {
+                    // Parallel groups are dispatched by the run loop, never here.
+                    return nodeFailed(nodeId, node,
+                            "Parallel group reached single-node execution",
+                            NormalizedError.ErrorCategory.INTERNAL, nodeStart);
                 }
                 case PlanNode.CleanupNode cleanupNode -> {
                     // Look up the operation definition from the catalog
@@ -593,6 +714,34 @@ public class LocalEngine {
         }
     }
 
+    /**
+     * Bind a passed operation node's output under {@code steps.<outputAs>}:
+     * an object with {@code status}, {@code body} (parsed JSON, when captured),
+     * and {@code headers} (already filtered by the evidence policy).
+     */
+    private ExpressionContext bindStepOutput(
+            PlanNode node,
+            RunResult.NodeResult result,
+            Map<NodeId, NodeEvidence> evidenceMap,
+            ExpressionContext context
+    ) {
+        if (!(node instanceof PlanNode.OperationNode op)
+                || op.outputBinding() == null || op.outputBinding().isBlank()
+                || op.operation() == null
+                || result.status() != RunResult.Status.PASSED) {
+            return context;
+        }
+        NodeEvidence evidence = evidenceMap.get(node.nodeId());
+        if (evidence == null) {
+            return context;
+        }
+        var output = MAPPER.createObjectNode();
+        output.put("status", evidence.statusCode().orElse(-1));
+        evidence.responseJson().ifPresent(body -> output.set("body", body));
+        output.set("headers", MAPPER.valueToTree(evidence.responseHeaders()));
+        return context.withStepOutput(op.outputBinding(), output);
+    }
+
     private FaultProvider findFaultProvider(String faultType) {
         for (FaultProvider provider : faultProviders.values()) {
             if (provider.capabilities().contains(faultType)) {
@@ -667,6 +816,7 @@ public class LocalEngine {
     private String nodeType(PlanNode node) {
         return switch (node) {
             case PlanNode.OperationNode ignored -> "operation";
+            case PlanNode.ParallelNode ignored -> "parallel";
             case PlanNode.AssertionNode ignored -> "assertion";
             case PlanNode.FaultStartNode ignored -> "fault-start";
             case PlanNode.FaultStopNode ignored -> "fault-stop";

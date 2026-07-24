@@ -306,7 +306,7 @@ class PlanCompilerTest {
     @Test
     void compileRejectsUnsupportedStepType() {
         ScenarioDocument scenario = scenarioWithExecuteStep(new ScenarioStep(
-                "parallel-step", "parallel", null,
+                "repeat-step", "repeat", null,
                 Map.of(), null, List.of(), null, null, Map.of()));
 
         PlanCompilationResult result = compile(scenario, policy);
@@ -550,6 +550,101 @@ class PlanCompilerTest {
                 result.plan().node(new NodeId("status")).orElseThrow();
         assertThat(assertion.targetNode()).isEqualTo(new NodeId("execute"));
         assertThat(assertion.dependencies()).contains(new NodeId("execute"));
+    }
+
+    @Test
+    void compileProducesParallelNodeWithCompiledChildren() {
+        ScenarioDocument scenario = scenarioWithExecuteStep(parallelStep("race",
+                new ScenarioStep("first", "operation", "create-payment",
+                        Map.of("amount", 1), null, List.of(), null, null, Map.of()),
+                new ScenarioStep("second", "operation", "create-payment",
+                        Map.of("amount", 2), null, List.of(), null, null, Map.of())));
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isTrue();
+        PlanNode.ParallelNode group = (PlanNode.ParallelNode)
+                result.plan().node(new NodeId("race")).orElseThrow();
+        assertThat(group.children()).hasSize(2);
+        assertThat(group.children().get(0).nodeId().value()).isEqualTo("first");
+        assertThat(group.safety()).isEqualTo(SafetyClassification.MUTATING);
+        // Children are not standalone plan nodes.
+        assertThat(result.plan().node(new NodeId("first"))).isEmpty();
+    }
+
+    @Test
+    void compileRejectsParallelGroupExceedingConcurrencyPolicy() {
+        TargetPolicy oneAtATime = new TargetPolicy(
+                policy.allowedTargets(), policy.allowedOperationClasses(),
+                policy.maxRequests(), 1,
+                policy.maxDurationMs(), policy.maxPayloadBytes(),
+                policy.allowedFaultTypes(), policy.allowedEnvironments());
+        ScenarioDocument scenario = scenarioWithExecuteStep(parallelStep("race",
+                new ScenarioStep("first", "operation", "create-payment",
+                        Map.of(), null, List.of(), null, null, Map.of()),
+                new ScenarioStep("second", "operation", "create-payment",
+                        Map.of(), null, List.of(), null, null, Map.of())));
+
+        PlanCompilationResult result = compile(scenario, oneAtATime);
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.errors()).extracting(PlanDiagnostic::message)
+                .anyMatch(message -> message.contains("policy allows concurrency 1"));
+    }
+
+    @Test
+    void assertionTargetingParallelChildDependsOnTheGroup() {
+        ScenarioDocument scenario = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("parallel-assert", "parallel-assert", Map.of(), Map.of()),
+                Map.of(),
+                List.of(),
+                List.of(parallelStep("race",
+                        new ScenarioStep("first", "operation", "create-payment",
+                                Map.of(), null, List.of(), null, null, Map.of()),
+                        new ScenarioStep("second", "operation", "create-payment",
+                                Map.of(), null, List.of(), null, null, Map.of()))),
+                List.of(),
+                List.of(new AssertionStep("check-first", "status",
+                        Map.of("expected", 201), "first", List.of(), null, Map.of())),
+                List.of());
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isTrue();
+        PlanNode.AssertionNode assertion = (PlanNode.AssertionNode)
+                result.plan().node(new NodeId("check-first")).orElseThrow();
+        // Evidence comes from the child; ordering waits for the group.
+        assertThat(assertion.targetNode()).isEqualTo(new NodeId("first"));
+        assertThat(assertion.dependencies()).contains(new NodeId("race"));
+    }
+
+    @Test
+    void parallelChildrenCountTowardRequestBudget() {
+        TargetPolicy twoRequests = new TargetPolicy(
+                policy.allowedTargets(), policy.allowedOperationClasses(),
+                2, policy.maxConcurrency(),
+                policy.maxDurationMs(), policy.maxPayloadBytes(),
+                policy.allowedFaultTypes(), policy.allowedEnvironments());
+        ScenarioDocument scenario = scenarioWithExecuteStep(parallelStep("race",
+                new ScenarioStep("first", "operation", "create-payment",
+                        Map.of(), null, List.of(), null, null, Map.of()),
+                new ScenarioStep("second", "operation", "create-payment",
+                        Map.of(), null, List.of(), null, null, Map.of()),
+                new ScenarioStep("third", "operation", "create-payment",
+                        Map.of(), null, List.of(), null, null, Map.of())));
+
+        PlanCompilationResult result = compile(scenario, twoRequests);
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.errors()).extracting(PlanDiagnostic::message)
+                .anyMatch(message -> message.contains("policy allows 2"));
+    }
+
+    private ScenarioStep parallelStep(String id, ScenarioStep... children) {
+        return new ScenarioStep(id, "parallel", null,
+                Map.of(), null, List.of(), null, null, false,
+                List.of(children), Map.of());
     }
 
     private PlanCompilationResult compile(ScenarioDocument scenario, TargetPolicy targetPolicy) {

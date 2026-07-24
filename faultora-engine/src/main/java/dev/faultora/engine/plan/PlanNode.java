@@ -14,6 +14,7 @@ import java.util.Map;
  */
 public sealed interface PlanNode permits
         PlanNode.OperationNode,
+        PlanNode.ParallelNode,
         PlanNode.AssertionNode,
         PlanNode.FaultStartNode,
         PlanNode.FaultStopNode,
@@ -114,6 +115,27 @@ public sealed interface PlanNode permits
         ) {
             this(nodeId, operationId, operation, inputExpressions, outputBinding,
                     expectError, null, dependencies, safety, deadlineMs, maxRetries);
+        }
+    }
+
+    /**
+     * Node representing a bounded parallel group. Children start together once
+     * the group's dependencies are satisfied and execute concurrently; the
+     * group passes only if every child passes.
+     */
+    record ParallelNode(
+            NodeId nodeId,
+            List<OperationNode> children,
+            List<NodeId> dependencies,
+            SafetyClassification safety,
+            long deadlineMs,
+            int maxRetries
+    ) implements PlanNode {
+        public ParallelNode {
+            if (children == null || children.isEmpty()) {
+                throw new IllegalArgumentException("parallel node requires children");
+            }
+            children = List.copyOf(children);
         }
     }
 

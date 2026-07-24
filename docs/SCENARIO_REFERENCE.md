@@ -84,7 +84,7 @@ java -jar faultora-0.2.0.jar validate --scenario scenario.yaml
 | `apiVersion` | yes | Must be `faultora.dev/v1alpha1`. |
 | `kind` | yes | Must be `Scenario`. |
 | `metadata` | yes | Scenario identity and descriptive metadata. |
-| `inputs` | no | Input declarations. Parsed in 0.2.0, but the CLI does not yet expose runtime input binding. |
+| `inputs` | no | Input declarations, bound at runtime with `faultora test --input key=value` and available as `{{inputs.<name>}}`. |
 | `setup` | no | Operation or wait steps executed before the main section. |
 | `execute` | yes | Main operation or wait steps. Must contain at least one step. |
 | `faults` | no | In-process fault injection steps. See [Faults](#faults). |
@@ -154,7 +154,7 @@ Operation steps may appear in `setup`, `execute`, and `cleanup`.
 | `inputs` | no | Path, query, header, and body values. |
 | `dependsOn` | no | IDs that must complete successfully first. |
 | `timeout` | no | Positive duration: milliseconds, `ms`, `s`, or `m`. |
-| `outputAs` | no | Reserved; output binding is not active in the 0.2.0 CLI. |
+| `outputAs` | no | Name binding the step's response for later steps. See [Expressions and step outputs](#expressions-and-step-outputs). |
 | `retry` | no | Retry policy for retryable operation errors. See [Retries](#retries). |
 | `expectError` | no | When `true`, the step passes only if the operation fails with a normalized error, and its dependents still run. Use for requests executed under an injected fault. If the operation succeeds instead, the step fails with `EXPECTED_ERROR`. |
 | `metadata` | no | Arbitrary step metadata. |
@@ -193,6 +193,88 @@ Only top-level string input values participate in template resolution.
 Runtime expression data is not populated by the 0.2.0 CLI, so expressions such
 as `{{inputs.currency}}` and `{{steps.create-payment.id}}` should not be used in
 release scenarios yet.
+
+## Expressions and step outputs
+
+String values in step `inputs` may contain `{{expression}}` templates,
+including inside nested maps and lists (`body`, `headers`). A value that is a
+single template keeps its original type; mixed strings interpolate.
+
+The expression context contains:
+
+| Path | Content |
+|---|---|
+| `inputs.<name>` | Declared scenario inputs, resolved from `--input` values and declared defaults. |
+| `steps.<name>.status` | HTTP status of the step bound with `outputAs: <name>`. |
+| `steps.<name>.body` | Parsed JSON response body (present only when the evidence policy captures bodies). |
+| `steps.<name>.headers` | Response headers, filtered by the evidence policy. |
+| `run.seed`, `run.target` | Run metadata. |
+
+```yaml
+execute:
+  - id: create-payment
+    type: operation
+    operationId: create-payment
+    outputAs: created
+    inputs:
+      body:
+        amount: 100
+
+  - id: read-back
+    type: operation
+    operationId: get-payment
+    dependsOn: [create-payment]
+    inputs:
+      paymentId: "{{steps.created.body.id}}"
+```
+
+Rules:
+
+- only steps that declare `outputAs` are bound; the name must match
+  `[A-Za-z_][A-Za-z0-9_-]*` and be unique in the scenario;
+- outputs of failed steps are not bound;
+- children of a parallel group are bound only after the whole group finishes,
+  in declaration order — children never observe each other's outputs;
+- expressions are read-only and never render secret-derived values.
+
+## Parallel steps
+
+A `parallel` step runs its child operation steps concurrently:
+
+```yaml
+execute:
+  - id: race
+    type: parallel
+    dependsOn: [sync-delay]
+    steps:
+      - id: first-client
+        type: operation
+        operationId: create-payment
+        inputs:
+          headers:
+            Idempotency-Key: "{{inputs.idempotency-key}}"
+      - id: second-client
+        type: operation
+        operationId: create-payment
+        inputs:
+          headers:
+            Idempotency-Key: "{{inputs.idempotency-key}}"
+```
+
+Semantics:
+
+- children start together once the group's `dependsOn` is satisfied and run
+  on a pool bounded by the policy's `maxConcurrency`; the group also fails
+  compilation if it has more children than the policy allows concurrently;
+- children are operation steps only — no nesting, no `wait`, no `dependsOn`
+  between children; `retry`, `expectError`, `outputAs`, and `timeout` work per
+  child;
+- the group passes only when every child passes; all children always run to
+  completion even if a sibling fails;
+- child step IDs share the global namespace: assertions may target a child
+  directly, and their execution is ordered after the whole group;
+- every child (and each retry attempt) counts against the policy request
+  budget.
 
 ## Retries
 
@@ -497,9 +579,9 @@ params:
 Faultora fails validation or plan compilation instead of silently ignoring:
 
 - retry policies on cleanup steps;
-- parallel and repeat blocks;
-- runtime scenario input binding;
-- step-output binding and cross-step expressions;
+- repeat and eventually/poll-until blocks;
+- parallel steps in cleanup, nested parallel groups, and wait steps inside
+  parallel groups;
 - distributed execution.
 
 See the [roadmap](ROADMAP.md) for planned delivery stages.

@@ -25,8 +25,24 @@ public class PaymentApi {
     private final Map<String, Map<String, Object>> payments = new ConcurrentHashMap<>();
     private final Map<String, String> paymentIdsByIdempotencyKey = new ConcurrentHashMap<>();
     private final AtomicInteger idCounter = new AtomicInteger(0);
+    private final boolean atomicIdempotency;
     private HttpServer server;
+    private java.util.concurrent.ExecutorService executor;
     private int port;
+
+    public PaymentApi() {
+        this(true);
+    }
+
+    /**
+     * @param atomicIdempotency when false, the idempotency check is a
+     *                          deliberate check-then-act race — the known
+     *                          broken implementation the reliability suite
+     *                          must detect
+     */
+    public PaymentApi(boolean atomicIdempotency) {
+        this.atomicIdempotency = atomicIdempotency;
+    }
 
     public void start() throws IOException {
         server = HttpServer.create(new InetSocketAddress(0), 0);
@@ -34,13 +50,18 @@ public class PaymentApi {
 
         server.createContext("/payments", new PaymentsHandler());
         server.createContext("/health", exchange -> respond(exchange, 200, Map.of("status", "ok")));
-        server.setExecutor(null);
+        // Concurrent handling is required for the parallel reliability scenarios.
+        executor = java.util.concurrent.Executors.newFixedThreadPool(8);
+        server.setExecutor(executor);
         server.start();
     }
 
     public void stop() {
         if (server != null) {
             server.stop(0);
+        }
+        if (executor != null) {
+            executor.shutdownNow();
         }
     }
 
@@ -90,17 +111,40 @@ public class PaymentApi {
         // Replaying a known Idempotency-Key returns the original payment
         // instead of creating a duplicate.
         String idempotencyKey = exchange.getRequestHeaders().getFirst("Idempotency-Key");
-        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
-            String existingId = paymentIdsByIdempotencyKey.get(idempotencyKey);
-            if (existingId != null) {
-                Map<String, Object> existing = payments.get(existingId);
-                if (existing != null) {
-                    respond(exchange, 200, existing);
-                    return;
-                }
-            }
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            respond(exchange, 201, payments.get(storeNewPayment(request)));
+            return;
         }
 
+        if (atomicIdempotency) {
+            boolean[] created = {false};
+            String id = paymentIdsByIdempotencyKey.computeIfAbsent(idempotencyKey, key -> {
+                created[0] = true;
+                return storeNewPayment(request);
+            });
+            respond(exchange, created[0] ? 201 : 200, payments.get(id));
+            return;
+        }
+
+        // Deliberately broken variant: check-then-act with a widened race
+        // window. Two concurrent requests with the same key both pass the
+        // check and create two payments.
+        String existingId = paymentIdsByIdempotencyKey.get(idempotencyKey);
+        if (existingId != null) {
+            respond(exchange, 200, payments.get(existingId));
+            return;
+        }
+        try {
+            Thread.sleep(50);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        }
+        String id = storeNewPayment(request);
+        paymentIdsByIdempotencyKey.put(idempotencyKey, id);
+        respond(exchange, 201, payments.get(id));
+    }
+
+    private String storeNewPayment(Map<String, Object> request) {
         String id = "pay-" + idCounter.incrementAndGet();
         Map<String, Object> payment = new LinkedHashMap<>();
         payment.put("id", id);
@@ -108,12 +152,8 @@ public class PaymentApi {
         payment.put("currency", request.getOrDefault("currency", "USD"));
         payment.put("status", "created");
         payment.put("createdAt", System.currentTimeMillis());
-
         payments.put(id, payment);
-        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
-            paymentIdsByIdempotencyKey.put(idempotencyKey, id);
-        }
-        respond(exchange, 201, payment);
+        return id;
     }
 
     private void handleGetPayment(HttpExchange exchange, String id) throws IOException {

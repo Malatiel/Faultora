@@ -70,6 +70,7 @@ public class TestCommand implements Command {
         boolean allowPrivate = false;
         String authSecretId = null;
         String toxiproxyUrl = null;
+        Map<String, Object> cliInputs = new LinkedHashMap<>();
 
         Iterator<String> it = args.iterator();
         while (it.hasNext()) {
@@ -84,6 +85,15 @@ public class TestCommand implements Command {
                 case "--allow-private" -> allowPrivate = true;
                 case "--auth-secret-id" -> authSecretId = requireNext(it, "--auth-secret-id");
                 case "--toxiproxy-url" -> toxiproxyUrl = requireNext(it, "--toxiproxy-url");
+                case "--input", "-i" -> {
+                    String pair = requireNext(it, "--input");
+                    int eq = pair.indexOf('=');
+                    if (eq <= 0) {
+                        System.err.println("Option --input requires key=value, got: " + pair);
+                        return FaultoraCli.EXIT_INVALID_CONFIG;
+                    }
+                    cliInputs.put(pair.substring(0, eq), parseInputValue(pair.substring(eq + 1)));
+                }
                 case "--help", "-h" -> {
                     printHelp();
                     return FaultoraCli.EXIT_PASS;
@@ -154,7 +164,17 @@ public class TestCommand implements Command {
                     1000, 10, 300_000, 1_048_576,
                     allowedFaultTypes, Set.of());
 
-            ExpressionContext exprContext = ExpressionContext.builder().build();
+            Map<String, Object> resolvedInputs;
+            try {
+                resolvedInputs = resolveDeclaredInputs(scenario, cliInputs);
+            } catch (CliException e) {
+                System.err.println(e.getMessage());
+                return FaultoraCli.EXIT_INVALID_CONFIG;
+            }
+            ExpressionContext exprContext = ExpressionContext.builder()
+                    .inputs(resolvedInputs)
+                    .runMetadata(Map.of("seed", seed, "target", targetUrl))
+                    .build();
 
             EnvironmentSecretResolver secretResolver = new EnvironmentSecretResolver();
             EvidencePolicy evidencePolicy = new EvidencePolicy(
@@ -260,6 +280,57 @@ public class TestCommand implements Command {
         } catch (Exception e) {
             System.err.println("Runner error: " + e.getMessage());
             return FaultoraCli.EXIT_RUNNER_FAILURE;
+        }
+    }
+
+    /**
+     * Merge CLI-provided inputs with the scenario's declared defaults.
+     * Unknown input names and missing required inputs are configuration errors.
+     */
+    private Map<String, Object> resolveDeclaredInputs(
+            ScenarioDocument scenario, Map<String, Object> cliInputs) {
+        Map<String, dev.faultora.spec.model.InputDeclaration> declared =
+                scenario.inputs() != null ? scenario.inputs() : Map.of();
+
+        for (String name : cliInputs.keySet()) {
+            if (!declared.containsKey(name)) {
+                throw new CliException(
+                        "Unknown input '" + name + "'. Declared inputs: "
+                                + (declared.isEmpty() ? "(none)" : String.join(", ", declared.keySet())),
+                        FaultoraCli.EXIT_INVALID_CONFIG);
+            }
+        }
+
+        Map<String, Object> resolved = new LinkedHashMap<>();
+        for (var entry : declared.entrySet()) {
+            String name = entry.getKey();
+            var declaration = entry.getValue();
+            if (cliInputs.containsKey(name)) {
+                resolved.put(name, cliInputs.get(name));
+            } else if (declaration.defaultValue() != null) {
+                resolved.put(name, declaration.defaultValue());
+            } else if (declaration.required()) {
+                throw new CliException(
+                        "Required input '" + name + "' is missing. Provide it with --input "
+                                + name + "=<value>",
+                        FaultoraCli.EXIT_INVALID_CONFIG);
+            }
+        }
+        return resolved;
+    }
+
+    private static Object parseInputValue(String raw) {
+        if ("true".equalsIgnoreCase(raw) || "false".equalsIgnoreCase(raw)) {
+            return Boolean.parseBoolean(raw);
+        }
+        try {
+            return Long.parseLong(raw);
+        } catch (NumberFormatException notLong) {
+            try {
+                return Double.parseDouble(raw);
+            } catch (NumberFormatException notDouble) {
+                return raw;
+            }
         }
     }
 
@@ -389,6 +460,7 @@ public class TestCommand implements Command {
         System.out.println("  --allow-private            Allow connections to private/local networks");
         System.out.println("  --auth-secret-id <id>      Secret handle ID for Authorization header (resolved from env)");
         System.out.println("  --toxiproxy-url <url>      Toxiproxy admin endpoint; enables network-* fault types");
+        System.out.println("  -i, --input <key=value>    Value for a declared scenario input (repeatable)");
         System.out.println("  -h, --help                 Show this help");
         System.out.println();
         System.out.println("Exit codes:");

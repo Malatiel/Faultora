@@ -16,10 +16,10 @@ public final class ExpressionContext {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private final JsonNode contextTree;
+    private final ObjectNode contextTree;
     private final Set<String> secretKeys;
 
-    private ExpressionContext(JsonNode contextTree, Set<String> secretKeys) {
+    private ExpressionContext(ObjectNode contextTree, Set<String> secretKeys) {
         this.contextTree = contextTree;
         this.secretKeys = secretKeys;
     }
@@ -53,6 +53,19 @@ public final class ExpressionContext {
      */
     public Set<String> secretKeys() {
         return secretKeys;
+    }
+
+    /**
+     * Return a new context with a step output bound under {@code steps.<name>}.
+     * The receiver is not modified; contexts stay immutable snapshots.
+     */
+    public ExpressionContext withStepOutput(String name, JsonNode output) {
+        ObjectNode newRoot = contextTree.deepCopy();
+        JsonNode steps = newRoot.get("steps");
+        ObjectNode stepsNode = steps instanceof ObjectNode existing
+                ? existing : newRoot.putObject("steps");
+        stepsNode.set(name, output);
+        return new ExpressionContext(newRoot, secretKeys);
     }
 
     /**

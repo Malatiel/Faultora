@@ -129,7 +129,7 @@ class ScenarioParserTest {
                 List.of(),
                 List.of(
                         new ScenarioStep(
-                                "parallel", "parallel", null,
+                                "repeat", "repeat", null,
                                 Map.of(), null, List.of(), null, null, Map.of()),
                         new ScenarioStep(
                                 "wait", "wait", null,
@@ -140,8 +140,55 @@ class ScenarioParserTest {
 
         assertThat(result.errors()).extracting(Diagnostic::message)
                 .contains(
-                        "Unsupported step type in this release: parallel",
+                        "Unsupported step type in this release: repeat",
                         "Wait step requires a positive duration");
+    }
+
+    @Test
+    void validatorAcceptsParallelGroupAndRejectsInvalidChildren() {
+        ScenarioDocument valid = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("parallel", "parallel", Map.of(), Map.of()),
+                Map.of(),
+                List.of(),
+                List.of(new ScenarioStep("race", "parallel", null,
+                        Map.of(), null, List.of(), null, null, false,
+                        List.of(
+                                new ScenarioStep("first", "operation", "create-payment",
+                                        Map.of(), null, List.of(), null, null, Map.of()),
+                                new ScenarioStep("second", "operation", "create-payment",
+                                        Map.of(), null, List.of(), null, null, Map.of())),
+                        Map.of())),
+                List.of(), List.of(), List.of());
+
+        assertThat(validator.validate(valid).isSuccess()).isTrue();
+
+        ScenarioDocument invalid = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("parallel", "parallel", Map.of(), Map.of()),
+                Map.of(),
+                List.of(),
+                List.of(new ScenarioStep("race", "parallel", null,
+                        Map.of(), null, List.of(), null, null, false,
+                        List.of(
+                                new ScenarioStep("waiting", "wait", null,
+                                        Map.of(), null, List.of(), "1s", null, Map.of()),
+                                new ScenarioStep("dependent", "operation", "create-payment",
+                                        Map.of(), null, List.of("waiting"), null, null, Map.of()),
+                                new ScenarioStep("nested", "parallel", null,
+                                        Map.of(), null, List.of(), null, null, false,
+                                        List.of(new ScenarioStep("inner", "operation", "op",
+                                                Map.of(), null, List.of(), null, null, Map.of())),
+                                        Map.of())),
+                        Map.of())),
+                List.of(), List.of(), List.of());
+
+        ParseResult<ScenarioDocument> result = validator.validate(invalid);
+
+        assertThat(result.errors()).extracting(Diagnostic::message)
+                .anyMatch(m -> m.contains("Parallel children must be operation steps"))
+                .anyMatch(m -> m.contains("cannot declare dependsOn"))
+                .anyMatch(m -> m.contains("cannot be nested"));
     }
 
     @Test

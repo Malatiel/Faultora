@@ -107,7 +107,8 @@ public final class ExpressionEvaluator {
 
     /**
      * Resolve all expressions in a map of input values.
-     * Keys are input names; values may contain template expressions.
+     * Keys are input names; values may contain template expressions, including
+     * inside nested maps and lists (e.g. {@code body} or {@code headers}).
      *
      * @param inputs  the input map with possible template values
      * @param context the evaluation context
@@ -121,14 +122,30 @@ public final class ExpressionEvaluator {
 
         var resolved = new java.util.LinkedHashMap<String, Object>();
         for (var entry : inputs.entrySet()) {
-            Object value = entry.getValue();
-            if (value instanceof String s) {
-                resolved.put(entry.getKey(), resolveTemplate(s, context));
-            } else {
-                resolved.put(entry.getKey(), value);
-            }
+            resolved.put(entry.getKey(), resolveValue(entry.getValue(), context));
         }
         return resolved;
+    }
+
+    private Object resolveValue(Object value, ExpressionContext context) {
+        if (value instanceof String s) {
+            return resolveTemplate(s, context);
+        }
+        if (value instanceof java.util.Map<?, ?> map) {
+            var resolved = new java.util.LinkedHashMap<Object, Object>();
+            for (var entry : map.entrySet()) {
+                resolved.put(entry.getKey(), resolveValue(entry.getValue(), context));
+            }
+            return resolved;
+        }
+        if (value instanceof java.util.List<?> list) {
+            var resolved = new java.util.ArrayList<Object>(list.size());
+            for (Object item : list) {
+                resolved.add(resolveValue(item, context));
+            }
+            return resolved;
+        }
+        return value;
     }
 
     /**

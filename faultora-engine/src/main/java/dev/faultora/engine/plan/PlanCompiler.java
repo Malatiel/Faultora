@@ -57,9 +57,21 @@ public class PlanCompiler {
         // Compile execute steps
         compileSteps(scenario.execute(), "execute", operationIndex, targetPolicy, nodes, diagnostics);
 
+        // Children of parallel groups execute inside the group node, so
+        // ordering dependencies on a child must attach to the group itself.
+        Map<NodeId, NodeId> childToGroup = new LinkedHashMap<>();
+        for (PlanNode node : nodes) {
+            if (node instanceof PlanNode.ParallelNode parallel) {
+                for (PlanNode.OperationNode child : parallel.children()) {
+                    childToGroup.put(child.nodeId(), parallel.nodeId());
+                }
+            }
+        }
+
         // Compile assertion steps
         compileAssertionSteps(
-                scenario.assertions(), lastStepId(scenario.execute()), nodes, diagnostics);
+                scenario.assertions(), lastStepId(scenario.execute()),
+                childToGroup, nodes, diagnostics);
 
         // Compile cleanup steps
         compileSteps(scenario.cleanup(), "cleanup", operationIndex, targetPolicy, nodes, diagnostics);
@@ -72,6 +84,10 @@ public class PlanCompiler {
                         case PlanNode.OperationNode operation when operation.operation() != null ->
                                 operation.retrySpec() == null
                                         ? 1 : operation.retrySpec().maxAttempts();
+                        case PlanNode.ParallelNode parallel -> parallel.children().stream()
+                                .mapToLong(child -> child.retrySpec() == null
+                                        ? 1 : child.retrySpec().maxAttempts())
+                                .sum();
                         case PlanNode.CleanupNode ignored -> 1;
                         default -> 0;
                     })
@@ -128,88 +144,69 @@ public class PlanCompiler {
             NodeId nodeId = new NodeId(stepId);
 
             if ("operation".equals(step.type()) || step.type() == null) {
-                // Resolve operation
-                String opId = step.operationId();
-                if (opId == null || opId.isBlank()) {
-                    diagnostics.add(PlanDiagnostic.error(phase, stepId,
-                            "Step has no operationId"));
+                PlanNode.OperationNode operationNode = compileOperation(
+                        step, phase, operationIndex, targetPolicy,
+                        resolveDependencies(step.dependsOn()), diagnostics);
+                if (operationNode == null) {
                     continue;
                 }
-
-                OperationDefinition operation = operationIndex.get(opId);
-                if (operation == null) {
-                    diagnostics.add(PlanDiagnostic.error(phase, stepId,
-                            "Operation not found in catalog: " + opId));
-                    continue;
-                }
-
-                // Check safety classification against policy
-                if (!isAllowedByPolicy(operation.safety(), targetPolicy)) {
-                    diagnostics.add(PlanDiagnostic.error(phase, stepId,
-                            "Operation " + opId + " with safety " + operation.safety() +
-                                    " is not allowed by execution policy"));
-                    continue;
-                }
-                if (targetPolicy != null
-                        && !targetPolicy.allowedTargets().isEmpty()
-                        && !targetPolicy.allowedTargets().contains(operation.target())) {
-                    diagnostics.add(PlanDiagnostic.error(phase, stepId,
-                            "Target is not allowed by execution policy: " + operation.target()));
-                    continue;
-                }
-
-                long deadlineMs = parseTimeout(
-                        step.timeout(), phase, stepId, "timeout", diagnostics);
-
-                PlanNode.RetrySpec retrySpec = null;
-                if (step.retry() != null) {
-                    ScenarioStep.RetryPolicy retry = step.retry();
-                    if (retry.maxAttempts() < 1) {
-                        diagnostics.add(PlanDiagnostic.error(phase, stepId,
-                                "retry.maxAttempts must be at least 1"));
-                        continue;
-                    }
-                    if (retry.maxAttempts() > MAX_RETRY_ATTEMPTS) {
-                        diagnostics.add(PlanDiagnostic.error(phase, stepId,
-                                "retry.maxAttempts must not exceed " + MAX_RETRY_ATTEMPTS));
-                        continue;
-                    }
-                    if ("cleanup".equals(phase) && retry.maxAttempts() > 1) {
-                        diagnostics.add(PlanDiagnostic.error(phase, stepId,
-                                "Retries are not supported for cleanup steps"));
-                        continue;
-                    }
-                    if (step.expectError() && retry.maxAttempts() > 1) {
-                        diagnostics.add(PlanDiagnostic.error(phase, stepId,
-                                "expectError cannot be combined with retry"));
-                        continue;
-                    }
-                    if (retry.maxAttempts() > 1) {
-                        retrySpec = new PlanNode.RetrySpec(
-                                retry.maxAttempts(), retry.backoffMs(),
-                                retry.backoffMultiplier(), retry.maxBackoffMs());
-                    }
-                }
-                int maxRetries = retrySpec == null ? 0 : retrySpec.maxAttempts() - 1;
-
-                // Build input expressions
-                Map<String, Object> inputExpressions = step.inputs() != null ?
-                        new LinkedHashMap<>(step.inputs()) : Map.of();
-
-                List<NodeId> deps = resolveDependencies(step.dependsOn());
-
                 if ("cleanup".equals(phase)) {
                     nodes.add(new PlanNode.CleanupNode(
-                            nodeId, new OperationId(opId), inputExpressions,
-                            deps, operation.safety(), deadlineMs, maxRetries
+                            operationNode.nodeId(), operationNode.operationId(),
+                            operationNode.inputExpressions(),
+                            operationNode.dependencies(), operationNode.safety(),
+                            operationNode.deadlineMs(), operationNode.maxRetries()
                     ));
                 } else {
-                    nodes.add(new PlanNode.OperationNode(
-                            nodeId, new OperationId(opId), operation,
-                            inputExpressions, step.outputAs(), step.expectError(),
-                            retrySpec, deps, operation.safety(), deadlineMs, maxRetries
-                    ));
+                    nodes.add(operationNode);
                 }
+
+            } else if ("parallel".equals(step.type())) {
+                if ("cleanup".equals(phase)) {
+                    diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                            "Parallel steps are not allowed in cleanup"));
+                    continue;
+                }
+                List<ScenarioStep> childSteps = step.steps() == null ? List.of() : step.steps();
+                if (childSteps.isEmpty()) {
+                    diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                            "Parallel step requires at least one child step"));
+                    continue;
+                }
+                if (targetPolicy != null && childSteps.size() > targetPolicy.maxConcurrency()) {
+                    diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                            "Parallel step has " + childSteps.size()
+                                    + " children, policy allows concurrency "
+                                    + targetPolicy.maxConcurrency()));
+                    continue;
+                }
+
+                List<PlanNode.OperationNode> children = new ArrayList<>();
+                boolean childrenValid = true;
+                for (ScenarioStep child : childSteps) {
+                    PlanNode.OperationNode childNode = compileOperation(
+                            child, phase, operationIndex, targetPolicy,
+                            List.of(), diagnostics);
+                    if (childNode == null) {
+                        childrenValid = false;
+                        continue;
+                    }
+                    children.add(childNode);
+                }
+                if (!childrenValid) {
+                    continue;
+                }
+
+                SafetyClassification groupSafety = children.stream()
+                        .map(PlanNode.OperationNode::safety)
+                        .max(java.util.Comparator.comparingInt(Enum::ordinal))
+                        .orElse(SafetyClassification.READ_ONLY);
+                long deadlineMs = parseTimeout(
+                        step.timeout(), phase, stepId, "timeout", diagnostics);
+                nodes.add(new PlanNode.ParallelNode(
+                        nodeId, children, resolveDependencies(step.dependsOn()),
+                        groupSafety, deadlineMs, 0
+                ));
 
             } else if ("wait".equals(step.type())) {
                 long waitMs = parseTimeout(
@@ -230,6 +227,92 @@ public class PlanCompiler {
                         "Unsupported step type in this release: " + step.type()));
             }
         }
+    }
+
+    /**
+     * Compile one operation step into an OperationNode, reporting diagnostics
+     * and returning null when the step is invalid.
+     */
+    private PlanNode.OperationNode compileOperation(
+            ScenarioStep step,
+            String phase,
+            Map<String, OperationDefinition> operationIndex,
+            TargetPolicy targetPolicy,
+            List<NodeId> deps,
+            List<PlanDiagnostic> diagnostics
+    ) {
+        String stepId = step.id();
+        String opId = step.operationId();
+        if (opId == null || opId.isBlank()) {
+            diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                    "Step has no operationId"));
+            return null;
+        }
+
+        OperationDefinition operation = operationIndex.get(opId);
+        if (operation == null) {
+            diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                    "Operation not found in catalog: " + opId));
+            return null;
+        }
+
+        // Check safety classification against policy
+        if (!isAllowedByPolicy(operation.safety(), targetPolicy)) {
+            diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                    "Operation " + opId + " with safety " + operation.safety() +
+                            " is not allowed by execution policy"));
+            return null;
+        }
+        if (targetPolicy != null
+                && !targetPolicy.allowedTargets().isEmpty()
+                && !targetPolicy.allowedTargets().contains(operation.target())) {
+            diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                    "Target is not allowed by execution policy: " + operation.target()));
+            return null;
+        }
+
+        long deadlineMs = parseTimeout(
+                step.timeout(), phase, stepId, "timeout", diagnostics);
+
+        PlanNode.RetrySpec retrySpec = null;
+        if (step.retry() != null) {
+            ScenarioStep.RetryPolicy retry = step.retry();
+            if (retry.maxAttempts() < 1) {
+                diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                        "retry.maxAttempts must be at least 1"));
+                return null;
+            }
+            if (retry.maxAttempts() > MAX_RETRY_ATTEMPTS) {
+                diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                        "retry.maxAttempts must not exceed " + MAX_RETRY_ATTEMPTS));
+                return null;
+            }
+            if ("cleanup".equals(phase) && retry.maxAttempts() > 1) {
+                diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                        "Retries are not supported for cleanup steps"));
+                return null;
+            }
+            if (step.expectError() && retry.maxAttempts() > 1) {
+                diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                        "expectError cannot be combined with retry"));
+                return null;
+            }
+            if (retry.maxAttempts() > 1) {
+                retrySpec = new PlanNode.RetrySpec(
+                        retry.maxAttempts(), retry.backoffMs(),
+                        retry.backoffMultiplier(), retry.maxBackoffMs());
+            }
+        }
+        int maxRetries = retrySpec == null ? 0 : retrySpec.maxAttempts() - 1;
+
+        Map<String, Object> inputExpressions = step.inputs() != null ?
+                new LinkedHashMap<>(step.inputs()) : Map.of();
+
+        return new PlanNode.OperationNode(
+                new NodeId(stepId), new OperationId(opId), operation,
+                inputExpressions, step.outputAs(), step.expectError(),
+                retrySpec, deps, operation.safety(), deadlineMs, maxRetries
+        );
     }
 
     private void compileFaultSteps(
@@ -324,6 +407,7 @@ public class PlanCompiler {
     private void compileAssertionSteps(
             List<AssertionStep> steps,
             NodeId defaultTarget,
+            Map<NodeId, NodeId> childToGroup,
             List<PlanNode> nodes,
             List<PlanDiagnostic> diagnostics
     ) {
@@ -335,11 +419,16 @@ public class PlanCompiler {
                     ? new NodeId(step.targetStep())
                     : defaultTarget;
 
-            List<NodeId> deps = resolveDependencies(step.dependsOn());
-            // Add target step as implicit dependency
-            if (targetNode != null && !deps.contains(targetNode)) {
-                deps = new ArrayList<>(deps);
-                deps.add(targetNode);
+            List<NodeId> deps = new ArrayList<>();
+            for (NodeId dep : resolveDependencies(step.dependsOn())) {
+                deps.add(childToGroup.getOrDefault(dep, dep));
+            }
+            // Add target step as implicit ordering dependency; evidence still
+            // comes from the (possibly child) target node itself.
+            NodeId orderingTarget = targetNode == null
+                    ? null : childToGroup.getOrDefault(targetNode, targetNode);
+            if (orderingTarget != null && !deps.contains(orderingTarget)) {
+                deps.add(orderingTarget);
             }
 
             Map<String, Object> params = step.params() != null ?

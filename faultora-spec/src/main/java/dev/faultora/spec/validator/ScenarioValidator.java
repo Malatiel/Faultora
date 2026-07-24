@@ -47,6 +47,7 @@ public class ScenarioValidator {
         validateSteps(document.execute(), "execute", diagnostics);
         validateSteps(document.cleanup(), "cleanup", diagnostics);
         validateFaultSteps(document.faults(), diagnostics);
+        validateOutputBindings(document, diagnostics);
 
         if (diagnostics.stream().anyMatch(Diagnostic::isError)) {
             return new ParseResult<>(null, diagnostics);
@@ -64,6 +65,8 @@ public class ScenarioValidator {
                 diagnostics.add(Diagnostic.error(section + "." + step.id(),
                         "Duplicate step id: " + step.id()));
             }
+            // Children of parallel groups share the global step-ID namespace.
+            validateScenarioStepIds(step.steps(), section, allIds, diagnostics);
         }
     }
 
@@ -152,9 +155,15 @@ public class ScenarioValidator {
         for (ScenarioStep step : steps) {
             String type = step.type() == null ? "operation" : step.type();
             String path = section + "." + step.id();
-            if (!"operation".equals(type) && !"wait".equals(type)) {
+            if (!"operation".equals(type) && !"wait".equals(type) && !"parallel".equals(type)) {
                 diagnostics.add(Diagnostic.error(path + ".type",
                         "Unsupported step type in this release: " + type));
+            }
+            if ("parallel".equals(type)) {
+                validateParallelStep(step, section, path, diagnostics);
+            } else if (step.steps() != null && !step.steps().isEmpty()) {
+                diagnostics.add(Diagnostic.error(path + ".steps",
+                        "Nested steps are only allowed on parallel steps"));
             }
             if ("wait".equals(type) && !isPositiveDuration(step.timeout())) {
                 diagnostics.add(Diagnostic.error(path + ".timeout",
@@ -182,6 +191,40 @@ public class ScenarioValidator {
         }
     }
 
+    private static final java.util.regex.Pattern OUTPUT_NAME =
+            java.util.regex.Pattern.compile("[A-Za-z_][A-Za-z0-9_-]*");
+
+    private void validateOutputBindings(ScenarioDocument document, List<Diagnostic> diagnostics) {
+        Set<String> names = new HashSet<>();
+        validateOutputBindings(document.setup(), "setup", names, diagnostics);
+        validateOutputBindings(document.execute(), "execute", names, diagnostics);
+        validateOutputBindings(document.cleanup(), "cleanup", names, diagnostics);
+    }
+
+    private void validateOutputBindings(List<ScenarioStep> steps, String section,
+                                         Set<String> names, List<Diagnostic> diagnostics) {
+        if (steps == null) return;
+        for (ScenarioStep step : steps) {
+            String outputAs = step.outputAs();
+            if (outputAs == null || outputAs.isBlank()) continue;
+            String path = section + "." + step.id() + ".outputAs";
+            if (!OUTPUT_NAME.matcher(outputAs).matches()) {
+                diagnostics.add(Diagnostic.error(path,
+                        "Output name must match [A-Za-z_][A-Za-z0-9_-]*: " + outputAs));
+            } else if (!names.add(outputAs)) {
+                diagnostics.add(Diagnostic.error(path,
+                        "Duplicate output name: " + outputAs));
+            }
+            if ("cleanup".equals(section)) {
+                diagnostics.add(Diagnostic.warning(path,
+                        "outputAs on a cleanup step has no consumers"));
+            }
+        }
+        for (ScenarioStep step : steps) {
+            validateOutputBindings(step.steps(), section, names, diagnostics);
+        }
+    }
+
     private void validateFaultSteps(List<FaultStep> steps, List<Diagnostic> diagnostics) {
         if (steps == null) return;
         for (FaultStep step : steps) {
@@ -193,6 +236,54 @@ public class ScenarioValidator {
             if (!isPositiveDuration(step.duration())) {
                 diagnostics.add(Diagnostic.error(path + ".duration",
                         "Fault step requires a positive duration (e.g. 500ms, 5s)"));
+            }
+        }
+    }
+
+    private void validateParallelStep(
+            ScenarioStep step, String section, String path, List<Diagnostic> diagnostics) {
+        if (!"cleanup".equals(section) && !"execute".equals(section) && !"setup".equals(section)) {
+            return;
+        }
+        if ("cleanup".equals(section)) {
+            diagnostics.add(Diagnostic.error(path,
+                    "Parallel steps are not allowed in cleanup"));
+            return;
+        }
+        if (step.steps() == null || step.steps().isEmpty()) {
+            diagnostics.add(Diagnostic.error(path + ".steps",
+                    "Parallel step requires at least one child step"));
+            return;
+        }
+        for (ScenarioStep child : step.steps()) {
+            String childPath = path + "." + child.id();
+            String childType = child.type() == null ? "operation" : child.type();
+            if (!"operation".equals(childType)) {
+                diagnostics.add(Diagnostic.error(childPath + ".type",
+                        "Parallel children must be operation steps, got: " + childType));
+            }
+            if (child.dependsOn() != null && !child.dependsOn().isEmpty()) {
+                diagnostics.add(Diagnostic.error(childPath + ".dependsOn",
+                        "Parallel children start together and cannot declare dependsOn"));
+            }
+            if (child.steps() != null && !child.steps().isEmpty()) {
+                diagnostics.add(Diagnostic.error(childPath + ".steps",
+                        "Parallel groups cannot be nested"));
+            }
+            if (child.retry() != null) {
+                ScenarioStep.RetryPolicy retry = child.retry();
+                if (retry.maxAttempts() < 1
+                        || retry.backoffMs() < 0
+                        || retry.backoffMultiplier() < 1
+                        || retry.maxBackoffMs() < 0) {
+                    diagnostics.add(Diagnostic.error(childPath + ".retry",
+                            "Retry values are out of range"));
+                }
+                if (child.expectError() && retry.maxAttempts() > 1) {
+                    diagnostics.add(Diagnostic.error(childPath + ".retry",
+                            "expectError cannot be combined with retry: "
+                                    + "a step that must fail has nothing to retry toward"));
+                }
             }
         }
     }
