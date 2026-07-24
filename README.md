@@ -8,44 +8,54 @@ invariants, and produces console, JSON, HTML, and JUnit reports. Execution stays
 inside your infrastructure and does not require a hosted control plane or
 telemetry.
 
-Version 0.2.0 is a runnable technical preview. It targets local
+Version 0.3.0 is a runnable technical preview. It targets local
 development and CI use on Java 21.
 
-## What 0.2.0 includes
+## What 0.3.0 includes
+
+Scenario execution:
 
 - OpenAPI 3.x import and operation discovery;
-- versioned YAML scenarios;
+- versioned YAML scenarios with runtime inputs (`--input key=value`);
 - HTTP GET, POST, PUT, PATCH, DELETE, HEAD, and OPTIONS operations;
-- status, header, JSONPath, and duration assertions;
+- step output binding: later steps reference earlier responses through
+  `{{steps.<name>.body...}}` templates;
+- bounded parallel groups for genuinely concurrent requests;
+- retry policies with exponential backoff and deterministic seed-derived
+  jitter;
 - sequential operation and wait steps with explicit dependencies;
-- environment-backed bearer-token resolution;
-- console, JSON, HTML, and JUnit reports;
+- status, header, JSONPath, and duration assertions;
+- console, JSON, HTML, and JUnit reports.
+
+Fault injection:
+
+- in-process faults with no external dependencies: `http-latency`,
+  `http-error`, and `http-response-loss`, with a hard-expiry watchdog and
+  guaranteed exactly-once rollback;
+- real network faults through a [Toxiproxy](https://github.com/Shopify/toxiproxy)
+  instance (`--toxiproxy-url`): `network-latency`, `network-timeout`,
+  `network-reset`, and `network-bandwidth`;
+- `expectError` steps for requests that are supposed to fail under a fault;
+- fault windows and fault-to-node attribution in console and HTML reports.
+
+Security posture:
+
 - SSRF protection with DNS resolution and address pinning;
 - bounded HTTP response streaming;
 - policy-bounded in-memory evidence for assertions;
 - header filtering, content-type allowlists, body limits, and JSON redaction;
-- manual redirect handling with cross-origin credential stripping.
+- manual redirect handling with cross-origin credential stripping;
+- environment-backed bearer-token resolution.
 
-## New in 0.2.0
+The in-process fault provider acts only on Faultora's own outbound requests.
+It never touches the target system, its infrastructure, or other traffic, so
+no extra privileges are needed. Network faults require a Toxiproxy you already
+operate on the traffic path.
 
-- in-process fault injection: `http-latency`, `http-error`, and
-  `http-response-loss` fault steps with hard-expiry watchdog and guaranteed
-  exactly-once rollback;
-- `expectError` steps for requests that are supposed to fail under a fault;
-- fault windows and fault-to-node attribution in console and HTML reports,
-  plus `FAULT_INJECTED` / `FAULT_ROLLED_BACK` journal events;
-- reference reliability scenarios: SLA under injected latency, and
-  "duplicate payment is not created" under a lost response with an
-  idempotency-key retry.
-
-The built-in fault provider acts only on Faultora's own outbound requests. It
-never touches the target system, its infrastructure, or other traffic, so no
-extra privileges are needed.
-
-Network-level faults, retries, parallel/repeat blocks, distributed workers,
-Kafka, Kubernetes orchestration, and the web interface are not part of these
-releases. Scenarios that request unsupported execution features are rejected
-during validation or plan compilation rather than being silently accepted.
+Repeat/eventually blocks, Kafka, distributed workers, Kubernetes
+orchestration, and the web interface are not part of this release. Scenarios
+that request unsupported execution features are rejected during validation or
+plan compilation rather than being silently accepted.
 
 ## Requirements
 
@@ -57,7 +67,7 @@ during validation or plan compilation rather than being silently accepted.
 Download the release JAR and its checksums:
 
 ```bash
-FAULTORA_VERSION=0.2.0
+FAULTORA_VERSION=0.3.0
 RELEASE_URL="https://github.com/Malatiel/Faultora/releases/download/v${FAULTORA_VERSION}"
 
 curl --fail --location --retry 3 \
@@ -85,7 +95,7 @@ Every release also includes a CycloneDX SBOM and the Apache 2.0 license.
 The executable artifact is written to:
 
 ```text
-faultora-cli/target/faultora-0.2.0.jar
+faultora-cli/target/faultora-0.3.0.jar
 ```
 
 The regular CI build can run without repository secrets. Configure the
@@ -98,9 +108,9 @@ missing.
 Check the executable and validate the example scenario:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.2.0.jar --version
+java -jar faultora-cli/target/faultora-0.3.0.jar --version
 
-java -jar faultora-cli/target/faultora-0.2.0.jar \
+java -jar faultora-cli/target/faultora-0.3.0.jar \
   validate \
   --scenario examples/payment-service/scenarios/passing.yaml
 ```
@@ -108,7 +118,7 @@ java -jar faultora-cli/target/faultora-0.2.0.jar \
 Generate a starter scenario from an OpenAPI document:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.2.0.jar \
+java -jar faultora-cli/target/faultora-0.3.0.jar \
   init \
   --from-openapi examples/payment-service/openapi.yaml \
   --output ./generated
@@ -117,7 +127,7 @@ java -jar faultora-cli/target/faultora-0.2.0.jar \
 Run a scenario against an API:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.2.0.jar \
+java -jar faultora-cli/target/faultora-0.3.0.jar \
   test \
   --scenario examples/payment-service/scenarios/passing.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -131,41 +141,49 @@ Private, loopback, and link-local destinations are blocked by default. Use
 
 ## Fault injection
 
-The reference reliability scenarios run against the bundled payment example:
+The flagship reliability scenario races two concurrent `create-payment`
+requests that share one `Idempotency-Key` while injected latency widens the
+race window, then asserts the business invariant that exactly one payment
+exists:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.2.0.jar \
+java -jar faultora-cli/target/faultora-0.3.0.jar \
   test \
-  --scenario examples/payment-service/scenarios/fault-duplicate-payment.yaml \
+  --scenario examples/payment-service/scenarios/fault-concurrent-duplicate.yaml \
   --openapi examples/payment-service/openapi.yaml \
   --target http://localhost:8080 \
   --allow-private
 ```
 
-The scenario delivers a `create-payment` request whose response is lost,
-retries it with the same `Idempotency-Key`, and asserts the business invariant
-that exactly one payment exists. The report shows the fault window and every
-node that ran while the fault was active:
-
 ```text
 --- Nodes ---
-  [PASSED] lose-response (0ms)
-  [PASSED] first-attempt (2ms)
-  [PASSED] wait-for-fault-expiry (1502ms)
-  [PASSED] retry-with-same-key (7ms)
-  [PASSED] list-payments (3ms)
-  [PASSED] retry-is-replayed (1ms)
-         Assertion: PASS — Status 200 matches expected 200
-  [PASSED] no-duplicate-payment (43ms)
+  [PASSED] sync-delay (0ms)
+  [PASSED] first-client (164ms)
+  [PASSED] second-client (166ms)
+  [PASSED] race (167ms)
+  [PASSED] list-payments (164ms)
+  [PASSED] first-client-got-a-payment (0ms)
+         Assertion: PASS — Path 'id' exists: true
+  [PASSED] second-client-got-a-payment (0ms)
+         Assertion: PASS — Path 'id' exists: true
+  [PASSED] exactly-one-payment (0ms)
          Assertion: PASS — Path '@' has 1 elements
 
 --- Faults ---
-  [http-response-loss] target * — active 1003ms, rollback: hard-expiry
-         During fault: first-attempt, wait-for-fault-expiry
+  [http-latency] target * — active 10003ms, rollback: run-end
+         During fault: first-client, second-client, list-payments
 ```
 
-See the [scenario reference](docs/SCENARIO_REFERENCE.md#faults) for fault
-types, parameters, and rollback guarantees.
+The same scenario detects the classic check-then-act idempotency bug: the
+end-to-end suite runs it against a deliberately broken variant of the example
+API and requires the invariant assertion to fail.
+
+Further reference scenarios cover a lost response followed by an
+idempotency-key retry (`fault-duplicate-payment.yaml`), retrying through a
+brief outage (`fault-retry.yaml`), and SLA verification under injected
+latency (`fault-latency.yaml`). See the
+[scenario reference](docs/SCENARIO_REFERENCE.md#faults) for fault types,
+parameters, and rollback guarantees.
 
 ## Reports
 
@@ -215,7 +233,7 @@ handle is mapped to an environment variable with the `FAULTORA_SECRET_` prefix:
 ```bash
 export FAULTORA_SECRET_PAYMENTS_API='replace-with-a-real-token'
 
-java -jar faultora-cli/target/faultora-0.2.0.jar \
+java -jar faultora-cli/target/faultora-0.3.0.jar \
   test \
   --scenario scenario.yaml \
   --openapi openapi.yaml \

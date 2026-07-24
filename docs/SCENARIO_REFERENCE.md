@@ -1,6 +1,6 @@
 # Scenario reference
 
-This page documents the scenario format implemented by Faultora 0.2.0. The
+This page documents the scenario format implemented by Faultora 0.3.0. The
 format is versioned independently from the application:
 
 ```yaml
@@ -10,7 +10,7 @@ kind: Scenario
 
 Faultora rejects unsupported versions, missing required fields, duplicate step
 IDs, unknown references, dependency cycles, and execution features that are not
-available in 0.2.0.
+available in 0.3.0.
 
 ## Complete example
 
@@ -74,7 +74,7 @@ cleanup:
 Validate a document before running it:
 
 ```bash
-java -jar faultora-0.2.0.jar validate --scenario scenario.yaml
+java -jar faultora-0.3.0.jar validate --scenario scenario.yaml
 ```
 
 ## Top-level fields
@@ -123,10 +123,11 @@ inputs:
     defaultValue: EUR
 ```
 
-Supported declaration types are intended to be `string`, `number`, `boolean`,
-and `object`. In 0.2.0 these declarations are descriptive only: the CLI has no
-`--input` option and does not apply declared defaults. Do not depend on scenario
-inputs or output expressions until runtime binding is introduced.
+Supported declaration types are `string`, `number`, `boolean`, and `object`.
+Declared inputs bind at runtime: `faultora test --input key=value` supplies a
+value (repeatable), declared `defaultValue`s fill the rest, a missing
+`required` input is a configuration error, and an unknown `--input` name is
+rejected. Bound inputs are available to templates as `{{inputs.<name>}}`.
 
 ## Operation steps
 
@@ -189,10 +190,10 @@ inputs:
     status: approved
 ```
 
-Only top-level string input values participate in template resolution.
-Runtime expression data is not populated by the 0.2.0 CLI, so expressions such
-as `{{inputs.currency}}` and `{{steps.create-payment.id}}` should not be used in
-release scenarios yet.
+String values anywhere in `inputs` — including inside nested `body` and
+`headers` maps — participate in `{{...}}` template resolution against declared
+inputs and bound step outputs. See
+[Expressions and step outputs](#expressions-and-step-outputs).
 
 ## Expressions and step outputs
 
@@ -434,7 +435,7 @@ Every assertion has this common shape:
 | `params` | yes | Parameters documented for the selected assertion type. |
 | `targetStep` | no | Operation evidence to inspect; defaults to the last `execute` step. |
 | `dependsOn` | no | Additional dependencies that must pass first. |
-| `message` | no | Reserved; 0.2.0 reports the assertion provider's evaluated message. |
+| `message` | no | Reserved; 0.3.0 reports the assertion provider's evaluated message. |
 | `metadata` | no | Arbitrary assertion metadata. |
 
 An assertion that cannot be evaluated is treated as a failed node rather than

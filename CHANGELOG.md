@@ -2,7 +2,10 @@
 
 All notable changes to Faultora are documented in this file.
 
-## Unreleased
+## 0.3.0 — 2026-07-24
+
+Reliability scenarios become expressive: data flows between steps, requests
+run concurrently, and faults extend to the real network.
 
 ### Added
 
