@@ -2,7 +2,7 @@
 
 All notable changes to Faultora are documented in this file.
 
-## Unreleased (0.2.0)
+## 0.2.0 — 2026-07-24
 
 First slice of the reliability engine: in-process fault injection.
 

@@ -1,6 +1,6 @@
 # Scenario reference
 
-This page documents the scenario format implemented by Faultora 0.1.1. The
+This page documents the scenario format implemented by Faultora 0.2.0. The
 format is versioned independently from the application:
 
 ```yaml
@@ -10,7 +10,7 @@ kind: Scenario
 
 Faultora rejects unsupported versions, missing required fields, duplicate step
 IDs, unknown references, dependency cycles, and execution features that are not
-available in 0.1.1.
+available in 0.2.0.
 
 ## Complete example
 
@@ -74,7 +74,7 @@ cleanup:
 Validate a document before running it:
 
 ```bash
-java -jar faultora-0.1.1.jar validate --scenario scenario.yaml
+java -jar faultora-0.2.0.jar validate --scenario scenario.yaml
 ```
 
 ## Top-level fields
@@ -84,7 +84,7 @@ java -jar faultora-0.1.1.jar validate --scenario scenario.yaml
 | `apiVersion` | yes | Must be `faultora.dev/v1alpha1`. |
 | `kind` | yes | Must be `Scenario`. |
 | `metadata` | yes | Scenario identity and descriptive metadata. |
-| `inputs` | no | Input declarations. Parsed in 0.1.1, but the CLI does not yet expose runtime input binding. |
+| `inputs` | no | Input declarations. Parsed in 0.2.0, but the CLI does not yet expose runtime input binding. |
 | `setup` | no | Operation or wait steps executed before the main section. |
 | `execute` | yes | Main operation or wait steps. Must contain at least one step. |
 | `faults` | no | In-process fault injection steps. See [Faults](#faults). |
@@ -124,7 +124,7 @@ inputs:
 ```
 
 Supported declaration types are intended to be `string`, `number`, `boolean`,
-and `object`. In 0.1.1 these declarations are descriptive only: the CLI has no
+and `object`. In 0.2.0 these declarations are descriptive only: the CLI has no
 `--input` option and does not apply declared defaults. Do not depend on scenario
 inputs or output expressions until runtime binding is introduced.
 
@@ -154,8 +154,8 @@ Operation steps may appear in `setup`, `execute`, and `cleanup`.
 | `inputs` | no | Path, query, header, and body values. |
 | `dependsOn` | no | IDs that must complete successfully first. |
 | `timeout` | no | Positive duration: milliseconds, `ms`, `s`, or `m`. |
-| `outputAs` | no | Reserved; output binding is not active in the 0.1.1 CLI. |
-| `retry` | no | Reserved. Omit it from 0.1.1 release scenarios; attempts greater than one are rejected. |
+| `outputAs` | no | Reserved; output binding is not active in the 0.2.0 CLI. |
+| `retry` | no | Reserved. Omit it from 0.2.0 release scenarios; attempts greater than one are rejected. |
 | `expectError` | no | When `true`, the step passes only if the operation fails with a normalized error, and its dependents still run. Use for requests executed under an injected fault. If the operation succeeds instead, the step fails with `EXPECTED_ERROR`. |
 | `metadata` | no | Arbitrary step metadata. |
 
@@ -190,7 +190,7 @@ inputs:
 ```
 
 Only top-level string input values participate in template resolution.
-Runtime expression data is not populated by the 0.1.1 CLI, so expressions such
+Runtime expression data is not populated by the 0.2.0 CLI, so expressions such
 as `{{inputs.currency}}` and `{{steps.create-payment.id}}` should not be used in
 release scenarios yet.
 
@@ -294,7 +294,7 @@ Every assertion has this common shape:
 | `params` | yes | Parameters documented for the selected assertion type. |
 | `targetStep` | no | Operation evidence to inspect; defaults to the last `execute` step. |
 | `dependsOn` | no | Additional dependencies that must pass first. |
-| `message` | no | Reserved; 0.1.1 reports the assertion provider's evaluated message. |
+| `message` | no | Reserved; 0.2.0 reports the assertion provider's evaluated message. |
 | `metadata` | no | Arbitrary assertion metadata. |
 
 An assertion that cannot be evaluated is treated as a failed node rather than
