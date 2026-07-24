@@ -2,6 +2,17 @@
 
 All notable changes to Faultora are documented in this file.
 
+## 0.3.1 — 2026-07-24
+
+Compliance release; no functional changes.
+
+### Added
+
+- `THIRD-PARTY.txt` with copyright notices and license texts for every
+  component bundled in the executable JAR (Apache-2.0, MIT, BSD-3-Clause,
+  EPL-1.0), shipped in the repository root and inside the JAR as
+  `META-INF/THIRD-PARTY.txt`.
+
 ## 0.3.0 — 2026-07-24
 
 Reliability scenarios become expressive: data flows between steps, requests
