@@ -45,9 +45,30 @@ public sealed interface PlanNode permits
     int maxRetries();
 
     /**
+     * Retry behavior for an operation node. Delays follow exponential backoff
+     * with deterministic seed-derived jitter, capped at {@code maxBackoffMs}
+     * when it is positive.
+     */
+    record RetrySpec(
+            int maxAttempts,
+            long backoffMs,
+            double backoffMultiplier,
+            long maxBackoffMs
+    ) {
+        public RetrySpec {
+            if (maxAttempts < 1) throw new IllegalArgumentException("maxAttempts must be >= 1");
+            if (backoffMs < 0 || maxBackoffMs < 0 || backoffMultiplier < 1) {
+                throw new IllegalArgumentException("retry values are out of range");
+            }
+        }
+    }
+
+    /**
      * Node representing an operation execution.
      * When {@code expectError} is set, the node passes only if the operation
      * fails with a normalized error (used for steps run under injected faults).
+     * A non-null {@code retrySpec} re-executes the operation on retryable
+     * errors.
      */
     record OperationNode(
             NodeId nodeId,
@@ -56,12 +77,13 @@ public sealed interface PlanNode permits
             Map<String, Object> inputExpressions,
             String outputBinding,
             boolean expectError,
+            RetrySpec retrySpec,
             List<NodeId> dependencies,
             SafetyClassification safety,
             long deadlineMs,
             int maxRetries
     ) implements PlanNode {
-        /** Convenience constructor for nodes that expect success. */
+        /** Convenience constructor for nodes that expect success and never retry. */
         public OperationNode(
                 NodeId nodeId,
                 OperationId operationId,
@@ -74,7 +96,24 @@ public sealed interface PlanNode permits
                 int maxRetries
         ) {
             this(nodeId, operationId, operation, inputExpressions, outputBinding,
-                    false, dependencies, safety, deadlineMs, maxRetries);
+                    false, null, dependencies, safety, deadlineMs, maxRetries);
+        }
+
+        /** Convenience constructor for nodes without retry. */
+        public OperationNode(
+                NodeId nodeId,
+                OperationId operationId,
+                OperationDefinition operation,
+                Map<String, Object> inputExpressions,
+                String outputBinding,
+                boolean expectError,
+                List<NodeId> dependencies,
+                SafetyClassification safety,
+                long deadlineMs,
+                int maxRetries
+        ) {
+            this(nodeId, operationId, operation, inputExpressions, outputBinding,
+                    expectError, null, dependencies, safety, deadlineMs, maxRetries);
         }
     }
 

@@ -95,6 +95,30 @@ class FaultInjectionE2ETest {
     }
 
     @Test
+    void retryScenarioRecoversOnceTheOutageClears() throws IOException {
+        Path scenario = Path.of("src/test/resources/scenarios/fault-retry.yaml");
+        Path openApi = Path.of("src/test/resources/openapi.yaml");
+        Path outputDir = Path.of(System.getProperty("java.io.tmpdir"), "faultora-e2e-fault-retry");
+        Files.createDirectories(outputDir);
+
+        int exit = createCli().run(new String[]{
+                "test",
+                "--scenario", scenario.toAbsolutePath().toString(),
+                "--openapi", openApi.toAbsolutePath().toString(),
+                "--target", api.baseUrl(),
+                "--allow-private",
+                "--format", "console,json",
+                "--output", outputDir.toString()
+        });
+
+        assertThat(exit).isEqualTo(FaultoraCli.EXIT_PASS);
+
+        String events = Files.readString(outputDir.resolve("events.ndjson"));
+        assertThat(events).contains("OPERATION_RETRIED");
+        assertThat(events).contains("FAULT_INJECTED_ERROR");
+    }
+
+    @Test
     void faultScenarioValidatesWithoutContactingTheTarget() {
         Path scenario = Path.of("src/test/resources/scenarios/fault-duplicate-payment.yaml");
 

@@ -1,0 +1,41 @@
+apiVersion: faultora.dev/v1alpha1
+kind: Scenario
+
+metadata:
+  name: payment-retry-through-outage
+  description: >-
+    A brief injected outage rejects requests before they reach the API. The
+    create-payment step retries with exponential backoff and succeeds once the
+    outage clears.
+  labels:
+    team: payments
+    suite: reliability
+
+faults:
+  - id: brief-outage
+    faultType: http-error
+    targetScope: "*"
+    duration: 400ms
+
+execute:
+  - id: create-payment
+    type: operation
+    operationId: create-payment
+    dependsOn: [brief-outage]
+    retry:
+      maxAttempts: 5
+      backoffMs: 200
+      backoffMultiplier: 2
+      maxBackoffMs: 1000
+    inputs:
+      body:
+        amount: 900
+        currency: EUR
+
+assertions:
+  - id: created
+    assertionType: status
+    targetStep: create-payment
+    params:
+      expected: 201
+    message: Payment is created once the outage clears

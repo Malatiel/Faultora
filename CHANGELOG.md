@@ -2,6 +2,18 @@
 
 All notable changes to Faultora are documented in this file.
 
+## Unreleased
+
+### Added
+
+- Retry policies on `setup` and `execute` operation steps: exponential
+  backoff with deterministic seed-derived jitter, capped attempts (max 10),
+  retry only for retryable errors, and `OPERATION_RETRIED` journal events.
+  Console and HTML reports show per-node retry counts, and every attempt
+  counts against the policy request budget.
+- Reference scenario `fault-retry.yaml`: a payment succeeds by retrying
+  through a brief injected outage.
+
 ## 0.2.0 — 2026-07-24
 
 First slice of the reliability engine: in-process fault injection.

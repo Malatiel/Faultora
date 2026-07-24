@@ -286,8 +286,10 @@ public class LocalEngine {
                         }
                         evidence.durationMs(System.currentTimeMillis() - nodeStart);
                     } else {
-                        // Execute operation via connector
-                        OperationResult result = executeOperation(opNode, context, connectorContext);
+                        // Execute operation via connector, retrying retryable
+                        // errors when the node carries a retry spec.
+                        OperationResult result = executeWithRetry(
+                                opNode, plan, journal, context, connectorContext, cancellation);
                         populateEvidence(evidence, result);
                     }
                 }
@@ -481,6 +483,59 @@ public class LocalEngine {
                     -1, durationMs, List.of(), error
             );
         }
+    }
+
+    private OperationResult executeWithRetry(
+            PlanNode.OperationNode node,
+            ExecutionPlan plan,
+            RunJournal journal,
+            ExpressionContext context,
+            ConnectorContext connectorContext,
+            AtomicBoolean cancellation
+    ) throws InterruptedException {
+        PlanNode.RetrySpec retry = node.retrySpec();
+        int maxAttempts = retry == null ? 1 : retry.maxAttempts();
+
+        OperationResult result = executeOperation(node, context, connectorContext);
+        for (int failedAttempt = 1; failedAttempt < maxAttempts; failedAttempt++) {
+            if (result.error() == null || !result.error().retryable() || cancellation.get()) {
+                return result;
+            }
+            long delayMs = retryDelayMs(retry, plan.seed(), node.nodeId(), failedAttempt);
+            emitEvent(journal, new RunEvent.OperationRetried(
+                    "OPERATION_RETRIED", System.currentTimeMillis(), plan.runId(),
+                    node.nodeId(), failedAttempt, maxAttempts, delayMs,
+                    result.error().code()));
+            if (delayMs > 0) {
+                waitFor(delayMs, cancellation);
+            }
+            if (cancellation.get()) {
+                return result;
+            }
+            result = executeOperation(node, context, connectorContext);
+        }
+        return result;
+    }
+
+    /**
+     * Backoff before the next attempt: exponential in the failed-attempt
+     * number, jittered deterministically from the run seed and node ID, and
+     * capped at {@code maxBackoffMs} when set. Identical seeded runs produce
+     * identical delays.
+     */
+    static long retryDelayMs(
+            PlanNode.RetrySpec retry, long seed,
+            NodeId nodeId, int failedAttempt
+    ) {
+        double delay = retry.backoffMs()
+                * Math.pow(retry.backoffMultiplier(), failedAttempt - 1);
+        Random jitterSource = new Random(
+                seed ^ (31L * nodeId.value().hashCode()) ^ failedAttempt);
+        delay *= 0.9 + 0.2 * jitterSource.nextDouble();
+        if (retry.maxBackoffMs() > 0) {
+            delay = Math.min(delay, retry.maxBackoffMs());
+        }
+        return Math.max(0, Math.round(delay));
     }
 
     private OperationResult executeOperation(

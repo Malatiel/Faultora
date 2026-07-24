@@ -31,9 +31,12 @@ public class HtmlRenderer implements ReportRenderer {
         List<NodeRecord> nodes = new ArrayList<>();
         Map<String, NodeRecord> nodeIndex = new HashMap<>();
         Map<String, AssertionRecord> pendingAssertions = new HashMap<>();
+        Map<String, Integer> retryCounts = new HashMap<>();
 
         for (RunEvent event : events) {
             switch (event) {
+                case RunEvent.OperationRetried or ->
+                        retryCounts.merge(or.nodeId().value(), 1, Integer::sum);
                 case RunEvent.RunStarted rs -> started = rs;
                 case RunEvent.RunCompleted rc -> completed = rc;
                 case RunEvent.RunFailed rf -> failed = rf;
@@ -121,6 +124,11 @@ public class HtmlRenderer implements ReportRenderer {
             output.write("<td>" + (node.statusCode >= 0 ? node.statusCode : "—") + "</td>");
             output.write("<td>" + node.durationMs + "ms</td>");
             output.write("<td>");
+            Integer retries = retryCounts.get(node.name);
+            if (retries != null) {
+                output.write("<span class=\"muted\">" + retries + " retr"
+                        + (retries == 1 ? "y" : "ies") + "</span> ");
+            }
             if (node.error != null) {
                 output.write(escapeHtml(node.error.message()));
             }

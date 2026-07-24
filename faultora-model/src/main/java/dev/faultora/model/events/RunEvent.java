@@ -22,6 +22,7 @@ import java.util.Map;
         @JsonSubTypes.Type(value = RunEvent.NodeStarted.class, name = "NODE_STARTED"),
         @JsonSubTypes.Type(value = RunEvent.NodeCompleted.class, name = "NODE_COMPLETED"),
         @JsonSubTypes.Type(value = RunEvent.NodeFailed.class, name = "NODE_FAILED"),
+        @JsonSubTypes.Type(value = RunEvent.OperationRetried.class, name = "OPERATION_RETRIED"),
         @JsonSubTypes.Type(value = RunEvent.FaultInjected.class, name = "FAULT_INJECTED"),
         @JsonSubTypes.Type(value = RunEvent.FaultRolledBack.class, name = "FAULT_ROLLED_BACK"),
         @JsonSubTypes.Type(value = RunEvent.AssertionEvaluated.class, name = "ASSERTION_EVALUATED"),
@@ -118,6 +119,22 @@ public sealed interface RunEvent {
     ) implements RunEvent {
         public NodeFailed {
             eventType = "NODE_FAILED";
+        }
+    }
+
+    /** An operation attempt failed with a retryable error and will be retried. */
+    record OperationRetried(
+            String eventType,
+            long timestamp,
+            RunId runId,
+            NodeId nodeId,
+            int failedAttempt,
+            int maxAttempts,
+            long nextDelayMs,
+            String errorCode
+    ) implements RunEvent {
+        public OperationRetried {
+            eventType = "OPERATION_RETRIED";
         }
     }
 

@@ -31,9 +31,12 @@ public class ConsoleRenderer implements ReportRenderer {
         List<NodeSummary> nodes = new ArrayList<>();
         Map<String, NodeSummary> nodeIndex = new HashMap<>();
         Map<String, AssertionSummary> pendingAssertions = new HashMap<>();
+        Map<String, Integer> retryCounts = new HashMap<>();
 
         for (RunEvent event : events) {
             switch (event) {
+                case RunEvent.OperationRetried or ->
+                        retryCounts.merge(or.nodeId().value(), 1, Integer::sum);
                 case RunEvent.RunStarted rs -> started = rs;
                 case RunEvent.RunCompleted rc -> completed = rc;
                 case RunEvent.RunFailed rf -> failed = rf;
@@ -81,8 +84,11 @@ public class ConsoleRenderer implements ReportRenderer {
         // Node summaries
         output.write("--- Nodes ---\n");
         for (NodeSummary node : nodes) {
-            output.write(String.format("  [%s] %s (%dms)\n",
-                    node.status, node.name, node.durationMs));
+            Integer retries = retryCounts.get(node.name);
+            output.write(String.format("  [%s] %s (%dms)%s\n",
+                    node.status, node.name, node.durationMs,
+                    retries != null ? " — " + retries + " retr"
+                            + (retries == 1 ? "y" : "ies") : ""));
             if (node.error != null) {
                 output.write("         Error: " + node.error.message() + "\n");
             }

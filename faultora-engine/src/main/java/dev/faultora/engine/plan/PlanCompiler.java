@@ -14,6 +14,9 @@ import java.util.*;
  */
 public class PlanCompiler {
 
+    /** Upper bound on retry attempts per step, preventing retry storms. */
+    static final int MAX_RETRY_ATTEMPTS = 10;
+
     /**
      * Compile a scenario against a catalog.
      *
@@ -62,11 +65,17 @@ public class PlanCompiler {
         compileSteps(scenario.cleanup(), "cleanup", operationIndex, targetPolicy, nodes, diagnostics);
 
         if (targetPolicy != null) {
+            // Retrying nodes count once per allowed attempt, so retries cannot
+            // multiply traffic past the policy's request budget.
             long requestCount = nodes.stream()
-                    .filter(node -> (node instanceof PlanNode.OperationNode operation
-                                    && operation.operation() != null)
-                            || node instanceof PlanNode.CleanupNode)
-                    .count();
+                    .mapToLong(node -> switch (node) {
+                        case PlanNode.OperationNode operation when operation.operation() != null ->
+                                operation.retrySpec() == null
+                                        ? 1 : operation.retrySpec().maxAttempts();
+                        case PlanNode.CleanupNode ignored -> 1;
+                        default -> 0;
+                    })
+                    .sum();
             if (requestCount > targetPolicy.maxRequests()) {
                 diagnostics.add(PlanDiagnostic.error(
                         "policy", "",
@@ -152,16 +161,36 @@ public class PlanCompiler {
                 long deadlineMs = parseTimeout(
                         step.timeout(), phase, stepId, "timeout", diagnostics);
 
-                int maxRetries = 0;
+                PlanNode.RetrySpec retrySpec = null;
                 if (step.retry() != null) {
-                    if (step.retry().maxAttempts() > 1) {
-                        diagnostics.add(PlanDiagnostic.error(phase, stepId,
-                                "Retries are not supported in this release"));
-                    } else if (step.retry().maxAttempts() < 1) {
+                    ScenarioStep.RetryPolicy retry = step.retry();
+                    if (retry.maxAttempts() < 1) {
                         diagnostics.add(PlanDiagnostic.error(phase, stepId,
                                 "retry.maxAttempts must be at least 1"));
+                        continue;
+                    }
+                    if (retry.maxAttempts() > MAX_RETRY_ATTEMPTS) {
+                        diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                                "retry.maxAttempts must not exceed " + MAX_RETRY_ATTEMPTS));
+                        continue;
+                    }
+                    if ("cleanup".equals(phase) && retry.maxAttempts() > 1) {
+                        diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                                "Retries are not supported for cleanup steps"));
+                        continue;
+                    }
+                    if (step.expectError() && retry.maxAttempts() > 1) {
+                        diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                                "expectError cannot be combined with retry"));
+                        continue;
+                    }
+                    if (retry.maxAttempts() > 1) {
+                        retrySpec = new PlanNode.RetrySpec(
+                                retry.maxAttempts(), retry.backoffMs(),
+                                retry.backoffMultiplier(), retry.maxBackoffMs());
                     }
                 }
+                int maxRetries = retrySpec == null ? 0 : retrySpec.maxAttempts() - 1;
 
                 // Build input expressions
                 Map<String, Object> inputExpressions = step.inputs() != null ?
@@ -178,7 +207,7 @@ public class PlanCompiler {
                     nodes.add(new PlanNode.OperationNode(
                             nodeId, new OperationId(opId), operation,
                             inputExpressions, step.outputAs(), step.expectError(),
-                            deps, operation.safety(), deadlineMs, maxRetries
+                            retrySpec, deps, operation.safety(), deadlineMs, maxRetries
                     ));
                 }
 

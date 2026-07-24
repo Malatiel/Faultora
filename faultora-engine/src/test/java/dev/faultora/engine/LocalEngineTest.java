@@ -600,6 +600,95 @@ class LocalEngineTest {
         }
     }
 
+    @Test
+    void retryRecoversAfterTransientRetryableFailures() throws Exception {
+        FlakyConnector connector = new FlakyConnector(2, true);
+        ExecutionPlan plan = planWithNodes("run-retry-recover",
+                new PlanNode.OperationNode(
+                        new NodeId("flaky"), new OperationId("create-payment"),
+                        findOp("create-payment"), Map.of(), null, false,
+                        new PlanNode.RetrySpec(4, 5, 2.0, 50),
+                        List.of(), SafetyClassification.MUTATING, 0, 3));
+        LocalEngine engine = new LocalEngine(Map.of("http", connector), Map.of());
+
+        try (RunJournal journal = new RunJournal(tempDir.resolve("retry-ok.ndjson"), true)) {
+            RunResult result = engine.execute(
+                    plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+
+            assertThat(result.status()).isEqualTo(RunResult.Status.PASSED);
+            assertThat(connector.executions.get()).isEqualTo(3);
+            long retryEvents = journal.events().stream()
+                    .filter(e -> e instanceof RunEvent.OperationRetried).count();
+            assertThat(retryEvents).isEqualTo(2);
+        }
+    }
+
+    @Test
+    void retryStopsImmediatelyOnNonRetryableError() throws Exception {
+        FlakyConnector connector = new FlakyConnector(Integer.MAX_VALUE, false);
+        ExecutionPlan plan = planWithNodes("run-retry-nonretryable",
+                new PlanNode.OperationNode(
+                        new NodeId("flaky"), new OperationId("create-payment"),
+                        findOp("create-payment"), Map.of(), null, false,
+                        new PlanNode.RetrySpec(4, 5, 2.0, 50),
+                        List.of(), SafetyClassification.MUTATING, 0, 3));
+        LocalEngine engine = new LocalEngine(Map.of("http", connector), Map.of());
+
+        try (RunJournal journal = new RunJournal(tempDir.resolve("retry-nr.ndjson"), true)) {
+            RunResult result = engine.execute(
+                    plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+
+            assertThat(result.status()).isEqualTo(RunResult.Status.FAILED);
+            assertThat(connector.executions.get()).isEqualTo(1);
+            assertThat(journal.events())
+                    .noneMatch(e -> e instanceof RunEvent.OperationRetried);
+        }
+    }
+
+    @Test
+    void retryExhaustionFailsTheNode() throws Exception {
+        FlakyConnector connector = new FlakyConnector(Integer.MAX_VALUE, true);
+        ExecutionPlan plan = planWithNodes("run-retry-exhausted",
+                new PlanNode.OperationNode(
+                        new NodeId("flaky"), new OperationId("create-payment"),
+                        findOp("create-payment"), Map.of(), null, false,
+                        new PlanNode.RetrySpec(3, 1, 1.0, 5),
+                        List.of(), SafetyClassification.MUTATING, 0, 2));
+        LocalEngine engine = new LocalEngine(Map.of("http", connector), Map.of());
+
+        try (RunJournal journal = new RunJournal(tempDir.resolve("retry-ex.ndjson"), true)) {
+            RunResult result = engine.execute(
+                    plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+
+            assertThat(result.status()).isEqualTo(RunResult.Status.FAILED);
+            assertThat(connector.executions.get()).isEqualTo(3);
+            long retryEvents = journal.events().stream()
+                    .filter(e -> e instanceof RunEvent.OperationRetried).count();
+            assertThat(retryEvents).isEqualTo(2);
+        }
+    }
+
+    @Test
+    void retryDelaysAreDeterministicPerSeed() {
+        PlanNode.RetrySpec retry = new PlanNode.RetrySpec(5, 100, 2.0, 10_000);
+        NodeId nodeId = new NodeId("flaky");
+
+        for (int attempt = 1; attempt <= 4; attempt++) {
+            long first = LocalEngine.retryDelayMs(retry, 42L, nodeId, attempt);
+            long second = LocalEngine.retryDelayMs(retry, 42L, nodeId, attempt);
+            assertThat(second).isEqualTo(first);
+
+            double base = 100 * Math.pow(2.0, attempt - 1);
+            assertThat(first)
+                    .isBetween(Math.round(base * 0.9) - 1, Math.round(base * 1.1) + 1);
+        }
+
+        // The cap applies after jitter.
+        PlanNode.RetrySpec capped = new PlanNode.RetrySpec(5, 100, 2.0, 150);
+        assertThat(LocalEngine.retryDelayMs(capped, 42L, nodeId, 4))
+                .isLessThanOrEqualTo(150);
+    }
+
     // --- Helpers ---
 
     private ExecutionPlan planWithNodes(String runId, PlanNode... nodes) {
@@ -727,6 +816,34 @@ class LocalEngineTest {
 
         @Override
         public void close() {}
+    }
+
+    /**
+     * Connector that fails the first N executions, then succeeds.
+     */
+    static class FlakyConnector extends SuccessConnector {
+        final java.util.concurrent.atomic.AtomicInteger executions =
+                new java.util.concurrent.atomic.AtomicInteger();
+        private final int failures;
+        private final boolean retryable;
+
+        FlakyConnector(int failures, boolean retryable) {
+            this.failures = failures;
+            this.retryable = retryable;
+        }
+
+        @Override
+        public OperationResult execute(PreparedTarget preparedTarget, OperationDefinition operation,
+                                        Map<String, Object> inputs, ConnectorContext context) {
+            if (executions.incrementAndGet() <= failures) {
+                return OperationResult.failure(new NormalizedError(
+                        NormalizedError.ErrorCategory.NETWORK,
+                        retryable ? "CONNECTION_RESET" : "TLS_FAILURE",
+                        "Simulated transient failure",
+                        retryable, Map.of()), 1);
+            }
+            return super.execute(preparedTarget, operation, inputs, context);
+        }
     }
 
     /**

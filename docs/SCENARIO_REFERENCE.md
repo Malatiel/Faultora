@@ -155,7 +155,7 @@ Operation steps may appear in `setup`, `execute`, and `cleanup`.
 | `dependsOn` | no | IDs that must complete successfully first. |
 | `timeout` | no | Positive duration: milliseconds, `ms`, `s`, or `m`. |
 | `outputAs` | no | Reserved; output binding is not active in the 0.2.0 CLI. |
-| `retry` | no | Reserved. Omit it from 0.2.0 release scenarios; attempts greater than one are rejected. |
+| `retry` | no | Retry policy for retryable operation errors. See [Retries](#retries). |
 | `expectError` | no | When `true`, the step passes only if the operation fails with a normalized error, and its dependents still run. Use for requests executed under an injected fault. If the operation succeeds instead, the step fails with `EXPECTED_ERROR`. |
 | `metadata` | no | Arbitrary step metadata. |
 
@@ -193,6 +193,45 @@ Only top-level string input values participate in template resolution.
 Runtime expression data is not populated by the 0.2.0 CLI, so expressions such
 as `{{inputs.currency}}` and `{{steps.create-payment.id}}` should not be used in
 release scenarios yet.
+
+## Retries
+
+Operation steps in `setup` and `execute` may declare a retry policy:
+
+```yaml
+- id: create-payment
+  type: operation
+  operationId: create-payment
+  retry:
+    maxAttempts: 5
+    backoffMs: 200
+    backoffMultiplier: 2
+    maxBackoffMs: 1000
+```
+
+| Field | Required | Description |
+|---|---:|---|
+| `maxAttempts` | yes | Total attempts including the first, 1–10. |
+| `backoffMs` | no | Base delay before the first retry. |
+| `backoffMultiplier` | no | Exponential growth factor, at least 1. |
+| `maxBackoffMs` | no | Upper bound applied to each delay; `0` means unbounded. |
+
+Semantics:
+
+- only errors marked retryable are retried (timeouts, connection failures,
+  injected `FAULT_*` errors); validation and non-retryable protocol errors
+  fail immediately;
+- the delay before retry *n* is `backoffMs * backoffMultiplier^(n-1)`,
+  multiplied by a deterministic jitter factor in `[0.9, 1.1)` derived from the
+  run seed, the step ID, and the attempt number, then capped at
+  `maxBackoffMs`. Identical seeded runs produce identical delays;
+- every attempt counts against the execution policy's request budget, so
+  retries cannot multiply traffic past `maxRequests`;
+- each retry is recorded as an `OPERATION_RETRIED` journal event, and console
+  and HTML reports show the retry count per node;
+- `retry` cannot be combined with `expectError`, and cleanup steps cannot
+  retry;
+- assertion evidence always comes from the final attempt.
 
 ## Wait steps
 
@@ -438,8 +477,7 @@ params:
 
 Faultora fails validation or plan compilation instead of silently ignoring:
 
-- network-level fault injection (the built-in provider is in-process only);
-- retry policies with more than one attempt;
+- retry policies on cleanup steps;
 - parallel and repeat blocks;
 - runtime scenario input binding;
 - step-output binding and cross-step expressions;

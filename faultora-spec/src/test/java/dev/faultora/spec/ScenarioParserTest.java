@@ -188,6 +188,26 @@ class ScenarioParserTest {
     }
 
     @Test
+    void validatorRejectsExpectErrorCombinedWithRetry() {
+        ScenarioDocument document = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("retry", "retry", Map.of(), Map.of()),
+                Map.of(),
+                List.of(),
+                List.of(new ScenarioStep(
+                        "call", "operation", "operation",
+                        Map.of(), null, List.of(), null,
+                        new ScenarioStep.RetryPolicy(3, 10, 2, 100),
+                        true, Map.of())),
+                List.of(), List.of(), List.of());
+
+        ParseResult<ScenarioDocument> result = validator.validate(document);
+
+        assertThat(result.errors()).extracting(Diagnostic::message)
+                .anyMatch(message -> message.contains("expectError cannot be combined with retry"));
+    }
+
+    @Test
     void parserReadsFaultStepsAndExpectError() {
         String yaml = """
                 apiVersion: faultora.dev/v1alpha1

@@ -408,18 +408,82 @@ class PlanCompilerTest {
     }
 
     @Test
-    void compileRejectsRetryPolicyThatRuntimeCannotHonor() {
+    void compileCarriesRetryPolicyIntoOperationNode() {
         ScenarioDocument scenario = scenarioWithExecuteStep(new ScenarioStep(
                 "retry", "operation", "create-payment",
                 Map.of(), null, List.of(), null,
-                new ScenarioStep.RetryPolicy(2, 10, 2, 100),
+                new ScenarioStep.RetryPolicy(3, 10, 2, 100),
+                Map.of()));
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isTrue();
+        PlanNode.OperationNode node = (PlanNode.OperationNode)
+                result.plan().node(new NodeId("retry")).orElseThrow();
+        assertThat(node.retrySpec()).isNotNull();
+        assertThat(node.retrySpec().maxAttempts()).isEqualTo(3);
+        assertThat(node.retrySpec().backoffMs()).isEqualTo(10);
+        assertThat(node.maxRetries()).isEqualTo(2);
+    }
+
+    @Test
+    void compileRejectsExcessiveRetryAttempts() {
+        ScenarioDocument scenario = scenarioWithExecuteStep(new ScenarioStep(
+                "retry", "operation", "create-payment",
+                Map.of(), null, List.of(), null,
+                new ScenarioStep.RetryPolicy(11, 10, 2, 100),
                 Map.of()));
 
         PlanCompilationResult result = compile(scenario, policy);
 
         assertThat(result.isSuccess()).isFalse();
         assertThat(result.errors()).extracting(PlanDiagnostic::message)
-                .contains("Retries are not supported in this release");
+                .contains("retry.maxAttempts must not exceed 10");
+    }
+
+    @Test
+    void compileRejectsRetryOnCleanupSteps() {
+        ScenarioDocument scenario = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("cleanup-retry", "cleanup-retry", Map.of(), Map.of()),
+                Map.of(),
+                List.of(),
+                List.of(new ScenarioStep("execute", "operation", "create-payment",
+                        Map.of(), null, List.of(), null, null, Map.of())),
+                List.of(), List.of(),
+                List.of(new ScenarioStep("tidy", "operation", "get-payment",
+                        Map.of(), null, List.of(), null,
+                        new ScenarioStep.RetryPolicy(3, 10, 2, 100), Map.of())));
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.errors()).extracting(PlanDiagnostic::message)
+                .contains("Retries are not supported for cleanup steps");
+    }
+
+    @Test
+    void compileCountsRetryAttemptsAgainstRequestBudget() {
+        TargetPolicy twoRequests = new TargetPolicy(
+                policy.allowedTargets(),
+                policy.allowedOperationClasses(),
+                2,
+                policy.maxConcurrency(),
+                policy.maxDurationMs(),
+                policy.maxPayloadBytes(),
+                policy.allowedFaultTypes(),
+                policy.allowedEnvironments());
+        ScenarioDocument scenario = scenarioWithExecuteStep(new ScenarioStep(
+                "retry", "operation", "create-payment",
+                Map.of(), null, List.of(), null,
+                new ScenarioStep.RetryPolicy(3, 10, 2, 100),
+                Map.of()));
+
+        PlanCompilationResult result = compile(scenario, twoRequests);
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.errors()).extracting(PlanDiagnostic::message)
+                .anyMatch(message -> message.contains("policy allows 2"));
     }
 
     @Test

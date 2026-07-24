@@ -173,6 +173,11 @@ public class ScenarioValidator {
                     diagnostics.add(Diagnostic.error(path + ".retry",
                             "Retry values are out of range"));
                 }
+                if (step.expectError() && retry.maxAttempts() > 1) {
+                    diagnostics.add(Diagnostic.error(path + ".retry",
+                            "expectError cannot be combined with retry: "
+                                    + "a step that must fail has nothing to retry toward"));
+                }
             }
         }
     }
