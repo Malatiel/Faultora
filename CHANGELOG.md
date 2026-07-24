@@ -13,6 +13,13 @@ All notable changes to Faultora are documented in this file.
   counts against the policy request budget.
 - Reference scenario `fault-retry.yaml`: a payment succeeds by retrying
   through a brief injected outage.
+- Toxiproxy network fault provider (`faultora-faults-toxiproxy`):
+  `network-latency`, `network-timeout`, `network-reset`, and
+  `network-bandwidth` fault types over the same `FaultProvider` SPI, driven
+  through the Toxiproxy admin API with no extra client dependency. Enabled by
+  the new `faultora test --toxiproxy-url` option; `targetScope` names the
+  proxy to poison, toxics carry unique `faultora-` names, and rollback is
+  idempotent.
 
 ## 0.2.0 — 2026-07-24
 

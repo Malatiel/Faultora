@@ -10,6 +10,8 @@ import dev.faultora.engine.LocalEngine;
 import dev.faultora.engine.journal.RunJournal;
 import dev.faultora.faults.local.FaultInjectingConnector;
 import dev.faultora.faults.local.LocalFaultProvider;
+import dev.faultora.faults.toxiproxy.ToxiproxyFaultProvider;
+import dev.faultora.spi.contract.FaultProvider;
 import dev.faultora.engine.plan.PlanCompilationResult;
 import dev.faultora.engine.plan.PlanCompiler;
 import dev.faultora.engine.plan.PlanDiagnostic;
@@ -67,6 +69,7 @@ public class TestCommand implements Command {
         long seed = System.currentTimeMillis();
         boolean allowPrivate = false;
         String authSecretId = null;
+        String toxiproxyUrl = null;
 
         Iterator<String> it = args.iterator();
         while (it.hasNext()) {
@@ -80,6 +83,7 @@ public class TestCommand implements Command {
                 case "--seed" -> seed = parseSeed(requireNext(it, "--seed"));
                 case "--allow-private" -> allowPrivate = true;
                 case "--auth-secret-id" -> authSecretId = requireNext(it, "--auth-secret-id");
+                case "--toxiproxy-url" -> toxiproxyUrl = requireNext(it, "--toxiproxy-url");
                 case "--help", "-h" -> {
                     printHelp();
                     return FaultoraCli.EXIT_PASS;
@@ -132,12 +136,23 @@ public class TestCommand implements Command {
 
             // Local faults act only on Faultora's own outbound requests, so the
             // default policy allows every capability of the in-process provider.
+            // Network fault types are allowed only when the operator supplies a
+            // Toxiproxy admin endpoint.
             LocalFaultProvider faultProvider = new LocalFaultProvider();
+            Map<String, FaultProvider> faultProviders = new LinkedHashMap<>();
+            faultProviders.put("local", faultProvider);
+            Set<String> allowedFaultTypes = new LinkedHashSet<>(faultProvider.capabilities());
+            if (toxiproxyUrl != null) {
+                ToxiproxyFaultProvider toxiproxy =
+                        new ToxiproxyFaultProvider(java.net.URI.create(toxiproxyUrl));
+                faultProviders.put("toxiproxy", toxiproxy);
+                allowedFaultTypes.addAll(toxiproxy.capabilities());
+            }
             TargetPolicy targetPolicy = new TargetPolicy(
                     Set.of(),
                     Set.of(SafetyClassification.READ_ONLY, SafetyClassification.MUTATING),
                     1000, 10, 300_000, 1_048_576,
-                    faultProvider.capabilities(), Set.of());
+                    allowedFaultTypes, Set.of());
 
             ExpressionContext exprContext = ExpressionContext.builder().build();
 
@@ -195,7 +210,7 @@ public class TestCommand implements Command {
                         new FaultInjectingConnector(httpConnector, faultProvider);
                 LocalEngine engine = new LocalEngine(
                         Map.of("http", faultAwareConnector), assertionProviders,
-                        Map.of("local", faultProvider));
+                        faultProviders);
                 try (RunJournal journal = new RunJournal(journalPath, true)) {
                     System.out.println("Running scenario: " + scenario.metadata().name());
                     System.out.println("Target: " + targetUrl);
@@ -373,6 +388,7 @@ public class TestCommand implements Command {
         System.out.println("  --seed <n>                 Random seed (default: current time)");
         System.out.println("  --allow-private            Allow connections to private/local networks");
         System.out.println("  --auth-secret-id <id>      Secret handle ID for Authorization header (resolved from env)");
+        System.out.println("  --toxiproxy-url <url>      Toxiproxy admin endpoint; enables network-* fault types");
         System.out.println("  -h, --help                 Show this help");
         System.out.println();
         System.out.println("Exit codes:");

@@ -119,6 +119,42 @@ class FaultInjectionE2ETest {
     }
 
     @Test
+    void networkFaultsAreRejectedWithoutAToxiproxyEndpoint() throws IOException {
+        Path scenario = Files.createTempFile("faultora-network-fault", ".yaml");
+        Files.writeString(scenario, """
+                apiVersion: faultora.dev/v1alpha1
+                kind: Scenario
+                metadata:
+                  name: network-fault-without-toxiproxy
+                faults:
+                  - id: slow-network
+                    faultType: network-latency
+                    targetScope: payments
+                    duration: 1s
+                    params:
+                      latencyMs: 200
+                execute:
+                  - id: create-payment
+                    type: operation
+                    operationId: create-payment
+                    dependsOn: [slow-network]
+                """);
+
+        int exit = createCli().run(new String[]{
+                "test",
+                "--scenario", scenario.toAbsolutePath().toString(),
+                "--openapi", Path.of("src/test/resources/openapi.yaml")
+                        .toAbsolutePath().toString(),
+                "--target", api.baseUrl(),
+                "--allow-private"
+        });
+
+        // Without --toxiproxy-url the policy does not allow network-* faults,
+        // so the plan must fail compilation before any request is sent.
+        assertThat(exit).isEqualTo(FaultoraCli.EXIT_INVALID_CONFIG);
+    }
+
+    @Test
     void faultScenarioValidatesWithoutContactingTheTarget() {
         Path scenario = Path.of("src/test/resources/scenarios/fault-duplicate-payment.yaml");
 

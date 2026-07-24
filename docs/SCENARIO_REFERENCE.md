@@ -272,13 +272,32 @@ faults:
 | `params` | no | Fault-specific parameters. |
 | `dependsOn` | no | IDs that must complete before the fault activates. |
 
-Fault types:
+In-process fault types (always available):
 
 | Type | Effect | Parameters |
 |---|---|---|
 | `http-latency` | Delays each matching request before it is sent; the delay is included in the observed duration. | `delayMs` (required, 1–60000) |
 | `http-error` | Fails each matching request before it reaches the target (`FAULT_INJECTED_ERROR`, retryable). | none |
 | `http-response-loss` | Delivers the request to the target, then discards the response and reports a timeout-category error (`FAULT_RESPONSE_LOSS`). The metadata records the discarded status code. | none |
+
+Network fault types (require `faultora test --toxiproxy-url <admin-url>` and a
+running [Toxiproxy](https://github.com/Shopify/toxiproxy) whose proxies sit on
+the network path being tested; `targetScope` must name an existing Toxiproxy
+proxy, never `*`):
+
+| Type | Toxiproxy toxic | Parameters |
+|---|---|---|
+| `network-latency` | `latency` | `latencyMs` (required), `jitterMs`, `direction` |
+| `network-timeout` | `timeout` | `timeoutMs` (required), `direction` |
+| `network-reset` | `reset_peer` | `timeoutMs`, `direction` |
+| `network-bandwidth` | `bandwidth` | `rateKbps` (required), `direction` |
+
+`direction` is `downstream` (default) or `upstream`. Toxics are created with
+unique `faultora-` names. The rollback guarantee holds while the CLI process
+lives (watchdog plus end-of-run sweep); if the JVM itself is killed, remove
+leftover `faultora-*` toxics with `toxiproxy-cli`. Point `--target` at the
+proxy's listen address — a network fault on a proxy the traffic never crosses
+has no observable effect.
 
 Semantics:
 

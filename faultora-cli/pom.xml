@@ -45,6 +45,10 @@
         </dependency>
         <dependency>
             <groupId>dev.faultora</groupId>
+            <artifactId>faultora-faults-toxiproxy</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.faultora</groupId>
             <artifactId>faultora-assertions-core</artifactId>
         </dependency>
         <dependency>

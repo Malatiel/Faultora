@@ -11,3 +11,4 @@
 | [ADR-007](ADR-007-secret-lifecycle.md) | Secret value lifecycle | Accepted |
 | [ADR-008](ADR-008-target-evidence-policy.md) | Target and evidence policy model | Accepted |
 | [ADR-009](ADR-009-in-process-fault-provider.md) | In-process fault provider for the first fault-injection slice | Accepted |
+| [ADR-010](ADR-010-toxiproxy-admin-client.md) | Toxiproxy network faults through a minimal admin client | Accepted |

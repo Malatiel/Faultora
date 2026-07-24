@@ -66,6 +66,7 @@
         <module>faultora-import-openapi</module>
         <module>faultora-connector-http</module>
         <module>faultora-faults-local</module>
+        <module>faultora-faults-toxiproxy</module>
         <module>faultora-assertions-core</module>
         <module>faultora-reporting</module>
         <module>faultora-cli</module>
@@ -110,6 +111,11 @@
             <dependency>
                 <groupId>dev.faultora</groupId>
                 <artifactId>faultora-faults-local</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.faultora</groupId>
+                <artifactId>faultora-faults-toxiproxy</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
