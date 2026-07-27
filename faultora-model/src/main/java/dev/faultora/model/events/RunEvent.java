@@ -23,6 +23,7 @@ import java.util.Map;
         @JsonSubTypes.Type(value = RunEvent.NodeCompleted.class, name = "NODE_COMPLETED"),
         @JsonSubTypes.Type(value = RunEvent.NodeFailed.class, name = "NODE_FAILED"),
         @JsonSubTypes.Type(value = RunEvent.OperationRetried.class, name = "OPERATION_RETRIED"),
+        @JsonSubTypes.Type(value = RunEvent.ConditionPolled.class, name = "CONDITION_POLLED"),
         @JsonSubTypes.Type(value = RunEvent.FaultInjected.class, name = "FAULT_INJECTED"),
         @JsonSubTypes.Type(value = RunEvent.FaultRolledBack.class, name = "FAULT_ROLLED_BACK"),
         @JsonSubTypes.Type(value = RunEvent.AssertionEvaluated.class, name = "ASSERTION_EVALUATED"),
@@ -135,6 +136,26 @@ public sealed interface RunEvent {
     ) implements RunEvent {
         public OperationRetried {
             eventType = "OPERATION_RETRIED";
+        }
+    }
+
+    /**
+     * One poll of an eventually group was evaluated. {@code satisfied} reports
+     * whether every condition held in this poll.
+     */
+    record ConditionPolled(
+            String eventType,
+            long timestamp,
+            RunId runId,
+            NodeId nodeId,
+            int attempt,
+            int maxPolls,
+            long elapsedMs,
+            boolean satisfied,
+            String detail
+    ) implements RunEvent {
+        public ConditionPolled {
+            eventType = "CONDITION_POLLED";
         }
     }
 

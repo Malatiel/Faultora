@@ -18,6 +18,8 @@ import java.util.Map;
  * @param faults      fault injection steps
  * @param assertions  assertion steps
  * @param cleanup     cleanup steps
+ * @param timeout     scenario deadline; once it elapses no further setup,
+ *                    execute, fault, or assertion node starts and cleanup runs
  */
 public record ScenarioDocument(
         String apiVersion,
@@ -28,8 +30,25 @@ public record ScenarioDocument(
         List<ScenarioStep> execute,
         List<FaultStep> faults,
         List<AssertionStep> assertions,
-        List<ScenarioStep> cleanup
+        List<ScenarioStep> cleanup,
+        String timeout
 ) {
     public static final String SUPPORTED_API_VERSION = "faultora.dev/v1alpha1";
     public static final String EXPECTED_KIND = "Scenario";
+
+    /** Convenience constructor for documents without a scenario deadline. */
+    public ScenarioDocument(
+            String apiVersion,
+            String kind,
+            ScenarioMetadata metadata,
+            Map<String, InputDeclaration> inputs,
+            List<ScenarioStep> setup,
+            List<ScenarioStep> execute,
+            List<FaultStep> faults,
+            List<AssertionStep> assertions,
+            List<ScenarioStep> cleanup
+    ) {
+        this(apiVersion, kind, metadata, inputs, setup, execute, faults,
+                assertions, cleanup, null);
+    }
 }

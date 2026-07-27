@@ -44,6 +44,9 @@ public class LocalEngine {
     private static final Logger LOG = LoggerFactory.getLogger(LocalEngine.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    /** Separator between a repeat child's step ID and its iteration index. */
+    static final String ITERATION_SEPARATOR = ":";
+
     private final Map<String, Connector> connectors;
     private final Map<String, AssertionProvider> assertionProviders;
     private final Map<String, FaultProvider> faultProviders;
@@ -111,9 +114,14 @@ public class LocalEngine {
                         "FAULT_ROLLED_BACK", System.currentTimeMillis(), runId,
                         fault.handle(), rollbackStatus)));
 
-        List<PlanNode> cleanupNodes = new ArrayList<>();
+        // Cleanup obligations are collected before execution starts: a
+        // deadline or cancellation must never drop them.
+        List<PlanNode> cleanupNodes = nodes.stream()
+                .filter(node -> node instanceof PlanNode.CleanupNode)
+                .toList();
         // Step outputs accumulate into the expression context as nodes finish.
         ExpressionContext currentContext = context;
+        boolean scenarioDeadlineExceeded = false;
         try {
             // Phase 1: Execute all non-cleanup nodes
             for (PlanNode node : nodes) {
@@ -122,8 +130,15 @@ public class LocalEngine {
                 }
 
                 if (node instanceof PlanNode.CleanupNode) {
-                    cleanupNodes.add(node);
                     continue;
+                }
+
+                // The scenario deadline bounds the whole run: no further node
+                // starts once it elapses, and cleanup still runs below.
+                if (plan.scenarioTimeoutMs() > 0
+                        && System.currentTimeMillis() - startTime >= plan.scenarioTimeoutMs()) {
+                    scenarioDeadlineExceeded = true;
+                    break;
                 }
 
                 // Check if dependencies completed successfully
@@ -146,6 +161,33 @@ public class LocalEngine {
                             currentContext = bindStepOutput(
                                     child, childResult, nodeEvidenceMap, currentContext);
                         }
+                    }
+                } else if (node instanceof PlanNode.RepeatNode repeatNode) {
+                    Map<NodeId, RunResult.NodeResult> childResults = new LinkedHashMap<>();
+                    result = executeRepeatGroup(
+                            repeatNode, plan, journal, currentContext, connectorContext,
+                            nodeEvidenceMap, childResults, faultSession, cancellation);
+                    nodeResults.putAll(childResults);
+                    // The last completed iteration is what later steps observe.
+                    for (PlanNode.OperationNode child : repeatNode.children()) {
+                        RunResult.NodeResult childResult = childResults.get(child.nodeId());
+                        if (childResult != null) {
+                            currentContext = bindStepOutput(
+                                    child, childResult, nodeEvidenceMap, currentContext);
+                        }
+                    }
+                } else if (node instanceof PlanNode.EventuallyNode eventuallyNode) {
+                    Map<NodeId, RunResult.NodeResult> childResults = new LinkedHashMap<>();
+                    result = executeEventually(
+                            eventuallyNode, plan, journal, currentContext, connectorContext,
+                            nodeEvidenceMap, childResults, cancellation);
+                    nodeResults.putAll(childResults);
+                    RunResult.NodeResult childResult =
+                            childResults.get(eventuallyNode.child().nodeId());
+                    if (childResult != null) {
+                        currentContext = bindStepOutput(
+                                eventuallyNode.child(), childResult,
+                                nodeEvidenceMap, currentContext);
                     }
                 } else {
                     result = executeNode(
@@ -215,7 +257,8 @@ public class LocalEngine {
         RunResult.Status status;
         if (cancellation.get()) {
             status = RunResult.Status.CANCELLED;
-        } else if (hasFailure.get() || failedAssertions.get() > 0 || cleanupFailedCount.get() > 0) {
+        } else if (hasFailure.get() || failedAssertions.get() > 0
+                || cleanupFailedCount.get() > 0 || scenarioDeadlineExceeded) {
             status = RunResult.Status.FAILED;
         } else {
             status = RunResult.Status.PASSED;
@@ -232,14 +275,21 @@ public class LocalEngine {
                     failedAssertions.get(), totalDuration
             ));
         } else {
+            String failureDetail = "Run " + status.name().toLowerCase(Locale.ROOT)
+                    + ": " + failedNodes + " failed nodes, "
+                    + failedAssertions.get() + " failed assertions";
+            if (scenarioDeadlineExceeded) {
+                failureDetail += "; scenario deadline of " + plan.scenarioTimeoutMs()
+                        + "ms elapsed before every node ran";
+            }
             runError = new NormalizedError(
                     status == RunResult.Status.CANCELLED
                             ? NormalizedError.ErrorCategory.CANCELLED
                             : NormalizedError.ErrorCategory.INTERNAL,
-                    status == RunResult.Status.CANCELLED ? "RUN_CANCELLED" : "RUN_FAILED",
-                    "Run " + status.name().toLowerCase(Locale.ROOT)
-                            + ": " + failedNodes + " failed nodes, "
-                            + failedAssertions.get() + " failed assertions",
+                    status == RunResult.Status.CANCELLED ? "RUN_CANCELLED"
+                            : (scenarioDeadlineExceeded
+                                    ? "SCENARIO_DEADLINE_EXCEEDED" : "RUN_FAILED"),
+                    failureDetail,
                     false,
                     Map.of("passedAssertions", passedAssertions.get(),
                             "failedAssertions", failedAssertions.get(),
@@ -297,6 +347,11 @@ public class LocalEngine {
             return thread;
         });
 
+        // A group timeout bounds the whole group: children still running when
+        // it elapses are cancelled and reported as deadline failures.
+        long groupDeadlineAtMs = group.deadlineMs() > 0
+                ? groupStart + group.deadlineMs() : 0;
+
         ConcurrentMap<NodeId, NodeEvidence> childEvidence = new ConcurrentHashMap<>();
         List<Future<RunResult.NodeResult>> futures = new ArrayList<>();
         try {
@@ -308,7 +363,15 @@ public class LocalEngine {
             for (int i = 0; i < futures.size(); i++) {
                 PlanNode.OperationNode child = group.children().get(i);
                 try {
-                    childResultsOut.put(child.nodeId(), futures.get(i).get());
+                    Future<RunResult.NodeResult> future = futures.get(i);
+                    childResultsOut.put(child.nodeId(), groupDeadlineAtMs > 0
+                            ? future.get(
+                                    Math.max(0, groupDeadlineAtMs - System.currentTimeMillis()),
+                                    TimeUnit.MILLISECONDS)
+                            : future.get());
+                } catch (TimeoutException e) {
+                    futures.forEach(pending -> pending.cancel(true));
+                    break;
                 } catch (ExecutionException e) {
                     NormalizedError error = new NormalizedError(
                             NormalizedError.ErrorCategory.INTERNAL,
@@ -329,6 +392,27 @@ public class LocalEngine {
             pool.shutdownNow();
         }
         evidenceMap.putAll(childEvidence);
+
+        // Children without a result never finished: the group deadline elapsed
+        // or the run was cancelled while they were in flight.
+        for (PlanNode.OperationNode child : group.children()) {
+            if (childResultsOut.containsKey(child.nodeId())) {
+                continue;
+            }
+            long durationSoFar = System.currentTimeMillis() - groupStart;
+            NormalizedError error = new NormalizedError(
+                    NormalizedError.ErrorCategory.TIMEOUT,
+                    "DEADLINE_EXCEEDED",
+                    "Parallel child did not finish within the group timeout of "
+                            + group.deadlineMs() + "ms",
+                    false, Map.of());
+            emitEvent(journal, new RunEvent.NodeFailed(
+                    "NODE_FAILED", System.currentTimeMillis(),
+                    plan.runId(), child.nodeId(), error, durationSoFar));
+            childResultsOut.put(child.nodeId(), new RunResult.NodeResult(
+                    child.nodeId(), "operation", RunResult.Status.FAILED,
+                    -1, durationSoFar, List.of(), error));
+        }
 
         long durationMs = System.currentTimeMillis() - groupStart;
         long failedChildren = group.children().stream()
@@ -358,6 +442,297 @@ public class LocalEngine {
         return new RunResult.NodeResult(
                 group.nodeId(), "parallel", RunResult.Status.FAILED,
                 -1, durationMs, List.of(), groupError);
+    }
+
+    /**
+     * Execute a repeat group: the children run in declaration order once per
+     * iteration, each iteration exposing {@code repeat.index} and — for
+     * data-driven repeats — {@code repeat.item}. Iteration results are recorded
+     * under {@code <child>:<index>} and the last completed iteration is also
+     * bound under the plain child ID, so assertions and later steps can target
+     * it. The group stops at the first failing iteration.
+     */
+    private RunResult.NodeResult executeRepeatGroup(
+            PlanNode.RepeatNode group,
+            ExecutionPlan plan,
+            RunJournal journal,
+            ExpressionContext context,
+            ConnectorContext connectorContext,
+            Map<NodeId, NodeEvidence> evidenceMap,
+            Map<NodeId, RunResult.NodeResult> childResultsOut,
+            FaultSession faultSession,
+            AtomicBoolean cancellation
+    ) {
+        long groupStart = System.currentTimeMillis();
+        emitEvent(journal, new RunEvent.NodeStarted(
+                "NODE_STARTED", System.currentTimeMillis(),
+                plan.runId(), group.nodeId(), "repeat", null));
+
+        long groupDeadlineAtMs = group.deadlineMs() > 0
+                ? groupStart + group.deadlineMs() : 0;
+        NormalizedError failure = null;
+        int completedIterations = 0;
+
+        iterations:
+        for (int index = 0; index < group.iterations(); index++) {
+            if (cancellation.get()) {
+                failure = new NormalizedError(
+                        NormalizedError.ErrorCategory.CANCELLED, "CANCELLED",
+                        "Repeat group cancelled after " + completedIterations + " iterations",
+                        false, Map.of());
+                break;
+            }
+            if (groupDeadlineAtMs > 0 && System.currentTimeMillis() >= groupDeadlineAtMs) {
+                failure = new NormalizedError(
+                        NormalizedError.ErrorCategory.TIMEOUT, "DEADLINE_EXCEEDED",
+                        "Repeat group timeout of " + group.deadlineMs() + "ms elapsed after "
+                                + completedIterations + " of " + group.iterations()
+                                + " iterations",
+                        false, Map.of("completedIterations", completedIterations));
+                break;
+            }
+
+            // Each iteration starts from the group's context: iterations are
+            // independent, and only the last one is visible to later steps.
+            var repeatBinding = MAPPER.createObjectNode();
+            repeatBinding.put("index", index);
+            if (group.items() != null) {
+                repeatBinding.set("item", MAPPER.valueToTree(group.items().get(index)));
+            }
+            ExpressionContext iterationContext = context.withBinding("repeat", repeatBinding);
+
+            for (PlanNode.OperationNode child : group.children()) {
+                PlanNode.OperationNode iterationChild = withNodeId(
+                        child, new NodeId(child.nodeId().value() + ITERATION_SEPARATOR + index));
+                RunResult.NodeResult childResult = executeNode(
+                        iterationChild, plan, journal, iterationContext, connectorContext,
+                        evidenceMap, faultSession, cancellation);
+                childResultsOut.put(iterationChild.nodeId(), childResult);
+                iterationContext = bindStepOutput(
+                        iterationChild, childResult, evidenceMap, iterationContext);
+
+                // The plain child ID always points at the most recent iteration.
+                NodeEvidence iterationEvidence = evidenceMap.get(iterationChild.nodeId());
+                if (iterationEvidence != null) {
+                    evidenceMap.put(child.nodeId(), iterationEvidence);
+                }
+                childResultsOut.put(child.nodeId(), new RunResult.NodeResult(
+                        child.nodeId(), childResult.nodeType(), childResult.status(),
+                        childResult.statusCode(), childResult.durationMs(),
+                        childResult.assertions(), childResult.error()));
+
+                if (childResult.status() != RunResult.Status.PASSED) {
+                    failure = new NormalizedError(
+                            NormalizedError.ErrorCategory.INTERNAL,
+                            "REPEAT_ITERATION_FAILED",
+                            "Iteration " + index + " failed at step "
+                                    + child.nodeId().value(),
+                            false, Map.of("iteration", index,
+                                    "step", child.nodeId().value()));
+                    break iterations;
+                }
+            }
+            completedIterations++;
+        }
+
+        long durationMs = System.currentTimeMillis() - groupStart;
+        if (failure == null) {
+            emitEvent(journal, new RunEvent.NodeCompleted(
+                    "NODE_COMPLETED", System.currentTimeMillis(),
+                    plan.runId(), group.nodeId(), durationMs, -1, 0));
+            return new RunResult.NodeResult(
+                    group.nodeId(), "repeat", RunResult.Status.PASSED,
+                    -1, durationMs, List.of(), null);
+        }
+        emitEvent(journal, new RunEvent.NodeFailed(
+                "NODE_FAILED", System.currentTimeMillis(),
+                plan.runId(), group.nodeId(), failure, durationMs));
+        return new RunResult.NodeResult(
+                group.nodeId(), "repeat", RunResult.Status.FAILED,
+                -1, durationMs, List.of(), failure);
+    }
+
+    /**
+     * Execute an eventually group: poll the child operation until every
+     * condition holds in the same poll, the timeout budget is spent, or the
+     * poll cap is reached. A failed request is an unsatisfied poll, not a
+     * failure — that is what makes the block converge on eventual consistency.
+     */
+    private RunResult.NodeResult executeEventually(
+            PlanNode.EventuallyNode group,
+            ExecutionPlan plan,
+            RunJournal journal,
+            ExpressionContext context,
+            ConnectorContext connectorContext,
+            Map<NodeId, NodeEvidence> evidenceMap,
+            Map<NodeId, RunResult.NodeResult> childResultsOut,
+            AtomicBoolean cancellation
+    ) {
+        long groupStart = System.currentTimeMillis();
+        NodeId groupId = group.nodeId();
+        PlanNode.OperationNode child = group.child();
+
+        emitEvent(journal, new RunEvent.NodeStarted(
+                "NODE_STARTED", System.currentTimeMillis(),
+                plan.runId(), groupId, "eventually", null));
+
+        for (PlanNode.Condition condition : group.conditions()) {
+            if (!assertionProviders.containsKey(condition.assertionType())) {
+                NormalizedError error = new NormalizedError(
+                        NormalizedError.ErrorCategory.VALIDATION, "VALIDATION",
+                        "Unknown assertion type in until condition: "
+                                + condition.assertionType(),
+                        false, Map.of());
+                emitEvent(journal, new RunEvent.NodeFailed(
+                        "NODE_FAILED", System.currentTimeMillis(),
+                        plan.runId(), groupId, error,
+                        System.currentTimeMillis() - groupStart));
+                return new RunResult.NodeResult(
+                        groupId, "eventually", RunResult.Status.FAILED,
+                        -1, System.currentTimeMillis() - groupStart, List.of(), error);
+            }
+        }
+
+        emitEvent(journal, new RunEvent.NodeStarted(
+                "NODE_STARTED", System.currentTimeMillis(),
+                plan.runId(), child.nodeId(), "operation", child.operationId()));
+
+        List<AssertionResult> conditionResults = List.of();
+        NodeEvidence evidence = null;
+        boolean satisfied = false;
+        int attempt = 0;
+
+        while (attempt < group.maxPolls()) {
+            if (cancellation.get()) {
+                break;
+            }
+            attempt++;
+
+            evidence = new NodeEvidence(connectorContext.evidencePolicy());
+            OperationResult result = executeOperation(child, context, connectorContext);
+            populateEvidence(evidence, result);
+
+            conditionResults = evaluateConditions(group, evidence);
+            satisfied = !evidence.hasError() && conditionResults.stream()
+                    .allMatch(condition -> condition.outcome() == AssertionResult.Outcome.PASS);
+
+            long elapsedMs = System.currentTimeMillis() - groupStart;
+            emitEvent(journal, new RunEvent.ConditionPolled(
+                    "CONDITION_POLLED", System.currentTimeMillis(), plan.runId(),
+                    groupId, attempt, group.maxPolls(), elapsedMs, satisfied,
+                    pollDetail(evidence, conditionResults)));
+
+            if (satisfied) {
+                break;
+            }
+            long remainingMs = group.timeoutMs() - elapsedMs;
+            if (remainingMs <= 0 || attempt >= group.maxPolls()) {
+                break;
+            }
+            try {
+                waitFor(Math.min(group.intervalMs(), remainingMs), cancellation);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                cancellation.set(true);
+                break;
+            }
+        }
+
+        long durationMs = System.currentTimeMillis() - groupStart;
+        int statusCode = evidence == null ? -1 : evidence.statusCode().orElse(-1);
+        if (evidence != null) {
+            evidenceMap.put(child.nodeId(), evidence);
+        }
+
+        // Condition results share the order of the declared conditions, so the
+        // journal records which condition produced which outcome.
+        for (int i = 0; i < conditionResults.size(); i++) {
+            AssertionResult condition = conditionResults.get(i);
+            emitEvent(journal, new RunEvent.AssertionEvaluated(
+                    "ASSERTION_EVALUATED", System.currentTimeMillis(),
+                    plan.runId(), groupId, group.conditions().get(i).assertionType(),
+                    condition.outcome().name(), condition.message()));
+        }
+
+        if (satisfied) {
+            emitEvent(journal, new RunEvent.NodeCompleted(
+                    "NODE_COMPLETED", System.currentTimeMillis(),
+                    plan.runId(), child.nodeId(), durationMs, statusCode, 0));
+            childResultsOut.put(child.nodeId(), new RunResult.NodeResult(
+                    child.nodeId(), "operation", RunResult.Status.PASSED,
+                    statusCode, durationMs, List.of(), null));
+            emitEvent(journal, new RunEvent.NodeCompleted(
+                    "NODE_COMPLETED", System.currentTimeMillis(),
+                    plan.runId(), groupId, durationMs, statusCode, 0));
+            return new RunResult.NodeResult(
+                    groupId, "eventually", RunResult.Status.PASSED,
+                    statusCode, durationMs, conditionResults, null);
+        }
+
+        NormalizedError error = new NormalizedError(
+                cancellation.get()
+                        ? NormalizedError.ErrorCategory.CANCELLED
+                        : NormalizedError.ErrorCategory.TIMEOUT,
+                cancellation.get() ? "CANCELLED" : "EVENTUALLY_TIMEOUT",
+                "Conditions were not satisfied within " + group.timeoutMs()
+                        + "ms after " + attempt + " poll" + (attempt == 1 ? "" : "s")
+                        + ": " + pollDetail(evidence, conditionResults),
+                false, Map.of("polls", attempt, "timeoutMs", group.timeoutMs()));
+        emitEvent(journal, new RunEvent.NodeFailed(
+                "NODE_FAILED", System.currentTimeMillis(),
+                plan.runId(), child.nodeId(), error, durationMs));
+        childResultsOut.put(child.nodeId(), new RunResult.NodeResult(
+                child.nodeId(), "operation", RunResult.Status.FAILED,
+                statusCode, durationMs, List.of(), error));
+        emitEvent(journal, new RunEvent.NodeFailed(
+                "NODE_FAILED", System.currentTimeMillis(),
+                plan.runId(), groupId, error, durationMs));
+        return new RunResult.NodeResult(
+                groupId, "eventually", RunResult.Status.FAILED,
+                statusCode, durationMs, conditionResults, error);
+    }
+
+    private List<AssertionResult> evaluateConditions(
+            PlanNode.EventuallyNode group, NodeEvidence evidence) {
+        if (evidence.hasError()) {
+            return List.of();
+        }
+        List<AssertionResult> results = new ArrayList<>();
+        for (PlanNode.Condition condition : group.conditions()) {
+            AssertionProvider provider = assertionProviders.get(condition.assertionType());
+            AssertionContext conditionContext = new AssertionContext(
+                    group.nodeId().value(), condition.params());
+            results.add(provider.evaluate(
+                    condition.assertionType(), condition.params(),
+                    evidence, conditionContext));
+        }
+        return results;
+    }
+
+    /** Short, sanitized reason a poll did not satisfy its conditions. */
+    private static String pollDetail(
+            NodeEvidence evidence, List<AssertionResult> conditionResults) {
+        if (evidence == null) {
+            return "no poll completed";
+        }
+        if (evidence.hasError()) {
+            return "request failed: " + evidence.error()
+                    .map(NormalizedError::code).orElse("unknown");
+        }
+        return conditionResults.stream()
+                .filter(condition -> condition.outcome() != AssertionResult.Outcome.PASS)
+                .map(AssertionResult::message)
+                .findFirst()
+                .orElse("all conditions satisfied");
+    }
+
+    private static PlanNode.OperationNode withNodeId(
+            PlanNode.OperationNode node, NodeId nodeId) {
+        return new PlanNode.OperationNode(
+                nodeId, node.operationId(), node.operation(),
+                node.inputExpressions(), node.outputBinding(), node.expectError(),
+                node.retrySpec(), node.dependencies(), node.safety(),
+                node.deadlineMs(), node.maxRetries());
     }
 
     private RunResult.NodeResult executeNode(
@@ -496,9 +871,19 @@ public class LocalEngine {
                     evidence.durationMs(System.currentTimeMillis() - nodeStart);
                 }
                 case PlanNode.ParallelNode ignored -> {
-                    // Parallel groups are dispatched by the run loop, never here.
+                    // Grouping nodes are dispatched by the run loop, never here.
                     return nodeFailed(nodeId, node,
                             "Parallel group reached single-node execution",
+                            NormalizedError.ErrorCategory.INTERNAL, nodeStart);
+                }
+                case PlanNode.RepeatNode ignored -> {
+                    return nodeFailed(nodeId, node,
+                            "Repeat group reached single-node execution",
+                            NormalizedError.ErrorCategory.INTERNAL, nodeStart);
+                }
+                case PlanNode.EventuallyNode ignored -> {
+                    return nodeFailed(nodeId, node,
+                            "Eventually group reached single-node execution",
                             NormalizedError.ErrorCategory.INTERNAL, nodeStart);
                 }
                 case PlanNode.CleanupNode cleanupNode -> {
@@ -817,6 +1202,8 @@ public class LocalEngine {
         return switch (node) {
             case PlanNode.OperationNode ignored -> "operation";
             case PlanNode.ParallelNode ignored -> "parallel";
+            case PlanNode.RepeatNode ignored -> "repeat";
+            case PlanNode.EventuallyNode ignored -> "eventually";
             case PlanNode.AssertionNode ignored -> "assertion";
             case PlanNode.FaultStartNode ignored -> "fault-start";
             case PlanNode.FaultStopNode ignored -> "fault-stop";

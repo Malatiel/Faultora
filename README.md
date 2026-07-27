@@ -8,10 +8,10 @@ invariants, and produces console, JSON, HTML, and JUnit reports. Execution stays
 inside your infrastructure and does not require a hosted control plane or
 telemetry.
 
-Version 0.3.1 is a runnable technical preview. It targets local
+Version 0.4.0 is a runnable technical preview. It targets local
 development and CI use on Java 21.
 
-## What 0.3.1 includes
+## What 0.4.0 includes
 
 Scenario execution:
 
@@ -21,9 +21,14 @@ Scenario execution:
 - step output binding: later steps reference earlier responses through
   `{{steps.<name>.body...}}` templates;
 - bounded parallel groups for genuinely concurrent requests;
+- repeat groups: a fixed count or a literal item list, with `{{repeat.index}}`
+  and `{{repeat.item}}` bound per iteration;
+- eventually (poll-until) groups that converge on asynchronous state and fail
+  with a spent budget instead of hanging;
 - retry policies with exponential backoff and deterministic seed-derived
   jitter;
 - sequential operation and wait steps with explicit dependencies;
+- per-step, per-group, and scenario-wide deadlines;
 - status, header, JSONPath, and duration assertions;
 - console, JSON, HTML, and JUnit reports.
 
@@ -52,10 +57,10 @@ It never touches the target system, its infrastructure, or other traffic, so
 no extra privileges are needed. Network faults require a Toxiproxy you already
 operate on the traffic path.
 
-Repeat/eventually blocks, Kafka, distributed workers, Kubernetes
-orchestration, and the web interface are not part of this release. Scenarios
-that request unsupported execution features are rejected during validation or
-plan compilation rather than being silently accepted.
+Kafka, distributed workers, Kubernetes orchestration, and the web interface
+are not part of this release. Scenarios that request unsupported execution
+features are rejected during validation or plan compilation rather than being
+silently accepted.
 
 ## Requirements
 
@@ -67,7 +72,7 @@ plan compilation rather than being silently accepted.
 Download the release JAR and its checksums:
 
 ```bash
-FAULTORA_VERSION=0.3.1
+FAULTORA_VERSION=0.4.0
 RELEASE_URL="https://github.com/Malatiel/Faultora/releases/download/v${FAULTORA_VERSION}"
 
 curl --fail --location --retry 3 \
@@ -95,7 +100,7 @@ Every release also includes a CycloneDX SBOM and the Apache 2.0 license.
 The executable artifact is written to:
 
 ```text
-faultora-cli/target/faultora-0.3.1.jar
+faultora-cli/target/faultora-0.4.0.jar
 ```
 
 The regular CI build can run without repository secrets. Configure the
@@ -108,9 +113,9 @@ missing.
 Check the executable and validate the example scenario:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.3.1.jar --version
+java -jar faultora-cli/target/faultora-0.4.0.jar --version
 
-java -jar faultora-cli/target/faultora-0.3.1.jar \
+java -jar faultora-cli/target/faultora-0.4.0.jar \
   validate \
   --scenario examples/payment-service/scenarios/passing.yaml
 ```
@@ -118,7 +123,7 @@ java -jar faultora-cli/target/faultora-0.3.1.jar \
 Generate a starter scenario from an OpenAPI document:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.3.1.jar \
+java -jar faultora-cli/target/faultora-0.4.0.jar \
   init \
   --from-openapi examples/payment-service/openapi.yaml \
   --output ./generated
@@ -127,7 +132,7 @@ java -jar faultora-cli/target/faultora-0.3.1.jar \
 Run a scenario against an API:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.3.1.jar \
+java -jar faultora-cli/target/faultora-0.4.0.jar \
   test \
   --scenario examples/payment-service/scenarios/passing.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -147,7 +152,7 @@ race window, then asserts the business invariant that exactly one payment
 exists:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.3.1.jar \
+java -jar faultora-cli/target/faultora-0.4.0.jar \
   test \
   --scenario examples/payment-service/scenarios/fault-concurrent-duplicate.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -184,6 +189,71 @@ brief outage (`fault-retry.yaml`), and SLA verification under injected
 latency (`fault-latency.yaml`). See the
 [scenario reference](docs/SCENARIO_REFERENCE.md#faults) for fault types,
 parameters, and rollback guarantees.
+
+## Eventual consistency and batches
+
+An `eventually` block polls one operation until every condition holds, so a
+scenario can verify asynchronous state without sleeping for a guessed
+duration:
+
+```yaml
+- id: settlement-visible
+  type: eventually
+  timeout: 10s
+  interval: 200ms
+  dependsOn: [create-payment]
+  steps:
+    - id: poll-payment
+      type: operation
+      operationId: get-payment
+      inputs:
+        paymentId: "{{steps.created.body.id}}"
+  until:
+    - assertionType: jsonpath
+      params:
+        path: status
+        equals: settled
+```
+
+```text
+--- Nodes ---
+  [PASSED] create-payment (47ms)
+  [PASSED] poll-payment (444ms)
+  [PASSED] settlement-visible (444ms) — 3 polls
+         Assertion: PASS — Status 200 matches expected 200
+         Assertion: PASS — Path 'status' equals 'settled'
+```
+
+When the conditions never hold, the block fails with the budget it spent and
+the last observed value rather than hanging:
+
+```text
+  [FAILED] never-refunded (611ms) — 7 polls
+         Error: Conditions were not satisfied within 600ms after 7 polls:
+                Path 'status' expected 'refunded' but got 'settled'
+```
+
+A `repeat` block runs its children once per iteration, over a fixed count or a
+literal item list:
+
+```yaml
+- id: create-batch
+  type: repeat
+  forEach: [EUR, USD, GBP]
+  steps:
+    - id: create-payment
+      type: operation
+      operationId: create-payment
+      inputs:
+        body:
+          currency: "{{repeat.item}}"
+```
+
+Both blocks are budgeted before execution: the poll count and the iteration
+count are known at compile time and count against the run's request budget.
+Reference scenarios live in
+[`examples/payment-service/scenarios`](examples/payment-service/scenarios)
+as `eventually-settlement.yaml` and `repeat-batch.yaml`.
 
 ## Reports
 
@@ -233,7 +303,7 @@ handle is mapped to an environment variable with the `FAULTORA_SECRET_` prefix:
 ```bash
 export FAULTORA_SECRET_PAYMENTS_API='replace-with-a-real-token'
 
-java -jar faultora-cli/target/faultora-0.3.1.jar \
+java -jar faultora-cli/target/faultora-0.4.0.jar \
   test \
   --scenario scenario.yaml \
   --openapi openapi.yaml \

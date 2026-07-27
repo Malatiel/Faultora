@@ -863,6 +863,291 @@ class LocalEngineTest {
         return builder.build();
     }
 
+    @Test
+    void parallelGroupTimeoutCancelsChildrenAndStillRunsCleanup() throws Exception {
+        // The parallel children sleep far longer than the group's deadline
+        // allows; the cleanup operation answers immediately.
+        SelectivelySlowConnector connector =
+                new SelectivelySlowConnector("create-payment", 5000);
+        ExecutionPlan plan = ExecutionPlan.builder()
+                .runId(new RunId("run-parallel-deadline"))
+                .scenario(buildScenario())
+                .catalog(catalog)
+                .targetPolicy(policy)
+                .seed(7L)
+                .scenarioDigest("sha256:abc")
+                .catalogDigest("sha256:def")
+                .addNode(new PlanNode.ParallelNode(
+                        new NodeId("race"),
+                        List.of(
+                                new PlanNode.OperationNode(
+                                        new NodeId("first"),
+                                        new OperationId("create-payment"),
+                                        findOp("create-payment"),
+                                        Map.of(), null, List.of(),
+                                        SafetyClassification.MUTATING, 0, 0),
+                                new PlanNode.OperationNode(
+                                        new NodeId("second"),
+                                        new OperationId("create-payment"),
+                                        findOp("create-payment"),
+                                        Map.of(), null, List.of(),
+                                        SafetyClassification.MUTATING, 0, 0)),
+                        List.of(), SafetyClassification.MUTATING, 200, 0))
+                .addNode(new PlanNode.CleanupNode(
+                        new NodeId("cleanup-step"),
+                        new OperationId("cleanup-op"),
+                        Map.of(), List.of(),
+                        SafetyClassification.READ_ONLY, 0, 0))
+                .build();
+
+        LocalEngine engine = new LocalEngine(
+                Map.of("http", connector), Map.of());
+
+        long startedAt = System.currentTimeMillis();
+        Path journalPath = tempDir.resolve("events.ndjson");
+        RunResult result;
+        try (RunJournal journal = new RunJournal(journalPath, true)) {
+            result = engine.execute(
+                    plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+        }
+        long elapsedMs = System.currentTimeMillis() - startedAt;
+
+        // The run must not wait for the children to finish on their own.
+        assertThat(elapsedMs).isLessThan(4000);
+        assertThat(result.status()).isEqualTo(RunResult.Status.FAILED);
+        assertThat(result.nodeResults().get(new NodeId("race")).status())
+                .isEqualTo(RunResult.Status.FAILED);
+        assertThat(result.nodeResults().get(new NodeId("first")).error().code())
+                .isEqualTo("DEADLINE_EXCEEDED");
+        assertThat(result.nodeResults().get(new NodeId("second")).error().code())
+                .isEqualTo("DEADLINE_EXCEEDED");
+        // Cleanup is an obligation, not a best-effort step after a deadline.
+        assertThat(result.nodeResults().get(new NodeId("cleanup-step")).status())
+                .isEqualTo(RunResult.Status.PASSED);
+    }
+
+    @Test
+    void repeatGroupRunsEveryIterationAndExposesTheIndex() throws Exception {
+        CapturingIterationConnector connector = new CapturingIterationConnector();
+        ExecutionPlan plan = ExecutionPlan.builder()
+                .runId(new RunId("run-repeat"))
+                .scenario(buildScenario())
+                .catalog(catalog)
+                .targetPolicy(policy)
+                .seed(7L)
+                .scenarioDigest("sha256:abc")
+                .catalogDigest("sha256:def")
+                .addNode(new PlanNode.RepeatNode(
+                        new NodeId("batch"),
+                        List.of(new PlanNode.OperationNode(
+                                new NodeId("create"),
+                                new OperationId("create-payment"),
+                                findOp("create-payment"),
+                                Map.of("amount", "{{repeat.item}}", "seq", "{{repeat.index}}"),
+                                null, List.of(),
+                                SafetyClassification.MUTATING, 0, 0)),
+                        List.of(100, 200, 300), 3,
+                        List.of(), SafetyClassification.MUTATING, 0, 0))
+                .build();
+
+        LocalEngine engine = new LocalEngine(
+                Map.of("http", connector), Map.of());
+
+        Path journalPath = tempDir.resolve("events.ndjson");
+        RunResult result;
+        try (RunJournal journal = new RunJournal(journalPath, true)) {
+            result = engine.execute(
+                    plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+        }
+
+        assertThat(result.status()).isEqualTo(RunResult.Status.PASSED);
+        assertThat(result.nodeResults().get(new NodeId("batch")).status())
+                .isEqualTo(RunResult.Status.PASSED);
+        // Every iteration is recorded under its own node ID, and the plain
+        // child ID points at the last iteration.
+        assertThat(result.nodeResults()).containsKeys(
+                new NodeId("create:0"), new NodeId("create:1"),
+                new NodeId("create:2"), new NodeId("create"));
+        assertThat(connector.amounts).containsExactly(100, 200, 300);
+        assertThat(connector.sequences).containsExactly(0, 1, 2);
+    }
+
+    @Test
+    void repeatGroupStopsAtTheFirstFailingIteration() throws Exception {
+        ExecutionPlan plan = ExecutionPlan.builder()
+                .runId(new RunId("run-repeat-fail"))
+                .scenario(buildScenario())
+                .catalog(catalog)
+                .targetPolicy(policy)
+                .seed(7L)
+                .scenarioDigest("sha256:abc")
+                .catalogDigest("sha256:def")
+                .addNode(new PlanNode.RepeatNode(
+                        new NodeId("batch"),
+                        List.of(new PlanNode.OperationNode(
+                                new NodeId("create"),
+                                new OperationId("create-payment"),
+                                findOp("create-payment"),
+                                Map.of(), null, List.of(),
+                                SafetyClassification.MUTATING, 0, 0)),
+                        null, 3,
+                        List.of(), SafetyClassification.MUTATING, 0, 0))
+                .build();
+
+        LocalEngine engine = new LocalEngine(
+                Map.of("http", new FailingConnector()), Map.of());
+
+        Path journalPath = tempDir.resolve("events.ndjson");
+        RunResult result;
+        try (RunJournal journal = new RunJournal(journalPath, true)) {
+            result = engine.execute(
+                    plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+        }
+
+        assertThat(result.status()).isEqualTo(RunResult.Status.FAILED);
+        RunResult.NodeResult group = result.nodeResults().get(new NodeId("batch"));
+        assertThat(group.status()).isEqualTo(RunResult.Status.FAILED);
+        assertThat(group.error().code()).isEqualTo("REPEAT_ITERATION_FAILED");
+        assertThat(result.nodeResults()).doesNotContainKey(new NodeId("create:1"));
+    }
+
+    @Test
+    void eventuallyGroupPassesOnceTheConditionHolds() throws Exception {
+        // The target returns 202 twice and 200 afterwards.
+        ConvergingConnector connector = new ConvergingConnector(2);
+        ExecutionPlan plan = ExecutionPlan.builder()
+                .runId(new RunId("run-eventually"))
+                .scenario(buildScenario())
+                .catalog(catalog)
+                .targetPolicy(policy)
+                .seed(7L)
+                .scenarioDigest("sha256:abc")
+                .catalogDigest("sha256:def")
+                .addNode(new PlanNode.EventuallyNode(
+                        new NodeId("settled"),
+                        new PlanNode.OperationNode(
+                                new NodeId("poll"),
+                                new OperationId("get-payment"),
+                                findOp("get-payment"),
+                                Map.of(), null, List.of(),
+                                SafetyClassification.READ_ONLY, 0, 0),
+                        List.of(new PlanNode.Condition(
+                                "status", Map.of("expected", 200), null)),
+                        2000, 20, 50,
+                        List.of(), SafetyClassification.READ_ONLY, 0, 0))
+                .build();
+
+        LocalEngine engine = new LocalEngine(
+                Map.of("http", connector),
+                Map.of("status", new StatusAssertionProvider()));
+
+        Path journalPath = tempDir.resolve("events.ndjson");
+        RunResult result;
+        try (RunJournal journal = new RunJournal(journalPath, true)) {
+            result = engine.execute(
+                    plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+        }
+
+        assertThat(result.status()).isEqualTo(RunResult.Status.PASSED);
+        assertThat(result.nodeResults().get(new NodeId("settled")).status())
+                .isEqualTo(RunResult.Status.PASSED);
+        assertThat(result.nodeResults().get(new NodeId("poll")).status())
+                .isEqualTo(RunResult.Status.PASSED);
+        assertThat(connector.calls).isEqualTo(3);
+        assertThat(result.passedAssertions()).isEqualTo(1);
+
+        String events = Files.readString(journalPath);
+        assertThat(events).contains("CONDITION_POLLED");
+    }
+
+    @Test
+    void eventuallyGroupFailsWhenTheBudgetIsSpent() throws Exception {
+        ExecutionPlan plan = ExecutionPlan.builder()
+                .runId(new RunId("run-eventually-timeout"))
+                .scenario(buildScenario())
+                .catalog(catalog)
+                .targetPolicy(policy)
+                .seed(7L)
+                .scenarioDigest("sha256:abc")
+                .catalogDigest("sha256:def")
+                .addNode(new PlanNode.EventuallyNode(
+                        new NodeId("settled"),
+                        new PlanNode.OperationNode(
+                                new NodeId("poll"),
+                                new OperationId("get-payment"),
+                                findOp("get-payment"),
+                                Map.of(), null, List.of(),
+                                SafetyClassification.READ_ONLY, 0, 0),
+                        List.of(new PlanNode.Condition(
+                                "status", Map.of("expected", 999), null)),
+                        120, 20, 4,
+                        List.of(), SafetyClassification.READ_ONLY, 0, 0))
+                .build();
+
+        LocalEngine engine = new LocalEngine(
+                Map.of("http", new SuccessConnector()),
+                Map.of("status", new StatusAssertionProvider()));
+
+        Path journalPath = tempDir.resolve("events.ndjson");
+        RunResult result;
+        try (RunJournal journal = new RunJournal(journalPath, true)) {
+            result = engine.execute(
+                    plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+        }
+
+        assertThat(result.status()).isEqualTo(RunResult.Status.FAILED);
+        RunResult.NodeResult group = result.nodeResults().get(new NodeId("settled"));
+        assertThat(group.status()).isEqualTo(RunResult.Status.FAILED);
+        assertThat(group.error().code()).isEqualTo("EVENTUALLY_TIMEOUT");
+        assertThat(group.error().message()).contains("poll");
+    }
+
+    @Test
+    void scenarioDeadlineStopsRemainingNodesAndStillRunsCleanup() throws Exception {
+        ExecutionPlan plan = ExecutionPlan.builder()
+                .runId(new RunId("run-scenario-deadline"))
+                .scenario(buildScenario())
+                .catalog(catalog)
+                .targetPolicy(policy)
+                .seed(7L)
+                .scenarioTimeoutMs(50)
+                .scenarioDigest("sha256:abc")
+                .catalogDigest("sha256:def")
+                .addNode(new PlanNode.OperationNode(
+                        new NodeId("slow-step"),
+                        new OperationId("_wait"), null,
+                        Map.of("waitMs", 120L), null, List.of(),
+                        SafetyClassification.READ_ONLY, 0, 0))
+                .addNode(new PlanNode.OperationNode(
+                        new NodeId("never-runs"),
+                        new OperationId("create-payment"),
+                        findOp("create-payment"),
+                        Map.of(), null, List.of(),
+                        SafetyClassification.MUTATING, 0, 0))
+                .addNode(new PlanNode.CleanupNode(
+                        new NodeId("cleanup-step"),
+                        new OperationId("cleanup-op"),
+                        Map.of(), List.of(),
+                        SafetyClassification.READ_ONLY, 0, 0))
+                .build();
+
+        LocalEngine engine = new LocalEngine(
+                Map.of("http", new SuccessConnector()), Map.of());
+
+        Path journalPath = tempDir.resolve("events.ndjson");
+        RunResult result;
+        try (RunJournal journal = new RunJournal(journalPath, true)) {
+            result = engine.execute(
+                    plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+        }
+
+        assertThat(result.status()).isEqualTo(RunResult.Status.FAILED);
+        assertThat(result.error().code()).isEqualTo("SCENARIO_DEADLINE_EXCEEDED");
+        assertThat(result.nodeResults()).doesNotContainKey(new NodeId("never-runs"));
+        assertThat(result.nodeResults().get(new NodeId("cleanup-step")).status())
+                .isEqualTo(RunResult.Status.PASSED);
+    }
+
     private OperationDefinition findOp(String id) {
         return catalog.operations().stream()
                 .filter(op -> op.id().value().equals(id))
@@ -1103,6 +1388,74 @@ class LocalEngineTest {
     /**
      * Status assertion provider for tests.
      */
+    /**
+     * Connector that sleeps only for one operation ID and answers every other
+     * operation immediately.
+     */
+    static class SelectivelySlowConnector extends SuccessConnector {
+        private final String slowOperationId;
+        private final long sleepMs;
+
+        SelectivelySlowConnector(String slowOperationId, long sleepMs) {
+            this.slowOperationId = slowOperationId;
+            this.sleepMs = sleepMs;
+        }
+
+        @Override
+        public OperationResult execute(PreparedTarget preparedTarget, OperationDefinition operation,
+                                        Map<String, Object> inputs, ConnectorContext context) {
+            if (slowOperationId.equals(operation.id().value())) {
+                try {
+                    Thread.sleep(sleepMs);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            return super.execute(preparedTarget, operation, inputs, context);
+        }
+    }
+
+    /**
+     * Connector recording the repeat-bound inputs of every iteration.
+     */
+    static class CapturingIterationConnector extends SuccessConnector {
+        final List<Integer> amounts = new ArrayList<>();
+        final List<Integer> sequences = new ArrayList<>();
+
+        @Override
+        public OperationResult execute(PreparedTarget preparedTarget, OperationDefinition operation,
+                                        Map<String, Object> inputs, ConnectorContext context) {
+            amounts.add(((Number) inputs.get("amount")).intValue());
+            sequences.add(((Number) inputs.get("seq")).intValue());
+            return super.execute(preparedTarget, operation, inputs, context);
+        }
+    }
+
+    /**
+     * Connector answering 202 for the first {@code pendingResponses} calls and
+     * 200 afterwards — an asynchronously settling resource.
+     */
+    static class ConvergingConnector extends SuccessConnector {
+        private final int pendingResponses;
+        int calls;
+
+        ConvergingConnector(int pendingResponses) {
+            this.pendingResponses = pendingResponses;
+        }
+
+        @Override
+        public OperationResult execute(PreparedTarget preparedTarget, OperationDefinition operation,
+                                        Map<String, Object> inputs, ConnectorContext context) {
+            calls++;
+            int status = calls > pendingResponses ? 200 : 202;
+            return OperationResult.success(
+                    status,
+                    Map.of("content-type", List.of("application/json")),
+                    ("{\"status\":\"" + (status == 200 ? "settled" : "pending") + "\"}").getBytes(),
+                    5, Map.of());
+        }
+    }
+
     static class StatusAssertionProvider implements AssertionProvider {
         @Override
         public String type() { return "status"; }

@@ -192,6 +192,7 @@ The compiled plan is a directed acyclic graph of typed nodes:
 - `OperationNode`
 - `ParallelNode`
 - `RepeatNode`
+- `EventuallyNode`
 - `WaitNode`
 - `FaultStartNode`
 - `FaultStopNode`

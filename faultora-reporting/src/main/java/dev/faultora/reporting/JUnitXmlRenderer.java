@@ -7,7 +7,9 @@ import dev.faultora.spi.contract.ReportRenderer;
 import java.io.IOException;
 import java.io.Writer;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Renders run results as JUnit XML.
@@ -27,6 +29,9 @@ public class JUnitXmlRenderer implements ReportRenderer {
         RunEvent.RunCompleted completed = null;
         RunEvent.RunFailed failed = null;
         List<TestCase> testCases = new ArrayList<>();
+        // Assertion outcomes are matched by node ID, not by arrival order: a
+        // node may report its assertions before or after its own result.
+        Map<String, List<String>> failedAssertions = new LinkedHashMap<>();
 
         for (RunEvent event : events) {
             switch (event) {
@@ -40,17 +45,24 @@ public class JUnitXmlRenderer implements ReportRenderer {
                         nf.nodeId().value(), nf.durationMs() / 1000.0,
                         nf.error(), nf.error() != null ? nf.error().message() : null, true));
                 case RunEvent.AssertionEvaluated ae -> {
-                    if (!testCases.isEmpty()) {
-                        TestCase last = testCases.get(testCases.size() - 1);
-                        if (last.name.equals(ae.nodeId().value())) {
-                            if ("FAIL".equals(ae.outcome())) {
-                                last.failure = ae.message();
-                                last.isFailure = true;
-                            }
-                        }
+                    if (!"PASS".equals(ae.outcome())) {
+                        failedAssertions
+                                .computeIfAbsent(ae.nodeId().value(), key -> new ArrayList<>())
+                                .add(ae.message() != null
+                                        ? ae.message() : ae.outcome() + " assertion");
                     }
                 }
                 default -> { /* skip */ }
+            }
+        }
+
+        for (TestCase testCase : testCases) {
+            List<String> messages = failedAssertions.get(testCase.name);
+            if (messages != null && !messages.isEmpty()) {
+                testCase.isFailure = true;
+                if (testCase.failure == null) {
+                    testCase.failure = String.join("; ", messages);
+                }
             }
         }
 

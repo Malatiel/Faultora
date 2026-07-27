@@ -17,6 +17,15 @@ public class PlanCompiler {
     /** Upper bound on retry attempts per step, preventing retry storms. */
     static final int MAX_RETRY_ATTEMPTS = 10;
 
+    /** Upper bound on iterations of a single repeat group. */
+    static final int MAX_REPEAT_ITERATIONS = 100;
+
+    /** Upper bound on polls of a single eventually group. */
+    static final int MAX_POLL_ATTEMPTS = 100;
+
+    /** Poll interval used when an eventually step does not declare one. */
+    static final long DEFAULT_POLL_INTERVAL_MS = 1000;
+
     /**
      * Compile a scenario against a catalog.
      *
@@ -41,6 +50,10 @@ public class PlanCompiler {
         List<PlanDiagnostic> diagnostics = new ArrayList<>();
         List<PlanNode> nodes = new ArrayList<>();
 
+        // Children of a grouping step execute inside the group, so a
+        // dependency on a child must attach to the group that runs it.
+        Map<String, String> childToGroup = mapChildrenToGroups(scenario);
+
         // Build operation lookup
         Map<String, OperationDefinition> operationIndex = new LinkedHashMap<>();
         for (OperationDefinition op : catalog.operations()) {
@@ -48,33 +61,28 @@ public class PlanCompiler {
         }
 
         // Compile setup steps
-        compileSteps(scenario.setup(), "setup", operationIndex, targetPolicy, nodes, diagnostics);
+        compileSteps(scenario.setup(), "setup", operationIndex, targetPolicy,
+                childToGroup, nodes, diagnostics);
 
         // Compile fault steps before execute: a fault with no dependencies
         // activates before the first execute step runs.
-        compileFaultSteps(scenario.faults(), targetPolicy, nodes, diagnostics);
+        compileFaultSteps(scenario.faults(), targetPolicy, childToGroup, nodes, diagnostics);
 
         // Compile execute steps
-        compileSteps(scenario.execute(), "execute", operationIndex, targetPolicy, nodes, diagnostics);
-
-        // Children of parallel groups execute inside the group node, so
-        // ordering dependencies on a child must attach to the group itself.
-        Map<NodeId, NodeId> childToGroup = new LinkedHashMap<>();
-        for (PlanNode node : nodes) {
-            if (node instanceof PlanNode.ParallelNode parallel) {
-                for (PlanNode.OperationNode child : parallel.children()) {
-                    childToGroup.put(child.nodeId(), parallel.nodeId());
-                }
-            }
-        }
+        compileSteps(scenario.execute(), "execute", operationIndex, targetPolicy,
+                childToGroup, nodes, diagnostics);
 
         // Compile assertion steps
         compileAssertionSteps(
                 scenario.assertions(), lastStepId(scenario.execute()),
-                childToGroup, nodes, diagnostics);
+                childToGroup, Set.copyOf(childToGroup.values()), nodes, diagnostics);
 
         // Compile cleanup steps
-        compileSteps(scenario.cleanup(), "cleanup", operationIndex, targetPolicy, nodes, diagnostics);
+        compileSteps(scenario.cleanup(), "cleanup", operationIndex, targetPolicy,
+                childToGroup, nodes, diagnostics);
+
+        long scenarioTimeoutMs = parseTimeout(
+                scenario.timeout(), "scenario", "", "timeout", diagnostics);
 
         if (targetPolicy != null) {
             // Retrying nodes count once per allowed attempt, so retries cannot
@@ -84,10 +92,13 @@ public class PlanCompiler {
                         case PlanNode.OperationNode operation when operation.operation() != null ->
                                 operation.retrySpec() == null
                                         ? 1 : operation.retrySpec().maxAttempts();
-                        case PlanNode.ParallelNode parallel -> parallel.children().stream()
-                                .mapToLong(child -> child.retrySpec() == null
-                                        ? 1 : child.retrySpec().maxAttempts())
-                                .sum();
+                        case PlanNode.ParallelNode parallel ->
+                                attempts(parallel.children());
+                        // Every iteration re-runs every child, and every poll
+                        // sends one request, so both are budgeted in full.
+                        case PlanNode.RepeatNode repeat ->
+                                attempts(repeat.children()) * repeat.iterations();
+                        case PlanNode.EventuallyNode eventually -> eventually.maxPolls();
                         case PlanNode.CleanupNode ignored -> 1;
                         default -> 0;
                     })
@@ -117,6 +128,7 @@ public class PlanCompiler {
 
         ExecutionPlan plan = ExecutionPlan.builder()
                 .runId(runId)
+                .scenarioTimeoutMs(scenarioTimeoutMs)
                 .scenario(scenario)
                 .catalog(catalog)
                 .targetPolicy(targetPolicy)
@@ -134,6 +146,7 @@ public class PlanCompiler {
             String phase,
             Map<String, OperationDefinition> operationIndex,
             TargetPolicy targetPolicy,
+            Map<String, String> childToGroup,
             List<PlanNode> nodes,
             List<PlanDiagnostic> diagnostics
     ) {
@@ -146,7 +159,7 @@ public class PlanCompiler {
             if ("operation".equals(step.type()) || step.type() == null) {
                 PlanNode.OperationNode operationNode = compileOperation(
                         step, phase, operationIndex, targetPolicy,
-                        resolveDependencies(step.dependsOn()), diagnostics);
+                        resolveDependencies(step.dependsOn(), childToGroup), diagnostics);
                 if (operationNode == null) {
                     continue;
                 }
@@ -167,46 +180,42 @@ public class PlanCompiler {
                             "Parallel steps are not allowed in cleanup"));
                     continue;
                 }
-                List<ScenarioStep> childSteps = step.steps() == null ? List.of() : step.steps();
-                if (childSteps.isEmpty()) {
+                int childCount = step.steps() == null ? 0 : step.steps().size();
+                if (targetPolicy != null && childCount > targetPolicy.maxConcurrency()) {
                     diagnostics.add(PlanDiagnostic.error(phase, stepId,
-                            "Parallel step requires at least one child step"));
-                    continue;
-                }
-                if (targetPolicy != null && childSteps.size() > targetPolicy.maxConcurrency()) {
-                    diagnostics.add(PlanDiagnostic.error(phase, stepId,
-                            "Parallel step has " + childSteps.size()
+                            "Parallel step has " + childCount
                                     + " children, policy allows concurrency "
                                     + targetPolicy.maxConcurrency()));
                     continue;
                 }
 
-                List<PlanNode.OperationNode> children = new ArrayList<>();
-                boolean childrenValid = true;
-                for (ScenarioStep child : childSteps) {
-                    PlanNode.OperationNode childNode = compileOperation(
-                            child, phase, operationIndex, targetPolicy,
-                            List.of(), diagnostics);
-                    if (childNode == null) {
-                        childrenValid = false;
-                        continue;
-                    }
-                    children.add(childNode);
-                }
-                if (!childrenValid) {
+                List<PlanNode.OperationNode> children = compileGroupChildren(
+                        step, phase, "Parallel", operationIndex, targetPolicy, diagnostics);
+                if (children == null) {
                     continue;
                 }
 
-                SafetyClassification groupSafety = children.stream()
-                        .map(PlanNode.OperationNode::safety)
-                        .max(java.util.Comparator.comparingInt(Enum::ordinal))
-                        .orElse(SafetyClassification.READ_ONLY);
                 long deadlineMs = parseTimeout(
                         step.timeout(), phase, stepId, "timeout", diagnostics);
                 nodes.add(new PlanNode.ParallelNode(
-                        nodeId, children, resolveDependencies(step.dependsOn()),
-                        groupSafety, deadlineMs, 0
+                        nodeId, children,
+                        resolveDependencies(step.dependsOn(), childToGroup),
+                        groupSafety(children), deadlineMs, 0
                 ));
+
+            } else if ("repeat".equals(step.type())) {
+                PlanNode repeatNode = compileRepeat(
+                        step, phase, operationIndex, targetPolicy, childToGroup, diagnostics);
+                if (repeatNode != null) {
+                    nodes.add(repeatNode);
+                }
+
+            } else if ("eventually".equals(step.type())) {
+                PlanNode eventuallyNode = compileEventually(
+                        step, phase, operationIndex, targetPolicy, childToGroup, diagnostics);
+                if (eventuallyNode != null) {
+                    nodes.add(eventuallyNode);
+                }
 
             } else if ("wait".equals(step.type())) {
                 long waitMs = parseTimeout(
@@ -216,7 +225,7 @@ public class PlanCompiler {
                             phase, stepId, "Wait step requires a positive timeout"));
                     continue;
                 }
-                List<NodeId> deps = resolveDependencies(step.dependsOn());
+                List<NodeId> deps = resolveDependencies(step.dependsOn(), childToGroup);
                 nodes.add(new PlanNode.OperationNode(
                         nodeId, new OperationId("_wait"), null,
                         Map.of("waitMs", waitMs), step.outputAs(),
@@ -227,6 +236,185 @@ public class PlanCompiler {
                         "Unsupported step type in this release: " + step.type()));
             }
         }
+    }
+
+    /**
+     * Compile a repeat group. The iteration count is resolved here, so the
+     * request budget of the whole group is known before execution starts.
+     */
+    private PlanNode compileRepeat(
+            ScenarioStep step,
+            String phase,
+            Map<String, OperationDefinition> operationIndex,
+            TargetPolicy targetPolicy,
+            Map<String, String> childToGroup,
+            List<PlanDiagnostic> diagnostics
+    ) {
+        String stepId = step.id();
+        if ("cleanup".equals(phase)) {
+            diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                    "Repeat steps are not allowed in cleanup"));
+            return null;
+        }
+
+        boolean hasCount = step.count() != null;
+        boolean hasForEach = step.forEach() != null;
+        if (hasCount == hasForEach) {
+            diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                    "Repeat step requires exactly one of count or forEach"));
+            return null;
+        }
+        int iterations = hasCount ? step.count() : step.forEach().size();
+        if (iterations < 1 || iterations > MAX_REPEAT_ITERATIONS) {
+            diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                    "Repeat step requires 1 to " + MAX_REPEAT_ITERATIONS
+                            + " iterations, got: " + iterations));
+            return null;
+        }
+
+        List<PlanNode.OperationNode> children = compileGroupChildren(
+                step, phase, "Repeat", operationIndex, targetPolicy, diagnostics);
+        if (children == null) {
+            return null;
+        }
+
+        return new PlanNode.RepeatNode(
+                new NodeId(stepId), children,
+                hasForEach ? step.forEach() : null, iterations,
+                resolveDependencies(step.dependsOn(), childToGroup), groupSafety(children),
+                parseTimeout(step.timeout(), phase, stepId, "timeout", diagnostics), 0
+        );
+    }
+
+    /**
+     * Compile an eventually group. The poll budget is derived from the timeout
+     * and interval, so the group cannot outlive its declared window or exceed
+     * the request budget.
+     */
+    private PlanNode compileEventually(
+            ScenarioStep step,
+            String phase,
+            Map<String, OperationDefinition> operationIndex,
+            TargetPolicy targetPolicy,
+            Map<String, String> childToGroup,
+            List<PlanDiagnostic> diagnostics
+    ) {
+        String stepId = step.id();
+        if ("cleanup".equals(phase)) {
+            diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                    "Eventually steps are not allowed in cleanup"));
+            return null;
+        }
+
+        long timeoutMs = parseTimeout(step.timeout(), phase, stepId, "timeout", diagnostics);
+        if (timeoutMs <= 0) {
+            diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                    "Eventually step requires a positive timeout budget"));
+            return null;
+        }
+        long intervalMs = step.interval() == null || step.interval().isBlank()
+                ? DEFAULT_POLL_INTERVAL_MS
+                : parseTimeout(step.interval(), phase, stepId, "interval", diagnostics);
+        if (intervalMs <= 0) {
+            diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                    "Eventually step requires a positive interval"));
+            return null;
+        }
+        if (intervalMs > timeoutMs) {
+            diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                    "Eventually interval (" + intervalMs
+                            + "ms) must not exceed the timeout budget (" + timeoutMs + "ms)"));
+            return null;
+        }
+
+        if (step.until() == null || step.until().isEmpty()) {
+            diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                    "Eventually step requires at least one until condition"));
+            return null;
+        }
+        List<PlanNode.Condition> conditions = new ArrayList<>();
+        for (ScenarioStep.Condition condition : step.until()) {
+            if (condition.assertionType() == null || condition.assertionType().isBlank()) {
+                diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                        "Until condition requires an assertionType"));
+                return null;
+            }
+            conditions.add(new PlanNode.Condition(
+                    condition.assertionType(), condition.params(), condition.message()));
+        }
+
+        List<PlanNode.OperationNode> children = compileGroupChildren(
+                step, phase, "Eventually", operationIndex, targetPolicy, diagnostics);
+        if (children == null) {
+            return null;
+        }
+        if (children.size() != 1) {
+            diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                    "Eventually step requires exactly one child operation step"));
+            return null;
+        }
+
+        long requestedPolls = 1 + timeoutMs / intervalMs;
+        if (requestedPolls > MAX_POLL_ATTEMPTS) {
+            diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                    "Eventually step would need " + requestedPolls + " polls, the maximum is "
+                            + MAX_POLL_ATTEMPTS + "; raise interval to at least "
+                            + (timeoutMs / (MAX_POLL_ATTEMPTS - 1) + 1) + "ms"));
+            return null;
+        }
+        int maxPolls = (int) requestedPolls;
+        return new PlanNode.EventuallyNode(
+                new NodeId(stepId), children.get(0), conditions,
+                timeoutMs, intervalMs, maxPolls,
+                resolveDependencies(step.dependsOn(), childToGroup),
+                groupSafety(children), 0, 0
+        );
+    }
+
+    /**
+     * Compile the operation children of a grouping step, or null when the
+     * group declares no children or a child is invalid.
+     */
+    private List<PlanNode.OperationNode> compileGroupChildren(
+            ScenarioStep step,
+            String phase,
+            String groupLabel,
+            Map<String, OperationDefinition> operationIndex,
+            TargetPolicy targetPolicy,
+            List<PlanDiagnostic> diagnostics
+    ) {
+        List<ScenarioStep> childSteps = step.steps() == null ? List.of() : step.steps();
+        if (childSteps.isEmpty()) {
+            diagnostics.add(PlanDiagnostic.error(phase, step.id(),
+                    groupLabel + " step requires at least one child step"));
+            return null;
+        }
+        List<PlanNode.OperationNode> children = new ArrayList<>();
+        boolean valid = true;
+        for (ScenarioStep child : childSteps) {
+            PlanNode.OperationNode childNode = compileOperation(
+                    child, phase, operationIndex, targetPolicy, List.of(), diagnostics);
+            if (childNode == null) {
+                valid = false;
+                continue;
+            }
+            children.add(childNode);
+        }
+        return valid ? children : null;
+    }
+
+    private static SafetyClassification groupSafety(List<PlanNode.OperationNode> children) {
+        return children.stream()
+                .map(PlanNode.OperationNode::safety)
+                .max(java.util.Comparator.comparingInt(Enum::ordinal))
+                .orElse(SafetyClassification.READ_ONLY);
+    }
+
+    private static long attempts(List<PlanNode.OperationNode> children) {
+        return children.stream()
+                .mapToLong(child -> child.retrySpec() == null
+                        ? 1 : child.retrySpec().maxAttempts())
+                .sum();
     }
 
     /**
@@ -318,6 +506,7 @@ public class PlanCompiler {
     private void compileFaultSteps(
             List<FaultStep> steps,
             TargetPolicy targetPolicy,
+            Map<String, String> childToGroup,
             List<PlanNode> nodes,
             List<PlanDiagnostic> diagnostics
     ) {
@@ -350,7 +539,7 @@ public class PlanCompiler {
                             ? "*" : step.targetScope(),
                     step.params() != null ? new LinkedHashMap<>(step.params()) : Map.of(),
                     durationMs,
-                    resolveDependencies(step.dependsOn()),
+                    resolveDependencies(step.dependsOn(), childToGroup),
                     SafetyClassification.MUTATING, 0, 0
             ));
         }
@@ -407,7 +596,8 @@ public class PlanCompiler {
     private void compileAssertionSteps(
             List<AssertionStep> steps,
             NodeId defaultTarget,
-            Map<NodeId, NodeId> childToGroup,
+            Map<String, String> childToGroup,
+            Set<String> groupIds,
             List<PlanNode> nodes,
             List<PlanDiagnostic> diagnostics
     ) {
@@ -415,18 +605,29 @@ public class PlanCompiler {
 
         for (AssertionStep step : steps) {
             NodeId nodeId = new NodeId(step.id());
-            NodeId targetNode = step.targetStep() != null && !step.targetStep().isBlank()
+            boolean explicitTarget =
+                    step.targetStep() != null && !step.targetStep().isBlank();
+            NodeId targetNode = explicitTarget
                     ? new NodeId(step.targetStep())
                     : defaultTarget;
 
-            List<NodeId> deps = new ArrayList<>();
-            for (NodeId dep : resolveDependencies(step.dependsOn())) {
-                deps.add(childToGroup.getOrDefault(dep, dep));
+            // A grouping step holds no evidence of its own: the requests are
+            // made by its children, so the assertion must name one.
+            if (targetNode != null && groupIds.contains(targetNode.value())) {
+                diagnostics.add(PlanDiagnostic.error("assertions", step.id(),
+                        (explicitTarget ? "targetStep" : "The default target")
+                                + " '" + targetNode.value() + "' is a group step, which holds"
+                                + " no evidence; target one of its child steps instead"));
+                continue;
             }
+
+            List<NodeId> deps = new ArrayList<>(
+                    resolveDependencies(step.dependsOn(), childToGroup));
             // Add target step as implicit ordering dependency; evidence still
             // comes from the (possibly child) target node itself.
-            NodeId orderingTarget = targetNode == null
-                    ? null : childToGroup.getOrDefault(targetNode, targetNode);
+            NodeId orderingTarget = targetNode == null ? null
+                    : new NodeId(childToGroup.getOrDefault(
+                            targetNode.value(), targetNode.value()));
             if (orderingTarget != null && !deps.contains(orderingTarget)) {
                 deps.add(orderingTarget);
             }
@@ -442,9 +643,40 @@ public class PlanCompiler {
         }
     }
 
-    private List<NodeId> resolveDependencies(List<String> dependsOn) {
+    /**
+     * Resolve declared dependencies to plan node IDs. A dependency on a step
+     * that runs inside a group resolves to the group, which is the node the
+     * engine can actually wait for.
+     */
+    private List<NodeId> resolveDependencies(
+            List<String> dependsOn, Map<String, String> childToGroup) {
         if (dependsOn == null || dependsOn.isEmpty()) return List.of();
-        return dependsOn.stream().map(NodeId::new).toList();
+        return dependsOn.stream()
+                .map(id -> new NodeId(childToGroup.getOrDefault(id, id)))
+                .distinct()
+                .toList();
+    }
+
+    /** Index every child step of a grouping step to the group that runs it. */
+    private Map<String, String> mapChildrenToGroups(ScenarioDocument scenario) {
+        Map<String, String> childToGroup = new LinkedHashMap<>();
+        for (List<ScenarioStep> section :
+                List.of(nullSafe(scenario.setup()), nullSafe(scenario.execute()),
+                        nullSafe(scenario.cleanup()))) {
+            for (ScenarioStep step : section) {
+                if (step.steps() == null || step.id() == null) continue;
+                for (ScenarioStep child : step.steps()) {
+                    if (child.id() != null) {
+                        childToGroup.put(child.id(), step.id());
+                    }
+                }
+            }
+        }
+        return childToGroup;
+    }
+
+    private static List<ScenarioStep> nullSafe(List<ScenarioStep> steps) {
+        return steps == null ? List.of() : steps;
     }
 
     private NodeId lastStepId(List<ScenarioStep> steps) {

@@ -15,6 +15,12 @@ import java.util.Set;
  */
 public class ScenarioValidator {
 
+    /** Upper bound on iterations of a single repeat group. */
+    public static final int MAX_REPEAT_ITERATIONS = 100;
+
+    /** Step types that group child steps instead of invoking an operation. */
+    private static final Set<String> GROUP_TYPES = Set.of("parallel", "repeat", "eventually");
+
     /**
      * Validate a scenario document.
      *
@@ -48,6 +54,12 @@ public class ScenarioValidator {
         validateSteps(document.cleanup(), "cleanup", diagnostics);
         validateFaultSteps(document.faults(), diagnostics);
         validateOutputBindings(document, diagnostics);
+
+        if (document.timeout() != null && !document.timeout().isBlank()
+                && !isPositiveDuration(document.timeout())) {
+            diagnostics.add(Diagnostic.error("timeout",
+                    "Scenario timeout must be a positive duration: " + document.timeout()));
+        }
 
         if (diagnostics.stream().anyMatch(Diagnostic::isError)) {
             return new ParseResult<>(null, diagnostics);
@@ -155,15 +167,33 @@ public class ScenarioValidator {
         for (ScenarioStep step : steps) {
             String type = step.type() == null ? "operation" : step.type();
             String path = section + "." + step.id();
-            if (!"operation".equals(type) && !"wait".equals(type) && !"parallel".equals(type)) {
+            if (!"operation".equals(type) && !"wait".equals(type)
+                    && !GROUP_TYPES.contains(type)) {
                 diagnostics.add(Diagnostic.error(path + ".type",
                         "Unsupported step type in this release: " + type));
             }
-            if ("parallel".equals(type)) {
-                validateParallelStep(step, section, path, diagnostics);
+            if (GROUP_TYPES.contains(type)) {
+                validateGroupStep(step, section, path, type, diagnostics);
+                switch (type) {
+                    case "parallel" -> validateParallelStep(step, section, path, diagnostics);
+                    case "repeat" -> validateRepeatStep(step, section, path, diagnostics);
+                    case "eventually" -> validateEventuallyStep(step, section, path, diagnostics);
+                    default -> { /* unreachable: GROUP_TYPES is closed */ }
+                }
             } else if (step.steps() != null && !step.steps().isEmpty()) {
                 diagnostics.add(Diagnostic.error(path + ".steps",
-                        "Nested steps are only allowed on parallel steps"));
+                        "Nested steps are only allowed on parallel, repeat, "
+                                + "and eventually steps"));
+            }
+            if (!GROUP_TYPES.contains(type)
+                    && (step.count() != null || step.forEach() != null)) {
+                diagnostics.add(Diagnostic.error(path,
+                        "count and forEach are only allowed on repeat steps"));
+            }
+            if (!"eventually".equals(type)
+                    && (step.interval() != null || step.until() != null)) {
+                diagnostics.add(Diagnostic.error(path,
+                        "interval and until are only allowed on eventually steps"));
             }
             if ("wait".equals(type) && !isPositiveDuration(step.timeout())) {
                 diagnostics.add(Diagnostic.error(path + ".timeout",
@@ -173,7 +203,7 @@ public class ScenarioValidator {
                 diagnostics.add(Diagnostic.error(path + ".timeout",
                         "Invalid timeout: " + step.timeout()));
             }
-            if (step.retry() != null) {
+            if (step.retry() != null && !GROUP_TYPES.contains(type)) {
                 ScenarioStep.RetryPolicy retry = step.retry();
                 if (retry.maxAttempts() < 1
                         || retry.backoffMs() < 0
@@ -240,14 +270,43 @@ public class ScenarioValidator {
         }
     }
 
-    private void validateParallelStep(
-            ScenarioStep step, String section, String path, List<Diagnostic> diagnostics) {
-        if (!"cleanup".equals(section) && !"execute".equals(section) && !"setup".equals(section)) {
-            return;
-        }
+    /**
+     * Rules shared by every grouping step: groups schedule their children and
+     * never invoke an operation themselves, so operation-level fields on the
+     * group are rejected instead of being silently ignored.
+     */
+    private void validateGroupStep(
+            ScenarioStep step, String section, String path, String type,
+            List<Diagnostic> diagnostics) {
         if ("cleanup".equals(section)) {
             diagnostics.add(Diagnostic.error(path,
-                    "Parallel steps are not allowed in cleanup"));
+                    capitalize(type) + " steps are not allowed in cleanup"));
+        }
+        if (step.operationId() != null && !step.operationId().isBlank()) {
+            diagnostics.add(Diagnostic.error(path + ".operationId",
+                    capitalize(type) + " steps invoke their children, not an operation"));
+        }
+        if (step.retry() != null) {
+            diagnostics.add(Diagnostic.error(path + ".retry",
+                    "Retry belongs on the child steps of a " + type + " group"));
+        }
+        if (step.expectError()) {
+            diagnostics.add(Diagnostic.error(path + ".expectError",
+                    "expectError belongs on the child steps of a " + type + " group"));
+        }
+        if (step.outputAs() != null && !step.outputAs().isBlank()) {
+            diagnostics.add(Diagnostic.error(path + ".outputAs",
+                    "outputAs belongs on the child steps of a " + type + " group"));
+        }
+        if (step.inputs() != null && !step.inputs().isEmpty()) {
+            diagnostics.add(Diagnostic.error(path + ".inputs",
+                    "inputs belong on the child steps of a " + type + " group"));
+        }
+    }
+
+    private void validateParallelStep(
+            ScenarioStep step, String section, String path, List<Diagnostic> diagnostics) {
+        if ("cleanup".equals(section)) {
             return;
         }
         if (step.steps() == null || step.steps().isEmpty()) {
@@ -256,36 +315,139 @@ public class ScenarioValidator {
             return;
         }
         for (ScenarioStep child : step.steps()) {
-            String childPath = path + "." + child.id();
-            String childType = child.type() == null ? "operation" : child.type();
-            if (!"operation".equals(childType)) {
-                diagnostics.add(Diagnostic.error(childPath + ".type",
-                        "Parallel children must be operation steps, got: " + childType));
+            validateGroupChild(child, path, "Parallel",
+                    "Parallel children start together and cannot declare dependsOn",
+                    diagnostics);
+        }
+    }
+
+    /**
+     * A repeat group runs its children once per iteration. The iteration count
+     * is known before execution: either a fixed {@code count} or a literal
+     * {@code forEach} list, so the compiler can bound the request budget.
+     */
+    private void validateRepeatStep(
+            ScenarioStep step, String section, String path, List<Diagnostic> diagnostics) {
+        if ("cleanup".equals(section)) {
+            return;
+        }
+        boolean hasCount = step.count() != null;
+        boolean hasForEach = step.forEach() != null;
+        if (hasCount == hasForEach) {
+            diagnostics.add(Diagnostic.error(path,
+                    "Repeat step requires exactly one of count or forEach"));
+        } else if (hasCount) {
+            if (step.count() < 1 || step.count() > MAX_REPEAT_ITERATIONS) {
+                diagnostics.add(Diagnostic.error(path + ".count",
+                        "Repeat count must be between 1 and " + MAX_REPEAT_ITERATIONS
+                                + ", got: " + step.count()));
             }
-            if (child.dependsOn() != null && !child.dependsOn().isEmpty()) {
-                diagnostics.add(Diagnostic.error(childPath + ".dependsOn",
-                        "Parallel children start together and cannot declare dependsOn"));
+        } else {
+            if (step.forEach().isEmpty()) {
+                diagnostics.add(Diagnostic.error(path + ".forEach",
+                        "Repeat forEach requires at least one item"));
+            } else if (step.forEach().size() > MAX_REPEAT_ITERATIONS) {
+                diagnostics.add(Diagnostic.error(path + ".forEach",
+                        "Repeat forEach must not exceed " + MAX_REPEAT_ITERATIONS
+                                + " items, got: " + step.forEach().size()));
             }
-            if (child.steps() != null && !child.steps().isEmpty()) {
-                diagnostics.add(Diagnostic.error(childPath + ".steps",
-                        "Parallel groups cannot be nested"));
-            }
-            if (child.retry() != null) {
-                ScenarioStep.RetryPolicy retry = child.retry();
-                if (retry.maxAttempts() < 1
-                        || retry.backoffMs() < 0
-                        || retry.backoffMultiplier() < 1
-                        || retry.maxBackoffMs() < 0) {
-                    diagnostics.add(Diagnostic.error(childPath + ".retry",
-                            "Retry values are out of range"));
-                }
-                if (child.expectError() && retry.maxAttempts() > 1) {
-                    diagnostics.add(Diagnostic.error(childPath + ".retry",
-                            "expectError cannot be combined with retry: "
-                                    + "a step that must fail has nothing to retry toward"));
+        }
+        if (step.steps() == null || step.steps().isEmpty()) {
+            diagnostics.add(Diagnostic.error(path + ".steps",
+                    "Repeat step requires at least one child step"));
+            return;
+        }
+        for (ScenarioStep child : step.steps()) {
+            validateGroupChild(child, path, "Repeat",
+                    "Repeat children run in declaration order and cannot declare dependsOn",
+                    diagnostics);
+        }
+    }
+
+    /**
+     * An eventually group polls one operation until every {@code until}
+     * condition holds in the same poll, or the timeout budget is spent.
+     */
+    private void validateEventuallyStep(
+            ScenarioStep step, String section, String path, List<Diagnostic> diagnostics) {
+        if ("cleanup".equals(section)) {
+            return;
+        }
+        if (!isPositiveDuration(step.timeout())) {
+            diagnostics.add(Diagnostic.error(path + ".timeout",
+                    "Eventually step requires a positive timeout budget (e.g. 10s)"));
+        }
+        if (step.interval() != null && !isPositiveDuration(step.interval())) {
+            diagnostics.add(Diagnostic.error(path + ".interval",
+                    "Eventually interval must be a positive duration: " + step.interval()));
+        }
+        if (step.until() == null || step.until().isEmpty()) {
+            diagnostics.add(Diagnostic.error(path + ".until",
+                    "Eventually step requires at least one until condition"));
+        } else {
+            for (int i = 0; i < step.until().size(); i++) {
+                ScenarioStep.Condition condition = step.until().get(i);
+                if (condition.assertionType() == null || condition.assertionType().isBlank()) {
+                    diagnostics.add(Diagnostic.error(path + ".until[" + i + "].assertionType",
+                            "Until condition requires an assertionType"));
                 }
             }
         }
+        if (step.steps() == null || step.steps().size() != 1) {
+            diagnostics.add(Diagnostic.error(path + ".steps",
+                    "Eventually step requires exactly one child operation step"));
+            return;
+        }
+        ScenarioStep child = step.steps().get(0);
+        validateGroupChild(child, path, "Eventually",
+                "The polled step cannot declare dependsOn", diagnostics);
+        if (child.retry() != null) {
+            diagnostics.add(Diagnostic.error(path + "." + child.id() + ".retry",
+                    "The polled step cannot retry: the eventually budget already "
+                            + "governs repeated attempts"));
+        }
+        if (child.expectError()) {
+            diagnostics.add(Diagnostic.error(path + "." + child.id() + ".expectError",
+                    "The polled step cannot declare expectError: a failed poll is "
+                            + "simply an unsatisfied condition"));
+        }
+    }
+
+    private void validateGroupChild(
+            ScenarioStep child, String path, String groupLabel,
+            String dependsOnMessage, List<Diagnostic> diagnostics) {
+        String childPath = path + "." + child.id();
+        String childType = child.type() == null ? "operation" : child.type();
+        if (!"operation".equals(childType)) {
+            diagnostics.add(Diagnostic.error(childPath + ".type",
+                    groupLabel + " children must be operation steps, got: " + childType));
+        }
+        if (child.dependsOn() != null && !child.dependsOn().isEmpty()) {
+            diagnostics.add(Diagnostic.error(childPath + ".dependsOn", dependsOnMessage));
+        }
+        if (child.steps() != null && !child.steps().isEmpty()) {
+            diagnostics.add(Diagnostic.error(childPath + ".steps",
+                    groupLabel + " groups cannot be nested"));
+        }
+        if (child.retry() != null) {
+            ScenarioStep.RetryPolicy retry = child.retry();
+            if (retry.maxAttempts() < 1
+                    || retry.backoffMs() < 0
+                    || retry.backoffMultiplier() < 1
+                    || retry.maxBackoffMs() < 0) {
+                diagnostics.add(Diagnostic.error(childPath + ".retry",
+                        "Retry values are out of range"));
+            }
+            if (child.expectError() && retry.maxAttempts() > 1) {
+                diagnostics.add(Diagnostic.error(childPath + ".retry",
+                        "expectError cannot be combined with retry: "
+                                + "a step that must fail has nothing to retry toward"));
+            }
+        }
+    }
+
+    private static String capitalize(String value) {
+        return Character.toUpperCase(value.charAt(0)) + value.substring(1);
     }
 
     private boolean isPositiveDuration(String value) {

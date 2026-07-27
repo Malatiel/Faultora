@@ -69,6 +69,17 @@ public final class ExpressionContext {
     }
 
     /**
+     * Return a new context with a top-level binding, such as the {@code repeat}
+     * object exposed to the children of a repeat group. The receiver is not
+     * modified; contexts stay immutable snapshots.
+     */
+    public ExpressionContext withBinding(String name, JsonNode value) {
+        ObjectNode newRoot = contextTree.deepCopy();
+        newRoot.set(name, value);
+        return new ExpressionContext(newRoot, secretKeys);
+    }
+
+    /**
      * Create a builder for constructing an ExpressionContext.
      */
     public static Builder builder() {

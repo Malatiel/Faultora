@@ -30,23 +30,23 @@ public class ConsoleRenderer implements ReportRenderer {
         RunEvent.RunFailed failed = null;
         List<NodeSummary> nodes = new ArrayList<>();
         Map<String, NodeSummary> nodeIndex = new HashMap<>();
-        Map<String, AssertionSummary> pendingAssertions = new HashMap<>();
+        Map<String, List<AssertionSummary>> pendingAssertions = new HashMap<>();
         Map<String, Integer> retryCounts = new HashMap<>();
+        Map<String, Integer> pollCounts = new HashMap<>();
 
         for (RunEvent event : events) {
             switch (event) {
                 case RunEvent.OperationRetried or ->
                         retryCounts.merge(or.nodeId().value(), 1, Integer::sum);
+                case RunEvent.ConditionPolled cp ->
+                        pollCounts.merge(cp.nodeId().value(), 1, Integer::sum);
                 case RunEvent.RunStarted rs -> started = rs;
                 case RunEvent.RunCompleted rc -> completed = rc;
                 case RunEvent.RunFailed rf -> failed = rf;
                 case RunEvent.NodeCompleted nc -> {
                     String nodeId = nc.nodeId().value();
-                    AssertionSummary assertion = pendingAssertions.remove(nodeId);
-                    String status = assertion != null && !"PASS".equals(assertion.outcome())
-                            ? "FAILED" : "PASSED";
-                    NodeSummary node = new NodeSummary(nodeId, status, nc.durationMs(), null);
-                    applyAssertion(node, assertion);
+                    NodeSummary node = new NodeSummary(nodeId, "PASSED", nc.durationMs(), null);
+                    applyAssertions(node, pendingAssertions.remove(nodeId));
                     nodes.add(node);
                     nodeIndex.put(nodeId, node);
                 }
@@ -54,7 +54,7 @@ public class ConsoleRenderer implements ReportRenderer {
                     String nodeId = nf.nodeId().value();
                     NodeSummary node = new NodeSummary(
                             nodeId, "FAILED", nf.durationMs(), nf.error());
-                    applyAssertion(node, pendingAssertions.remove(nodeId));
+                    applyAssertions(node, pendingAssertions.remove(nodeId));
                     nodes.add(node);
                     nodeIndex.put(nodeId, node);
                 }
@@ -63,9 +63,11 @@ public class ConsoleRenderer implements ReportRenderer {
                     AssertionSummary assertion = new AssertionSummary(ae.outcome(), ae.message());
                     NodeSummary node = nodeIndex.get(nodeId);
                     if (node != null) {
-                        applyAssertion(node, assertion);
+                        applyAssertions(node, List.of(assertion));
                     } else {
-                        pendingAssertions.put(nodeId, assertion);
+                        pendingAssertions
+                                .computeIfAbsent(nodeId, key -> new ArrayList<>())
+                                .add(assertion);
                     }
                 }
                 default -> { /* skip intermediate events */ }
@@ -84,18 +86,16 @@ public class ConsoleRenderer implements ReportRenderer {
         // Node summaries
         output.write("--- Nodes ---\n");
         for (NodeSummary node : nodes) {
-            Integer retries = retryCounts.get(node.name);
             output.write(String.format("  [%s] %s (%dms)%s\n",
                     node.status, node.name, node.durationMs,
-                    retries != null ? " — " + retries + " retr"
-                            + (retries == 1 ? "y" : "ies") : ""));
+                    attemptSuffix(retryCounts.get(node.name), pollCounts.get(node.name))));
             if (node.error != null) {
                 output.write("         Error: " + node.error.message() + "\n");
             }
-            if (node.assertionOutcome != null) {
-                output.write("         Assertion: " + node.assertionOutcome);
-                if (node.assertionMessage != null) {
-                    output.write(" — " + node.assertionMessage);
+            for (AssertionSummary assertion : node.assertions) {
+                output.write("         Assertion: " + assertion.outcome());
+                if (assertion.message() != null) {
+                    output.write(" — " + assertion.message());
                 }
                 output.write("\n");
             }
@@ -133,26 +133,37 @@ public class ConsoleRenderer implements ReportRenderer {
         output.flush();
     }
 
-    private static void applyAssertion(NodeSummary node, AssertionSummary assertion) {
-        if (assertion == null) {
+    private static void applyAssertions(NodeSummary node, List<AssertionSummary> assertions) {
+        if (assertions == null) {
             return;
         }
-        node.assertionOutcome = assertion.outcome();
-        node.assertionMessage = assertion.message();
-        if (!"PASS".equals(assertion.outcome())) {
-            node.status = "FAILED";
+        node.assertions.addAll(assertions);
+        for (AssertionSummary assertion : assertions) {
+            if (!"PASS".equals(assertion.outcome())) {
+                node.status = "FAILED";
+            }
         }
+    }
+
+    /** Attempt counts are only shown for nodes that made more than one. */
+    private static String attemptSuffix(Integer retries, Integer polls) {
+        if (retries != null) {
+            return " — " + retries + " retr" + (retries == 1 ? "y" : "ies");
+        }
+        if (polls != null) {
+            return " — " + polls + " poll" + (polls == 1 ? "" : "s");
+        }
+        return "";
     }
 
     private record AssertionSummary(String outcome, String message) {}
 
     private static class NodeSummary {
         final String name;
+        final List<AssertionSummary> assertions = new ArrayList<>();
         String status;
         long durationMs;
         NormalizedError error;
-        String assertionOutcome;
-        String assertionMessage;
 
         NodeSummary(String name, String status, long durationMs, NormalizedError error) {
             this.name = name;

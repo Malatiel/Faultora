@@ -18,6 +18,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Deterministic example payment API for end-to-end testing.
  * Uses Java's built-in HttpServer — no external dependencies.
  * Payment IDs are sequential; responses are deterministic.
+ * <p>
+ * A payment settles asynchronously: it is reported as {@code pending} until
+ * {@code settlementDelayMs} has passed since creation and as {@code settled}
+ * afterwards. The transition is derived from the creation timestamp on every
+ * read, so it needs no background thread and stays reproducible.
  */
 public class PaymentApi {
 
@@ -26,9 +31,13 @@ public class PaymentApi {
     private final Map<String, String> paymentIdsByIdempotencyKey = new ConcurrentHashMap<>();
     private final AtomicInteger idCounter = new AtomicInteger(0);
     private final boolean atomicIdempotency;
+    private final long settlementDelayMs;
     private HttpServer server;
     private java.util.concurrent.ExecutorService executor;
     private int port;
+
+    /** Default settlement delay of the example API, in milliseconds. */
+    public static final long DEFAULT_SETTLEMENT_DELAY_MS = 300;
 
     public PaymentApi() {
         this(true);
@@ -41,7 +50,17 @@ public class PaymentApi {
      *                          must detect
      */
     public PaymentApi(boolean atomicIdempotency) {
+        this(atomicIdempotency, DEFAULT_SETTLEMENT_DELAY_MS);
+    }
+
+    /**
+     * @param atomicIdempotency see {@link #PaymentApi(boolean)}
+     * @param settlementDelayMs how long a payment stays {@code pending} before
+     *                          reads report it as {@code settled}
+     */
+    public PaymentApi(boolean atomicIdempotency, long settlementDelayMs) {
         this.atomicIdempotency = atomicIdempotency;
+        this.settlementDelayMs = settlementDelayMs;
     }
 
     public void start() throws IOException {
@@ -112,7 +131,7 @@ public class PaymentApi {
         // instead of creating a duplicate.
         String idempotencyKey = exchange.getRequestHeaders().getFirst("Idempotency-Key");
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
-            respond(exchange, 201, payments.get(storeNewPayment(request)));
+            respond(exchange, 201, view(payments.get(storeNewPayment(request))));
             return;
         }
 
@@ -122,7 +141,7 @@ public class PaymentApi {
                 created[0] = true;
                 return storeNewPayment(request);
             });
-            respond(exchange, created[0] ? 201 : 200, payments.get(id));
+            respond(exchange, created[0] ? 201 : 200, view(payments.get(id)));
             return;
         }
 
@@ -131,7 +150,7 @@ public class PaymentApi {
         // check and create two payments.
         String existingId = paymentIdsByIdempotencyKey.get(idempotencyKey);
         if (existingId != null) {
-            respond(exchange, 200, payments.get(existingId));
+            respond(exchange, 200, view(payments.get(existingId)));
             return;
         }
         try {
@@ -141,7 +160,7 @@ public class PaymentApi {
         }
         String id = storeNewPayment(request);
         paymentIdsByIdempotencyKey.put(idempotencyKey, id);
-        respond(exchange, 201, payments.get(id));
+        respond(exchange, 201, view(payments.get(id)));
     }
 
     private String storeNewPayment(Map<String, Object> request) {
@@ -150,7 +169,7 @@ public class PaymentApi {
         payment.put("id", id);
         payment.put("amount", request.getOrDefault("amount", 100));
         payment.put("currency", request.getOrDefault("currency", "USD"));
-        payment.put("status", "created");
+        payment.put("status", "pending");
         payment.put("createdAt", System.currentTimeMillis());
         payments.put(id, payment);
         return id;
@@ -161,12 +180,30 @@ public class PaymentApi {
         if (payment == null) {
             respond(exchange, 404, Map.of("error", "Payment not found: " + id));
         } else {
-            respond(exchange, 200, payment);
+            respond(exchange, 200, view(payment));
         }
     }
 
     private void handleListPayments(HttpExchange exchange) throws IOException {
-        respond(exchange, 200, new ArrayList<>(payments.values()));
+        List<Map<String, Object>> view = new ArrayList<>();
+        for (Map<String, Object> payment : payments.values()) {
+            view.add(view(payment));
+        }
+        respond(exchange, 200, view);
+    }
+
+    /**
+     * Read view of a stored payment: the settlement status is derived from the
+     * creation timestamp, so a payment observed twice can legitimately change
+     * from {@code pending} to {@code settled} between reads.
+     */
+    private Map<String, Object> view(Map<String, Object> payment) {
+        long createdAt = ((Number) payment.get("createdAt")).longValue();
+        Map<String, Object> settled = new LinkedHashMap<>(payment);
+        settled.put("status",
+                System.currentTimeMillis() - createdAt >= settlementDelayMs
+                        ? "settled" : "pending");
+        return settled;
     }
 
     private void handleDeletePayment(HttpExchange exchange, String id) throws IOException {

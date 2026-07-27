@@ -306,7 +306,7 @@ class PlanCompilerTest {
     @Test
     void compileRejectsUnsupportedStepType() {
         ScenarioDocument scenario = scenarioWithExecuteStep(new ScenarioStep(
-                "repeat-step", "repeat", null,
+                "script-step", "script", null,
                 Map.of(), null, List.of(), null, null, Map.of()));
 
         PlanCompilationResult result = compile(scenario, policy);
@@ -645,6 +645,215 @@ class PlanCompilerTest {
         return new ScenarioStep(id, "parallel", null,
                 Map.of(), null, List.of(), null, null, false,
                 List.of(children), Map.of());
+    }
+
+    @Test
+    void compileRepeatGroupWithFixedCount() {
+        ScenarioDocument scenario = scenarioWithExecuteStep(repeatStep(3, null));
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isTrue();
+        PlanNode.RepeatNode repeat = (PlanNode.RepeatNode) result.plan().nodes().stream()
+                .filter(node -> node instanceof PlanNode.RepeatNode)
+                .findFirst().orElseThrow();
+        assertThat(repeat.iterations()).isEqualTo(3);
+        assertThat(repeat.items()).isNull();
+        assertThat(repeat.children()).hasSize(1);
+    }
+
+    @Test
+    void compileRepeatGroupWithForEachItems() {
+        ScenarioDocument scenario = scenarioWithExecuteStep(
+                repeatStep(null, List.of("EUR", "USD")));
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isTrue();
+        PlanNode.RepeatNode repeat = (PlanNode.RepeatNode) result.plan().nodes().stream()
+                .filter(node -> node instanceof PlanNode.RepeatNode)
+                .findFirst().orElseThrow();
+        assertThat(repeat.iterations()).isEqualTo(2);
+        assertThat(repeat.items()).containsExactly("EUR", "USD");
+    }
+
+    @Test
+    void compileRejectsRepeatWithBothCountAndForEach() {
+        ScenarioDocument scenario = scenarioWithExecuteStep(repeatStep(2, List.of("EUR")));
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.errors()).extracting(PlanDiagnostic::message)
+                .anyMatch(message -> message.contains("exactly one of count or forEach"));
+    }
+
+    @Test
+    void compileCountsEveryRepeatIterationAgainstTheRequestBudget() {
+        TargetPolicy tightPolicy = new TargetPolicy(
+                policy.allowedTargets(), policy.allowedOperationClasses(),
+                3, policy.maxConcurrency(), policy.maxDurationMs(),
+                policy.maxPayloadBytes(), policy.allowedFaultTypes(),
+                policy.allowedEnvironments());
+        ScenarioDocument scenario = scenarioWithExecuteStep(repeatStep(5, null));
+
+        PlanCompilationResult result = compile(scenario, tightPolicy);
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.errors()).extracting(PlanDiagnostic::message)
+                .anyMatch(message -> message.contains("Plan requires 5 requests"));
+    }
+
+    @Test
+    void compileEventuallyGroupDerivesThePollBudget() {
+        ScenarioDocument scenario = scenarioWithExecuteStep(eventuallyStep("10s", "1s"));
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isTrue();
+        PlanNode.EventuallyNode eventually = (PlanNode.EventuallyNode) result.plan().nodes()
+                .stream()
+                .filter(node -> node instanceof PlanNode.EventuallyNode)
+                .findFirst().orElseThrow();
+        assertThat(eventually.timeoutMs()).isEqualTo(10_000);
+        assertThat(eventually.intervalMs()).isEqualTo(1000);
+        assertThat(eventually.maxPolls()).isEqualTo(11);
+        assertThat(eventually.conditions()).hasSize(1);
+    }
+
+    @Test
+    void compileEventuallyGroupDefaultsThePollInterval() {
+        ScenarioDocument scenario = scenarioWithExecuteStep(eventuallyStep("5s", null));
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isTrue();
+        PlanNode.EventuallyNode eventually = (PlanNode.EventuallyNode) result.plan().nodes()
+                .stream()
+                .filter(node -> node instanceof PlanNode.EventuallyNode)
+                .findFirst().orElseThrow();
+        assertThat(eventually.intervalMs()).isEqualTo(PlanCompiler.DEFAULT_POLL_INTERVAL_MS);
+    }
+
+    @Test
+    void compileRejectsEventuallyIntervalLongerThanTheBudget() {
+        ScenarioDocument scenario = scenarioWithExecuteStep(eventuallyStep("1s", "5s"));
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.errors()).extracting(PlanDiagnostic::message)
+                .anyMatch(message -> message.contains("must not exceed the timeout budget"));
+    }
+
+    @Test
+    void compileOrdersAssertionsAfterTheGroupThatOwnsTheirTargetStep() {
+        ScenarioDocument scenario = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("groups", "groups", Map.of(), Map.of()),
+                Map.of(), List.of(), List.of(repeatStep(2, null)), List.of(),
+                List.of(new AssertionStep("check", "status", Map.of("expected", 201),
+                        "create", List.of(), null, Map.of())),
+                List.of());
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isTrue();
+        PlanNode.AssertionNode assertion = (PlanNode.AssertionNode) result.plan().nodes().stream()
+                .filter(node -> node instanceof PlanNode.AssertionNode)
+                .findFirst().orElseThrow();
+        assertThat(assertion.dependencies()).contains(new NodeId("batch"));
+        assertThat(assertion.targetNode()).isEqualTo(new NodeId("create"));
+    }
+
+    @Test
+    void compileCarriesTheScenarioDeadlineIntoThePlan() {
+        ScenarioDocument scenario = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("deadline", "deadline", Map.of(), Map.of()),
+                Map.of(), List.of(),
+                List.of(new ScenarioStep("step-1", "operation", "create-payment",
+                        Map.of(), null, List.of(), null, null, Map.of())),
+                List.of(), List.of(), List.of(), "30s");
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.plan().scenarioTimeoutMs()).isEqualTo(30_000);
+    }
+
+    @Test
+    void compileRejectsAnEventuallyBudgetThatWouldOutgrowThePollCap() {
+        ScenarioDocument scenario = scenarioWithExecuteStep(eventuallyStep("30s", "100ms"));
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.errors()).extracting(PlanDiagnostic::message)
+                .anyMatch(message -> message.contains("the maximum is "
+                        + PlanCompiler.MAX_POLL_ATTEMPTS)
+                        && message.contains("raise interval"));
+    }
+
+    @Test
+    void compileRejectsAnAssertionTargetingAGroupStep() {
+        ScenarioDocument scenario = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("groups", "groups", Map.of(), Map.of()),
+                Map.of(), List.of(), List.of(repeatStep(2, null)), List.of(),
+                // No targetStep: the default target is the last execute step,
+                // which is the repeat group itself.
+                List.of(new AssertionStep("check", "status", Map.of("expected", 201),
+                        null, List.of(), null, Map.of())),
+                List.of());
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.errors()).extracting(PlanDiagnostic::message)
+                .anyMatch(message -> message.contains("is a group step, which holds no evidence"));
+    }
+
+    @Test
+    void compileAttachesADependencyOnAGroupChildToTheGroup() {
+        ScenarioDocument scenario = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("groups", "groups", Map.of(), Map.of()),
+                Map.of(), List.of(),
+                List.of(
+                        repeatStep(2, null),
+                        new ScenarioStep("after-batch", "operation", "get-payment",
+                                Map.of(), null, List.of("create"), null, null, Map.of())),
+                List.of(), List.of(), List.of());
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isTrue();
+        PlanNode after = result.plan().node(new NodeId("after-batch")).orElseThrow();
+        // "create" runs inside the repeat group, so the engine waits for the
+        // group rather than skipping the dependent step.
+        assertThat(after.dependencies()).containsExactly(new NodeId("batch"));
+    }
+
+    private ScenarioStep repeatStep(Integer count, List<Object> forEach) {
+        return new ScenarioStep(
+                "batch", "repeat", null, null, null, List.of(), null, null,
+                false,
+                List.of(new ScenarioStep("create", "operation", "create-payment",
+                        Map.of(), null, List.of(), null, null, Map.of())),
+                count, forEach, null, null, Map.of());
+    }
+
+    private ScenarioStep eventuallyStep(String timeout, String interval) {
+        return new ScenarioStep(
+                "settled", "eventually", null, null, null, List.of(), timeout, null,
+                false,
+                List.of(new ScenarioStep("poll", "operation", "get-payment",
+                        Map.of(), null, List.of(), null, null, Map.of())),
+                null, null, interval,
+                List.of(new ScenarioStep.Condition(
+                        "status", Map.of("expected", 200), "settled")),
+                Map.of());
     }
 
     private PlanCompilationResult compile(ScenarioDocument scenario, TargetPolicy targetPolicy) {

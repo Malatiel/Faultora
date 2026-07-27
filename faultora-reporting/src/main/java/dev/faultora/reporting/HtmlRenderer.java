@@ -30,32 +30,32 @@ public class HtmlRenderer implements ReportRenderer {
         RunEvent.RunFailed failed = null;
         List<NodeRecord> nodes = new ArrayList<>();
         Map<String, NodeRecord> nodeIndex = new HashMap<>();
-        Map<String, AssertionRecord> pendingAssertions = new HashMap<>();
+        Map<String, List<AssertionRecord>> pendingAssertions = new HashMap<>();
         Map<String, Integer> retryCounts = new HashMap<>();
+        Map<String, Integer> pollCounts = new HashMap<>();
 
         for (RunEvent event : events) {
             switch (event) {
                 case RunEvent.OperationRetried or ->
                         retryCounts.merge(or.nodeId().value(), 1, Integer::sum);
+                case RunEvent.ConditionPolled cp ->
+                        pollCounts.merge(cp.nodeId().value(), 1, Integer::sum);
                 case RunEvent.RunStarted rs -> started = rs;
                 case RunEvent.RunCompleted rc -> completed = rc;
                 case RunEvent.RunFailed rf -> failed = rf;
                 case RunEvent.NodeCompleted nc -> {
                     String nodeId = nc.nodeId().value();
-                    AssertionRecord assertion = pendingAssertions.remove(nodeId);
-                    String status = assertion != null && !"PASS".equals(assertion.outcome())
-                            ? "FAILED" : "PASSED";
                     NodeRecord node = new NodeRecord(
-                            nodeId, status, nc.durationMs(), nc.statusCode(), null, null);
-                    applyAssertion(node, assertion);
+                            nodeId, "PASSED", nc.durationMs(), nc.statusCode(), null);
+                    applyAssertions(node, pendingAssertions.remove(nodeId));
                     nodes.add(node);
                     nodeIndex.put(nodeId, node);
                 }
                 case RunEvent.NodeFailed nf -> {
                     String nodeId = nf.nodeId().value();
                     NodeRecord node = new NodeRecord(
-                            nodeId, "FAILED", nf.durationMs(), -1, nf.error(), null);
-                    applyAssertion(node, pendingAssertions.remove(nodeId));
+                            nodeId, "FAILED", nf.durationMs(), -1, nf.error());
+                    applyAssertions(node, pendingAssertions.remove(nodeId));
                     nodes.add(node);
                     nodeIndex.put(nodeId, node);
                 }
@@ -64,9 +64,11 @@ public class HtmlRenderer implements ReportRenderer {
                     AssertionRecord assertion = new AssertionRecord(ae.outcome(), ae.message());
                     NodeRecord node = nodeIndex.get(nodeId);
                     if (node != null) {
-                        applyAssertion(node, assertion);
+                        applyAssertions(node, List.of(assertion));
                     } else {
-                        pendingAssertions.put(nodeId, assertion);
+                        pendingAssertions
+                                .computeIfAbsent(nodeId, key -> new ArrayList<>())
+                                .add(assertion);
                     }
                 }
                 default -> { /* skip */ }
@@ -129,15 +131,20 @@ public class HtmlRenderer implements ReportRenderer {
                 output.write("<span class=\"muted\">" + retries + " retr"
                         + (retries == 1 ? "y" : "ies") + "</span> ");
             }
+            Integer polls = pollCounts.get(node.name);
+            if (polls != null) {
+                output.write("<span class=\"muted\">" + polls + " poll"
+                        + (polls == 1 ? "" : "s") + "</span> ");
+            }
             if (node.error != null) {
                 output.write(escapeHtml(node.error.message()));
             }
-            if (node.assertionOutcome != null) {
+            for (AssertionRecord assertion : node.assertions) {
                 output.write(String.format("<span class=\"badge %s\">%s</span>",
-                        "PASS".equals(node.assertionOutcome) ? "pass" : "fail",
-                        escapeHtml(node.assertionOutcome)));
-                if (node.assertionMessage != null) {
-                    output.write(" — " + escapeHtml(node.assertionMessage));
+                        "PASS".equals(assertion.outcome()) ? "pass" : "fail",
+                        escapeHtml(assertion.outcome())));
+                if (assertion.message() != null) {
+                    output.write(" — " + escapeHtml(assertion.message()));
                 }
             }
             output.write("</td></tr>\n");
@@ -191,14 +198,15 @@ public class HtmlRenderer implements ReportRenderer {
                 .replace("\"", "&quot;");
     }
 
-    private static void applyAssertion(NodeRecord node, AssertionRecord assertion) {
-        if (assertion == null) {
+    private static void applyAssertions(NodeRecord node, List<AssertionRecord> assertions) {
+        if (assertions == null) {
             return;
         }
-        node.assertionOutcome = assertion.outcome();
-        node.assertionMessage = assertion.message();
-        if (!"PASS".equals(assertion.outcome())) {
-            node.status = "FAILED";
+        node.assertions.addAll(assertions);
+        for (AssertionRecord assertion : assertions) {
+            if (!"PASS".equals(assertion.outcome())) {
+                node.status = "FAILED";
+            }
         }
     }
 
@@ -206,21 +214,19 @@ public class HtmlRenderer implements ReportRenderer {
 
     private static class NodeRecord {
         final String name;
+        final List<AssertionRecord> assertions = new ArrayList<>();
         String status;
         long durationMs;
         int statusCode;
         NormalizedError error;
-        String assertionOutcome;
-        String assertionMessage;
 
         NodeRecord(String name, String status, long durationMs, int statusCode,
-                   NormalizedError error, String assertionMessage) {
+                   NormalizedError error) {
             this.name = name;
             this.status = status;
             this.durationMs = durationMs;
             this.statusCode = statusCode;
             this.error = error;
-            this.assertionMessage = assertionMessage;
         }
     }
 

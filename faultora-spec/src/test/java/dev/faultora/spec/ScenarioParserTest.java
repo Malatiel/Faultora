@@ -129,7 +129,7 @@ class ScenarioParserTest {
                 List.of(),
                 List.of(
                         new ScenarioStep(
-                                "repeat", "repeat", null,
+                                "script", "script", null,
                                 Map.of(), null, List.of(), null, null, Map.of()),
                         new ScenarioStep(
                                 "wait", "wait", null,
@@ -140,7 +140,7 @@ class ScenarioParserTest {
 
         assertThat(result.errors()).extracting(Diagnostic::message)
                 .contains(
-                        "Unsupported step type in this release: repeat",
+                        "Unsupported step type in this release: script",
                         "Wait step requires a positive duration");
     }
 
@@ -294,4 +294,125 @@ class ScenarioParserTest {
             return new String(is.readAllBytes(), StandardCharsets.UTF_8);
         }
     }
+
+    @Test
+    void parsesAndValidatesRepeatAndEventuallyGroups() {
+        String content = """
+                apiVersion: faultora.dev/v1alpha1
+                kind: Scenario
+                timeout: 2m
+                metadata:
+                  name: control-flow
+                execute:
+                  - id: batch
+                    type: repeat
+                    forEach: [EUR, USD]
+                    steps:
+                      - id: create
+                        type: operation
+                        operationId: create-payment
+                        inputs:
+                          body:
+                            currency: "{{repeat.item}}"
+                  - id: settled
+                    type: eventually
+                    timeout: 10s
+                    interval: 500ms
+                    dependsOn: [batch]
+                    steps:
+                      - id: poll
+                        type: operation
+                        operationId: get-payment
+                    until:
+                      - assertionType: jsonpath
+                        params:
+                          path: status
+                          equals: settled
+                        message: the payment settles asynchronously
+                """;
+
+        ParseResult<ScenarioDocument> parsed = parser.parse(content);
+        assertThat(parsed.isSuccess()).isTrue();
+        assertThat(parsed.document().timeout()).isEqualTo("2m");
+
+        ScenarioStep repeat = parsed.document().execute().get(0);
+        assertThat(repeat.forEach()).containsExactly("EUR", "USD");
+        assertThat(repeat.steps()).hasSize(1);
+
+        ScenarioStep eventually = parsed.document().execute().get(1);
+        assertThat(eventually.interval()).isEqualTo("500ms");
+        assertThat(eventually.until()).hasSize(1);
+        assertThat(eventually.until().get(0).assertionType()).isEqualTo("jsonpath");
+
+        assertThat(validator.validate(parsed.document()).isSuccess()).isTrue();
+    }
+
+    @Test
+    void validatorRejectsRepeatWithoutAnIterationSource() {
+        ScenarioStep repeat = new ScenarioStep(
+                "batch", "repeat", null, null, null, List.of(), null, null, false,
+                List.of(new ScenarioStep("create", "operation", "create-payment",
+                        Map.of(), null, List.of(), null, null, Map.of())),
+                null, null, null, null, Map.of());
+
+        ParseResult<ScenarioDocument> result = validator.validate(documentWith(repeat));
+
+        assertThat(result.errors()).extracting(Diagnostic::message)
+                .contains("Repeat step requires exactly one of count or forEach");
+    }
+
+    @Test
+    void validatorRejectsEventuallyWithoutConditions() {
+        ScenarioStep eventually = new ScenarioStep(
+                "settled", "eventually", null, null, null, List.of(), "10s", null, false,
+                List.of(new ScenarioStep("poll", "operation", "get-payment",
+                        Map.of(), null, List.of(), null, null, Map.of())),
+                null, null, null, null, Map.of());
+
+        ParseResult<ScenarioDocument> result = validator.validate(documentWith(eventually));
+
+        assertThat(result.errors()).extracting(Diagnostic::message)
+                .contains("Eventually step requires at least one until condition");
+    }
+
+    @Test
+    void validatorRejectsOperationFieldsOnAGroupStep() {
+        ScenarioStep repeat = new ScenarioStep(
+                "batch", "repeat", null, null, "bound", List.of(), null,
+                new ScenarioStep.RetryPolicy(3, 100, 2, 1000), false,
+                List.of(new ScenarioStep("create", "operation", "create-payment",
+                        Map.of(), null, List.of(), null, null, Map.of())),
+                2, null, null, null, Map.of());
+
+        ParseResult<ScenarioDocument> result = validator.validate(documentWith(repeat));
+
+        assertThat(result.errors()).extracting(Diagnostic::message)
+                .contains(
+                        "Retry belongs on the child steps of a repeat group",
+                        "outputAs belongs on the child steps of a repeat group");
+    }
+
+    @Test
+    void validatorRejectsAScenarioTimeoutThatIsNotADuration() {
+        ScenarioDocument document = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("deadline", "deadline", Map.of(), Map.of()),
+                Map.of(), List.of(),
+                List.of(new ScenarioStep("step", "operation", "create-payment",
+                        Map.of(), null, List.of(), null, null, Map.of())),
+                List.of(), List.of(), List.of(), "soon");
+
+        ParseResult<ScenarioDocument> result = validator.validate(document);
+
+        assertThat(result.errors()).extracting(Diagnostic::message)
+                .contains("Scenario timeout must be a positive duration: soon");
+    }
+
+    private ScenarioDocument documentWith(ScenarioStep step) {
+        return new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("control-flow", "control-flow", Map.of(), Map.of()),
+                Map.of(), List.of(), List.of(step), List.of(), List.of(), List.of());
+    }
+
 }

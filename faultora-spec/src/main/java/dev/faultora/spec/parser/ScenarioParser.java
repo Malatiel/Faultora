@@ -71,7 +71,7 @@ public class ScenarioParser {
 
             // Check for unknown top-level fields
             List<String> knownFields = List.of("apiVersion", "kind", "metadata", "inputs",
-                    "setup", "execute", "faults", "assertions", "cleanup");
+                    "setup", "execute", "faults", "assertions", "cleanup", "timeout");
             root.fieldNames().forEachRemaining(field -> {
                 if (!knownFields.contains(field)) {
                     diagnostics.add(Diagnostic.warning("", "Unknown top-level field: " + field));

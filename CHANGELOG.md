@@ -2,6 +2,62 @@
 
 All notable changes to Faultora are documented in this file.
 
+## 0.4.0 — 2026-07-27
+
+Scenarios can now express iteration, convergence, and time limits: the last
+control-flow gaps of the reliability engine.
+
+### Added
+
+- Eventually (poll-until) groups: `type: eventually` polls one operation every
+  `interval` until every `until` condition holds in the same poll, or the
+  `timeout` budget is spent. A failed request is an unsatisfied poll rather
+  than a failure, condition outcomes count towards the run's assertion totals,
+  the final poll's evidence is bound to the polled step, and each poll is
+  recorded as a `CONDITION_POLLED` journal event. The poll count is
+  `1 + timeout / interval`, so the whole block is budgeted before the first
+  request; a combination needing more than 100 polls is rejected during
+  compilation instead of being silently capped.
+- Repeat groups: `type: repeat` runs its child steps once per iteration, over
+  a fixed `count` or a literal `forEach` list, binding `{{repeat.index}}` and
+  `{{repeat.item}}`. Iterations are recorded under `<step-id>:<index>`, the
+  plain step ID resolves to the last completed iteration, and the group stops
+  at the first failing iteration.
+- Scenario deadline: the top-level `timeout` field bounds the whole run. Once
+  it elapses no further step starts, cleanup still runs, and the run fails
+  with `SCENARIO_DEADLINE_EXCEEDED`.
+- Reference scenarios `eventually-settlement.yaml` and `repeat-batch.yaml`.
+  The example payment API now settles a payment asynchronously — reads report
+  `pending` until the settlement delay has passed and `settled` afterwards —
+  so the eventually scenario converges on real asynchronous state.
+- Console and HTML reports show the poll count of an eventually group and
+  every assertion of a node, not only the last one.
+
+### Fixed
+
+- A `timeout` on a parallel group is now enforced instead of being parsed and
+  discarded: children still running when it elapses are cancelled and reported
+  as `DEADLINE_EXCEEDED`.
+- Cleanup obligations are collected before execution starts, so a scenario
+  deadline or cancellation can no longer skip a cleanup step that appears
+  after the interrupted node.
+- JUnit XML now attributes a failed assertion to its own node regardless of
+  event order, instead of only to the most recently completed node.
+- `dependsOn` pointing at a step that runs inside a group now waits for the
+  group. Previously the dependent step was silently skipped, because the child
+  is not a node the engine schedules on its own.
+
+### Changed
+
+- `retry`, `expectError`, `outputAs`, `inputs`, and `operationId` on a
+  grouping step (`parallel`, `repeat`, `eventually`) are rejected during
+  validation. They were previously accepted and silently ignored; they belong
+  on the group's child steps.
+- An assertion that targets a grouping step — explicitly, or by omitting
+  `targetStep` when the last `execute` step is a group — is now a compilation
+  error naming the problem. A group holds no evidence of its own, so the
+  assertion previously failed at run time as unevaluatable.
+
 ## 0.3.1 — 2026-07-24
 
 Compliance release; no functional changes.

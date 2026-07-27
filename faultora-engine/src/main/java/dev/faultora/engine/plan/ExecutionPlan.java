@@ -24,6 +24,7 @@ public final class ExecutionPlan {
     private final long seed;
     private final String scenarioDigest;
     private final String catalogDigest;
+    private final long scenarioTimeoutMs;
 
     private ExecutionPlan(
             RunId runId,
@@ -33,7 +34,8 @@ public final class ExecutionPlan {
             TargetPolicy targetPolicy,
             long seed,
             String scenarioDigest,
-            String catalogDigest
+            String catalogDigest,
+            long scenarioTimeoutMs
     ) {
         this.runId = runId;
         this.scenario = scenario;
@@ -47,6 +49,7 @@ public final class ExecutionPlan {
         this.seed = seed;
         this.scenarioDigest = scenarioDigest;
         this.catalogDigest = catalogDigest;
+        this.scenarioTimeoutMs = scenarioTimeoutMs;
     }
 
     public RunId runId() { return runId; }
@@ -57,6 +60,13 @@ public final class ExecutionPlan {
     public long seed() { return seed; }
     public String scenarioDigest() { return scenarioDigest; }
     public String catalogDigest() { return catalogDigest; }
+
+    /**
+     * Scenario deadline in milliseconds from run start (0 = no deadline).
+     * Once it elapses the engine starts no further setup, execute, fault, or
+     * assertion node and proceeds to cleanup.
+     */
+    public long scenarioTimeoutMs() { return scenarioTimeoutMs; }
 
     /**
      * Get a node by its ID.
@@ -136,6 +146,7 @@ public final class ExecutionPlan {
         private long seed;
         private String scenarioDigest;
         private String catalogDigest;
+        private long scenarioTimeoutMs;
 
         public Builder runId(RunId runId) { this.runId = runId; return this; }
         public Builder scenario(ScenarioDocument scenario) { this.scenario = scenario; return this; }
@@ -144,6 +155,10 @@ public final class ExecutionPlan {
         public Builder seed(long seed) { this.seed = seed; return this; }
         public Builder scenarioDigest(String digest) { this.scenarioDigest = digest; return this; }
         public Builder catalogDigest(String digest) { this.catalogDigest = digest; return this; }
+        public Builder scenarioTimeoutMs(long timeoutMs) {
+            this.scenarioTimeoutMs = timeoutMs;
+            return this;
+        }
 
         public Builder addNode(PlanNode node) {
             nodes.add(node);
@@ -162,7 +177,7 @@ public final class ExecutionPlan {
             Objects.requireNonNull(targetPolicy, "targetPolicy");
             return new ExecutionPlan(
                     runId, scenario, catalog, nodes, targetPolicy,
-                    seed, scenarioDigest, catalogDigest
+                    seed, scenarioDigest, catalogDigest, scenarioTimeoutMs
             );
         }
     }

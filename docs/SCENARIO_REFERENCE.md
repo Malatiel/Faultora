@@ -1,6 +1,6 @@
 # Scenario reference
 
-This page documents the scenario format implemented by Faultora 0.3.1. The
+This page documents the scenario format implemented by Faultora 0.4.0. The
 format is versioned independently from the application:
 
 ```yaml
@@ -10,7 +10,7 @@ kind: Scenario
 
 Faultora rejects unsupported versions, missing required fields, duplicate step
 IDs, unknown references, dependency cycles, and execution features that are not
-available in 0.3.1.
+available in 0.4.0.
 
 ## Complete example
 
@@ -74,7 +74,7 @@ cleanup:
 Validate a document before running it:
 
 ```bash
-java -jar faultora-0.3.1.jar validate --scenario scenario.yaml
+java -jar faultora-0.4.0.jar validate --scenario scenario.yaml
 ```
 
 ## Top-level fields
@@ -84,6 +84,7 @@ java -jar faultora-0.3.1.jar validate --scenario scenario.yaml
 | `apiVersion` | yes | Must be `faultora.dev/v1alpha1`. |
 | `kind` | yes | Must be `Scenario`. |
 | `metadata` | yes | Scenario identity and descriptive metadata. |
+| `timeout` | no | Scenario deadline. Once it elapses no further step starts, cleanup still runs, and the run fails with `SCENARIO_DEADLINE_EXCEEDED`. |
 | `inputs` | no | Input declarations, bound at runtime with `faultora test --input key=value` and available as `{{inputs.<name>}}`. |
 | `setup` | no | Operation or wait steps executed before the main section. |
 | `execute` | yes | Main operation or wait steps. Must contain at least one step. |
@@ -150,7 +151,7 @@ Operation steps may appear in `setup`, `execute`, and `cleanup`.
 | Field | Required | Description |
 |---|---:|---|
 | `id` | yes | Stable ID, unique across every scenario section. |
-| `type` | no | Defaults to `operation`; may also be `wait`. |
+| `type` | no | Defaults to `operation`; may also be `wait`, `parallel`, `repeat`, or `eventually`. |
 | `operationId` | for operations | Must match an OpenAPI `operationId`. |
 | `inputs` | no | Path, query, header, and body values. |
 | `dependsOn` | no | IDs that must complete successfully first. |
@@ -209,6 +210,7 @@ The expression context contains:
 | `steps.<name>.status` | HTTP status of the step bound with `outputAs: <name>`. |
 | `steps.<name>.body` | Parsed JSON response body (present only when the evidence policy captures bodies). |
 | `steps.<name>.headers` | Response headers, filtered by the evidence policy. |
+| `repeat.index`, `repeat.item` | Current iteration inside a [repeat step](#repeat-steps). |
 | `run.seed`, `run.target` | Run metadata. |
 
 ```yaml
@@ -276,6 +278,111 @@ Semantics:
   directly, and their execution is ordered after the whole group;
 - every child (and each retry attempt) counts against the policy request
   budget.
+
+## Repeat steps
+
+A `repeat` step runs its child operation steps once per iteration:
+
+```yaml
+execute:
+  - id: create-batch
+    type: repeat
+    forEach:
+      - EUR
+      - USD
+      - GBP
+    steps:
+      - id: create-payment
+        type: operation
+        operationId: create-payment
+        inputs:
+          body:
+            amount: 1200
+            currency: "{{repeat.item}}"
+          headers:
+            X-Batch-Index: "{{repeat.index}}"
+```
+
+| Field | Required | Description |
+|---|---:|---|
+| `count` | one of | Fixed number of iterations, 1–100. |
+| `forEach` | one of | Literal item list; one iteration per item, at most 100. |
+| `steps` | yes | Child operation steps, run in declaration order every iteration. |
+| `timeout` | no | Deadline for the whole group. |
+| `dependsOn` | no | IDs that must complete before the first iteration. |
+
+Semantics:
+
+- exactly one of `count` and `forEach` is required, and both are resolved
+  during compilation, so the group's full request budget is known before any
+  request is sent;
+- each iteration binds `{{repeat.index}}` (0-based) and, for `forEach`,
+  `{{repeat.item}}`; iterations are independent — a step output bound in one
+  iteration is not visible in the next;
+- iteration results are recorded under `<step-id>:<index>` (`create-payment:0`,
+  `create-payment:1`, …), and the plain step ID resolves to the last completed
+  iteration, so assertions may target either;
+- the group stops at the first failing iteration and reports its index;
+- every iteration of every child counts against the policy request budget.
+
+`forEach` takes a literal list. A list whose length is only known at runtime
+is not supported, because an unbounded iteration count cannot be budgeted
+before execution.
+
+## Eventually steps
+
+An `eventually` step polls one operation until every `until` condition holds
+in the same poll:
+
+```yaml
+execute:
+  - id: settlement-visible
+    type: eventually
+    timeout: 10s
+    interval: 200ms
+    dependsOn: [create-payment]
+    steps:
+      - id: poll-payment
+        type: operation
+        operationId: get-payment
+        inputs:
+          paymentId: "{{steps.created.body.id}}"
+    until:
+      - assertionType: jsonpath
+        params:
+          path: status
+          equals: settled
+        message: settlement completes asynchronously
+```
+
+| Field | Required | Description |
+|---|---:|---|
+| `timeout` | yes | Total convergence budget. |
+| `interval` | no | Delay between polls; defaults to `1s` and must not exceed `timeout`. |
+| `steps` | yes | Exactly one child operation step — the polled request. |
+| `until` | yes | One or more conditions, each an `assertionType` with its documented `params` and an optional `message`. |
+| `dependsOn` | no | IDs that must complete before the first poll. |
+
+Semantics:
+
+- the block passes as soon as every condition holds in one poll, and fails
+  with `EVENTUALLY_TIMEOUT` when the budget is spent, reporting the number of
+  polls and the last unsatisfied condition;
+- a failed request is an unsatisfied poll, not a failure: the block keeps
+  polling until the budget runs out. That is what lets it converge on a
+  system that is still catching up;
+- conditions use the same providers, parameters, and messages as
+  [assertions](#assertions), and their outcomes count towards the run's
+  assertion totals;
+- the evidence of the final poll is bound to the child step ID, so ordinary
+  assertions may target the polled step;
+- the poll count is `1 + timeout / interval` and every poll counts against the
+  policy request budget; a combination that would need more than 100 polls is
+  rejected during compilation with the minimum `interval` that fits;
+- each poll is recorded as a `CONDITION_POLLED` journal event, and console and
+  HTML reports show the poll count per node;
+- the polled step cannot declare `retry` or `expectError` — the budget already
+  governs repeated attempts.
 
 ## Retries
 
@@ -404,7 +511,11 @@ Semantics:
 successfully before the dependent step can run. Cycles are rejected.
 
 Assertions implicitly depend on their `targetStep`. When `targetStep` is
-omitted, Faultora targets the last step in `execute`.
+omitted, Faultora targets the last step in `execute`. Grouping steps
+(`parallel`, `repeat`, `eventually`) hold no evidence of their own, so an
+assertion must name a child step; targeting the group — including by omitting
+`targetStep` when the last `execute` step is a group — is a compilation
+error.
 
 ```yaml
 - id: check-create
@@ -433,9 +544,9 @@ Every assertion has this common shape:
 | `id` | yes | Stable ID, unique across every scenario section. |
 | `assertionType` | yes | `status`, `header`, `jsonpath`, or `duration`. |
 | `params` | yes | Parameters documented for the selected assertion type. |
-| `targetStep` | no | Operation evidence to inspect; defaults to the last `execute` step. |
+| `targetStep` | no | Operation evidence to inspect; defaults to the last `execute` step. A grouping step holds no evidence of its own, so name one of its children. |
 | `dependsOn` | no | Additional dependencies that must pass first. |
-| `message` | no | Reserved; 0.3.1 reports the assertion provider's evaluated message. |
+| `message` | no | Reserved; 0.4.0 reports the assertion provider's evaluated message. |
 | `metadata` | no | Arbitrary assertion metadata. |
 
 An assertion that cannot be evaluated is treated as a failed node rather than
@@ -580,9 +691,13 @@ params:
 Faultora fails validation or plan compilation instead of silently ignoring:
 
 - retry policies on cleanup steps;
-- repeat and eventually/poll-until blocks;
-- parallel steps in cleanup, nested parallel groups, and wait steps inside
-  parallel groups;
+- `retry`, `expectError`, `outputAs`, `inputs`, and `operationId` on a
+  grouping step instead of on its children;
+- repeat groups whose iteration count is only known at runtime;
+- eventually blocks that would need more than 100 polls;
+- assertions targeting a grouping step instead of one of its children;
+- parallel, repeat, and eventually steps in cleanup, nested groups, and wait
+  steps inside groups;
 - distributed execution.
 
 See the [roadmap](ROADMAP.md) for planned delivery stages.

@@ -1,0 +1,61 @@
+apiVersion: faultora.dev/v1alpha1
+kind: Scenario
+
+metadata:
+  name: payment-batch-currencies
+  description: >-
+    Create one payment per currency in a fixed list, then verify that the
+    batch produced exactly one payment per iteration.
+  labels:
+    team: payments
+    suite: reliability
+
+timeout: 1m
+
+execute:
+  - id: create-batch
+    type: repeat
+    forEach:
+      - EUR
+      - USD
+      - GBP
+    steps:
+      - id: create-payment
+        type: operation
+        operationId: create-payment
+        inputs:
+          body:
+            amount: 1200
+            currency: "{{repeat.item}}"
+          headers:
+            X-Batch-Index: "{{repeat.index}}"
+
+  - id: list-payments
+    type: operation
+    operationId: list-payments
+    dependsOn: [create-batch]
+
+assertions:
+  - id: three-payments-exist
+    assertionType: jsonpath
+    targetStep: list-payments
+    params:
+      path: "@"
+      count: 3
+    message: Every iteration created exactly one payment
+
+  - id: payment-ids-are-unique
+    assertionType: jsonpath
+    targetStep: list-payments
+    params:
+      path: "[].id"
+      unique: true
+    message: Iterations must not share a payment ID
+
+  - id: last-iteration-used-the-last-currency
+    assertionType: jsonpath
+    targetStep: create-payment
+    params:
+      path: currency
+      equals: GBP
+    message: The plain step ID resolves to the last iteration
