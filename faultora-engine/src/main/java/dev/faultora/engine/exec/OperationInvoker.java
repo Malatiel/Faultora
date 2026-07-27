@@ -4,8 +4,6 @@ import dev.faultora.engine.evidence.NodeEvidence;
 import dev.faultora.engine.plan.PlanNode;
 import dev.faultora.model.catalog.NormalizedError;
 import dev.faultora.model.catalog.TargetDefinition;
-import dev.faultora.spec.expression.ExpressionContext;
-import dev.faultora.spec.expression.ExpressionEvaluator;
 import dev.faultora.spi.contract.Connector;
 import dev.faultora.spi.context.ConnectorContext;
 import dev.faultora.spi.result.OperationResult;
@@ -23,24 +21,23 @@ import java.util.Map;
 public final class OperationInvoker {
 
     private final Map<String, Connector> connectors;
-    private final ExpressionEvaluator expressionEvaluator = new ExpressionEvaluator();
 
     public OperationInvoker(Map<String, Connector> connectors) {
         this.connectors = Map.copyOf(connectors);
     }
 
     /**
-     * Execute the node once, resolving its input expressions against the given
-     * expression context.
+     * Execute the node once with inputs already resolved.
+     * <p>
+     * Inputs arrive resolved rather than being resolved here, so that every
+     * attempt of one node sends the same request: see {@link InputResolver}.
      */
     public OperationResult invoke(
             PlanNode.OperationNode node,
             NodeContext context,
-            ExpressionContext expressionContext
+            Map<String, Object> inputs
     ) {
         ConnectorContext connectorContext = context.connectorContext();
-        Map<String, Object> resolvedInputs = expressionEvaluator.resolveInputs(
-                node.inputExpressions(), expressionContext);
 
         String protocol = node.operation().protocol().value();
         Connector connector = connectors.get(protocol);
@@ -67,7 +64,7 @@ public final class OperationInvoker {
         var prepared = connector.prepare(target, operationContext);
         try {
             return connector.execute(
-                    prepared, node.operation(), resolvedInputs, operationContext);
+                    prepared, node.operation(), inputs, operationContext);
         } finally {
             connector.release(prepared);
         }
@@ -81,12 +78,12 @@ public final class OperationInvoker {
     public OperationResult invokeWithRetry(
             PlanNode.OperationNode node,
             NodeContext context,
-            ExpressionContext expressionContext
+            Map<String, Object> inputs
     ) throws InterruptedException {
         PlanNode.RetrySpec retry = node.retrySpec();
         int maxAttempts = retry == null ? 1 : retry.maxAttempts();
 
-        OperationResult result = invoke(node, context, expressionContext);
+        OperationResult result = invoke(node, context, inputs);
         for (int failedAttempt = 1; failedAttempt < maxAttempts; failedAttempt++) {
             if (result.error() == null || !result.error().retryable() || context.cancelled()) {
                 return result;
@@ -101,7 +98,7 @@ public final class OperationInvoker {
             if (context.cancelled()) {
                 return result;
             }
-            result = invoke(node, context, expressionContext);
+            result = invoke(node, context, inputs);
         }
         return result;
     }

@@ -47,7 +47,8 @@ class PlanCompilerTest {
                                         "amount", new InputDefinition("amount", InputDefinition.InputLocation.BODY, true, null, null, Map.of()),
                                         "currency", new InputDefinition("currency", InputDefinition.InputLocation.BODY, true, null, null, Map.of())
                                 ),
-                                null, Map.of("201", new SchemaId("Payment")),
+                                new SchemaId("PaymentRequest"),
+                                Map.of("201", new SchemaId("Payment")),
                                 Map.of("method", "POST", "path", "/payments")
                         ),
                         new OperationDefinition(
@@ -69,7 +70,16 @@ class PlanCompilerTest {
                                 Map.of("method", "POST", "path", "/log")
                         )
                 ),
-                Map.of(),
+                Map.of(new SchemaId("PaymentRequest"), new DataSchema(
+                        new SchemaId("PaymentRequest"), "object",
+                        "#/components/schemas/PaymentRequest",
+                        Map.of("type", "object",
+                                "required", List.of("amount"),
+                                "properties", Map.of(
+                                        "amount", Map.of("type", "integer",
+                                                "minimum", 1, "maximum", 1000),
+                                        "currency", Map.of("type", "string",
+                                                "enum", List.of("EUR", "USD")))))),
                 Map.of(),
                 List.of()
         );
@@ -854,6 +864,77 @@ class PlanCompilerTest {
                 List.of(new ScenarioStep.Condition(
                         "status", Map.of("expected", 200), "settled")),
                 Map.of());
+    }
+
+    @Test
+    void compileGeneratedRequestValues() {
+        ScenarioDocument scenario = scenarioWithExecuteStep(generatingStep("boundary", List.of("body")));
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isTrue();
+        PlanNode.OperationNode node = (PlanNode.OperationNode) result.plan().nodes().stream()
+                .filter(planNode -> planNode instanceof PlanNode.OperationNode)
+                .findFirst().orElseThrow();
+        assertThat(node.generation()).isNotNull();
+        assertThat(node.generation().strategy())
+                .isEqualTo(dev.faultora.schema.GenerationStrategy.BOUNDARY);
+        assertThat(node.generation().fields()).containsExactly("body");
+    }
+
+    @Test
+    void compileRejectsGeneratingAnInputTheOperationDoesNotDeclare() {
+        ScenarioDocument scenario = scenarioWithExecuteStep(
+                generatingStep("valid", List.of("nonexistent")));
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.errors()).extracting(PlanDiagnostic::message)
+                .anyMatch(message -> message.contains("declares no schema for it"));
+    }
+
+    @Test
+    void compileRejectsAnUnknownGenerationStrategy() {
+        ScenarioDocument scenario = scenarioWithExecuteStep(
+                generatingStep("creative", List.of("body")));
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.errors()).extracting(PlanDiagnostic::message)
+                .anyMatch(message -> message.contains("Unknown generation strategy"));
+    }
+
+    @Test
+    void compileRejectsASchemaThatCannotBeSatisfied() {
+        ApiCatalog withPattern = new ApiCatalog(
+                catalog.version(), catalog.targets(), catalog.operations(),
+                Map.of(new SchemaId("PaymentRequest"), new DataSchema(
+                        new SchemaId("PaymentRequest"), "object", "#/components/schemas/PaymentRequest",
+                        Map.of("type", "object",
+                                "required", List.of("iban"),
+                                "properties", Map.of("iban", Map.of(
+                                        "type", "string", "pattern", "^[A-Z]{2}[0-9]+$"))))),
+                catalog.authentication(), catalog.workflows());
+        ScenarioDocument scenario = scenarioWithExecuteStep(generatingStep("valid", List.of("body")));
+
+        PlanCompilationResult result = compiler.compile(
+                scenario, withPattern, policy, new RunId("run-001"), 42L,
+                "sha256:abc", "sha256:def");
+
+        // The scenario must fail before sending a request the contract rejects.
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.errors()).extracting(PlanDiagnostic::message)
+                .anyMatch(message -> message.contains("Cannot generate 'body'")
+                        && message.contains("regular expression"));
+    }
+
+    private ScenarioStep generatingStep(String strategy, List<String> fields) {
+        return new ScenarioStep(
+                "create", "operation", "create-payment", Map.of(), null, List.of(),
+                null, null, false, null, null, null, null, null,
+                new ScenarioStep.Generate(fields, strategy, null), Map.of());
     }
 
     private PlanCompilationResult compile(ScenarioDocument scenario, TargetPolicy targetPolicy) {

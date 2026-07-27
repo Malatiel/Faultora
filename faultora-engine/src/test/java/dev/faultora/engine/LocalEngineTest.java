@@ -1,6 +1,7 @@
 package dev.faultora.engine;
 
 import dev.faultora.engine.exec.RetryBackoff;
+import dev.faultora.schema.GenerationStrategy;
 import dev.faultora.engine.journal.RunJournal;
 import dev.faultora.engine.plan.ExecutionPlan;
 import dev.faultora.engine.plan.PlanNode;
@@ -58,7 +59,8 @@ class LocalEngineTest {
                                 new ProtocolId("http"),
                                 new TargetId("default"),
                                 SafetyClassification.MUTATING,
-                                Map.of(), null, Map.of("201", new SchemaId("Payment")),
+                                Map.of(), new SchemaId("PaymentRequest"),
+                                Map.of("201", new SchemaId("Payment")),
                                 Map.of("method", "POST", "path", "/payments")
                         ),
                         new OperationDefinition(
@@ -78,7 +80,17 @@ class LocalEngineTest {
                                 Map.of("method", "POST", "path", "/cleanup")
                         )
                 ),
-                Map.of(), Map.of(), List.of()
+                Map.of(new SchemaId("PaymentRequest"), new DataSchema(
+                        new SchemaId("PaymentRequest"), "object",
+                        "#/components/schemas/PaymentRequest",
+                        Map.of("type", "object",
+                                "required", List.of("amount", "currency"),
+                                "properties", Map.of(
+                                        "amount", Map.of("type", "integer",
+                                                "minimum", 1, "maximum", 1000),
+                                        "currency", Map.of("type", "string",
+                                                "enum", List.of("EUR", "USD")))))),
+                Map.of(), List.of()
         );
 
         policy = new TargetPolicy(
@@ -1207,6 +1219,135 @@ class LocalEngineTest {
         return events;
     }
 
+    @Test
+    void generatedInputsReachTheConnectorAndAreRecordedByDigest() throws Exception {
+        CapturingConnector connector = new CapturingConnector();
+        ExecutionPlan plan = planWithGeneratedBody(11L, GenerationStrategy.VALID);
+
+        Path journalPath = tempDir.resolve("generated.ndjson");
+        RunResult result;
+        try (RunJournal journal = new RunJournal(journalPath, true)) {
+            result = new LocalEngine(Map.of("http", connector), Map.of())
+                    .execute(plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+        }
+
+        assertThat(result.status()).isEqualTo(RunResult.Status.PASSED);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body =
+                (Map<String, Object>) connector.captured.get("create-payment").get("body");
+        assertThat(body).containsKeys("amount", "currency");
+        assertThat(((Number) body.get("amount")).intValue()).isBetween(1, 1000);
+        assertThat(body.get("currency")).isIn("EUR", "USD");
+
+        // The payload itself never enters the journal, only its digest.
+        String events = Files.readString(journalPath);
+        assertThat(events).contains("INPUTS_GENERATED");
+        assertThat(events).contains("\"digest\":\"sha256:");
+        assertThat(events).doesNotContain("\"currency\":\"" + body.get("currency"));
+    }
+
+    @Test
+    void theSameSeedGeneratesTheSameRequestOnEveryRun() throws Exception {
+        CapturingConnector first = new CapturingConnector();
+        CapturingConnector second = new CapturingConnector();
+        CapturingConnector other = new CapturingConnector();
+
+        runGenerating(first, planWithGeneratedBody(99L, GenerationStrategy.VALID));
+        runGenerating(second, planWithGeneratedBody(99L, GenerationStrategy.VALID));
+        runGenerating(other, planWithGeneratedBody(100L, GenerationStrategy.VALID));
+
+        assertThat(first.captured.get("create-payment"))
+                .isEqualTo(second.captured.get("create-payment"));
+        assertThat(first.captured.get("create-payment"))
+                .isNotEqualTo(other.captured.get("create-payment"));
+    }
+
+    @Test
+    void explicitInputsAreAppliedOverGeneratedOnes() throws Exception {
+        CapturingConnector connector = new CapturingConnector();
+        ExecutionPlan plan = ExecutionPlan.builder()
+                .runId(new RunId("run-generate-override"))
+                .scenario(buildScenario())
+                .catalog(catalog)
+                .targetPolicy(policy)
+                .seed(5L)
+                .scenarioDigest("sha256:abc")
+                .catalogDigest("sha256:def")
+                .addNode(new PlanNode.OperationNode(
+                        new NodeId("create-payment"), new OperationId("create-payment"),
+                        findOp("create-payment"),
+                        Map.of("body", Map.of("currency", "CHF")), null,
+                        false, null, List.of(), SafetyClassification.MUTATING, 0, 0,
+                        new PlanNode.GenerationRequest(
+                                List.of("body"), GenerationStrategy.VALID, true)))
+                .build();
+
+        runGenerating(connector, plan);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body =
+                (Map<String, Object>) connector.captured.get("create-payment").get("body");
+        // The pinned field wins; the generated ones around it survive.
+        assertThat(body.get("currency")).isEqualTo("CHF");
+        assertThat(body).containsKey("amount");
+    }
+
+    @Test
+    void everyRetryOfANodeSendsTheIdenticalGeneratedRequest() throws Exception {
+        RecordingFailingConnector connector = new RecordingFailingConnector();
+        ExecutionPlan plan = ExecutionPlan.builder()
+                .runId(new RunId("run-generate-retry"))
+                .scenario(buildScenario())
+                .catalog(catalog)
+                .targetPolicy(policy)
+                .seed(3L)
+                .scenarioDigest("sha256:abc")
+                .catalogDigest("sha256:def")
+                .addNode(new PlanNode.OperationNode(
+                        new NodeId("create-payment"), new OperationId("create-payment"),
+                        findOp("create-payment"), Map.of(), null,
+                        false, new PlanNode.RetrySpec(3, 1, 1, 1),
+                        List.of(), SafetyClassification.MUTATING, 0, 2,
+                        new PlanNode.GenerationRequest(
+                                List.of("body"), GenerationStrategy.VALID, true)))
+                .build();
+
+        try (RunJournal journal = new RunJournal(tempDir.resolve("retry-gen.ndjson"), true)) {
+            new LocalEngine(Map.of("http", connector), Map.of())
+                    .execute(plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+        }
+
+        // A retry must resend the same request, or an idempotency scenario
+        // would silently test something else.
+        assertThat(connector.bodies).hasSize(3);
+        assertThat(connector.bodies).containsOnly(connector.bodies.get(0));
+    }
+
+    private ExecutionPlan planWithGeneratedBody(long seed, GenerationStrategy strategy) {
+        return ExecutionPlan.builder()
+                .runId(new RunId("run-generate-" + seed))
+                .scenario(buildScenario())
+                .catalog(catalog)
+                .targetPolicy(policy)
+                .seed(seed)
+                .scenarioDigest("sha256:abc")
+                .catalogDigest("sha256:def")
+                .addNode(new PlanNode.OperationNode(
+                        new NodeId("create-payment"), new OperationId("create-payment"),
+                        findOp("create-payment"), Map.of(), null,
+                        false, null, List.of(), SafetyClassification.MUTATING, 0, 0,
+                        new PlanNode.GenerationRequest(List.of("body"), strategy, true)))
+                .build();
+    }
+
+    private void runGenerating(Connector connector, ExecutionPlan plan) throws Exception {
+        try (RunJournal journal = new RunJournal(
+                tempDir.resolve(plan.runId().value() + ".ndjson"), true)) {
+            new LocalEngine(Map.of("http", connector), Map.of())
+                    .execute(plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+        }
+    }
+
     private OperationDefinition findOp(String id) {
         return catalog.operations().stream()
                 .filter(op -> op.id().value().equals(id))
@@ -1512,6 +1653,21 @@ class LocalEngineTest {
                     Map.of("content-type", List.of("application/json")),
                     ("{\"status\":\"" + (status == 200 ? "settled" : "pending") + "\"}").getBytes(),
                     5, Map.of());
+        }
+    }
+
+    /**
+     * Connector recording every request body it was asked to send, and always
+     * failing retryably.
+     */
+    static class RecordingFailingConnector extends FailingConnector {
+        final List<Object> bodies = new ArrayList<>();
+
+        @Override
+        public OperationResult execute(PreparedTarget preparedTarget, OperationDefinition operation,
+                                        Map<String, Object> inputs, ConnectorContext context) {
+            bodies.add(inputs.get("body"));
+            return super.execute(preparedTarget, operation, inputs, context);
         }
     }
 

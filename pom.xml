@@ -6,7 +6,7 @@
 
     <groupId>dev.faultora</groupId>
     <artifactId>faultora-parent</artifactId>
-    <version>0.4.0</version>
+    <version>0.5.0</version>
     <packaging>pom</packaging>
 
     <name>Faultora</name>
@@ -62,6 +62,7 @@
         <module>faultora-model</module>
         <module>faultora-spi</module>
         <module>faultora-spec</module>
+        <module>faultora-schema</module>
         <module>faultora-engine</module>
         <module>faultora-import-openapi</module>
         <module>faultora-connector-http</module>
@@ -91,6 +92,11 @@
             <dependency>
                 <groupId>dev.faultora</groupId>
                 <artifactId>faultora-spec</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.faultora</groupId>
+                <artifactId>faultora-schema</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

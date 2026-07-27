@@ -1,6 +1,6 @@
 # Scenario reference
 
-This page documents the scenario format implemented by Faultora 0.4.0. The
+This page documents the scenario format implemented by Faultora 0.5.0. The
 format is versioned independently from the application:
 
 ```yaml
@@ -10,7 +10,7 @@ kind: Scenario
 
 Faultora rejects unsupported versions, missing required fields, duplicate step
 IDs, unknown references, dependency cycles, and execution features that are not
-available in 0.4.0.
+available in 0.5.0.
 
 ## Complete example
 
@@ -74,7 +74,7 @@ cleanup:
 Validate a document before running it:
 
 ```bash
-java -jar faultora-0.4.0.jar validate --scenario scenario.yaml
+java -jar faultora-0.5.0.jar validate --scenario scenario.yaml
 ```
 
 ## Top-level fields
@@ -158,6 +158,7 @@ Operation steps may appear in `setup`, `execute`, and `cleanup`.
 | `timeout` | no | Positive duration: milliseconds, `ms`, `s`, or `m`. |
 | `outputAs` | no | Name binding the step's response for later steps. See [Expressions and step outputs](#expressions-and-step-outputs). |
 | `retry` | no | Retry policy for retryable operation errors. See [Retries](#retries). |
+| `generate` | no | Request values built from the operation's schemas. See [Generated request values](#generated-request-values). |
 | `expectError` | no | When `true`, the step passes only if the operation fails with a normalized error, and its dependents still run. Use for requests executed under an injected fault. If the operation succeeds instead, the step fails with `EXPECTED_ERROR`. |
 | `metadata` | no | Arbitrary step metadata. |
 
@@ -384,6 +385,75 @@ Semantics:
 - the polled step cannot declare `retry` or `expectError` — the budget already
   governs repeated attempts.
 
+## Generated request values
+
+A step may build its inputs from the schemas the catalog declares, instead of
+writing them out:
+
+```yaml
+- id: create-payment
+  type: operation
+  operationId: create-payment
+  generate:
+    fields: [body]
+    strategy: valid
+    preferExamples: true
+  inputs:
+    body:
+      currency: EUR
+```
+
+| Field | Required | Description |
+|---|---:|---|
+| `fields` | yes | Declared inputs to generate. `body` uses the operation's request schema; any other name uses that parameter's schema. |
+| `strategy` | no | `valid` (default), `boundary`, or `invalid`. |
+| `preferExamples` | no | When true (default), an `example` in the schema is sent verbatim instead of a generated value. |
+
+Strategies:
+
+| Strategy | What it sends |
+|---|---|
+| `valid` | A payload the schema accepts, with every declared property present. |
+| `boundary` | The smallest accepted payload — required properties only — with constrained values on their limits: `minimum`, `minLength`, `minItems`, the first `enum` member. |
+| `invalid` | A valid payload with exactly one constraint broken, for verifying that the target rejects it. The broken constraint is named in the report. |
+
+Semantics:
+
+- **explicit `inputs` are applied over generated values**, merging objects
+  field by field, so a scenario can generate a payload and still pin the
+  fields its assertions depend on;
+- **values are derived from the run seed and the step ID**: re-running with the
+  same `--seed` sends the identical payload. A retry and an `eventually` poll
+  resend the same payload — inputs are resolved once per step, not per attempt
+  — while the iterations of a `repeat` group each get their own, because each
+  iteration is its own step;
+- each generated input is recorded as an `INPUTS_GENERATED` journal event
+  carrying the seed, the schema ID, the strategy, and a **digest** of the
+  value. The payload itself is request data and is never written to the
+  journal;
+- console and HTML reports name the strategy per step, and for `invalid` the
+  constraint that was broken.
+
+Supported constraints: `type` (object, array, string, integer, number,
+boolean, null), `properties`, `required`, `enum`, `const`, `items`,
+`minItems`/`maxItems`, `minLength`/`maxLength`, `minimum`/`maximum` and their
+exclusive forms, `multipleOf`, `allOf`, `oneOf`/`anyOf`, `$ref` to another
+catalog schema, and the `uuid`, `date-time`, `date`, `email`, `uri`, and
+`hostname` formats.
+
+Anything else — most importantly `pattern` — is **rejected during plan
+compilation**, naming the field:
+
+```text
+Cannot generate 'body' from schema PaymentRequest: $.iban: values constrained
+by a regular expression cannot be generated; supply this value explicitly with
+inputs
+```
+
+The remedy is in the message: pin that field through `inputs`, where an
+explicit value overrides generation. The generator never sends a payload it
+knows the contract rejects.
+
 ## Retries
 
 Operation steps in `setup` and `execute` may declare a retry policy:
@@ -546,7 +616,7 @@ Every assertion has this common shape:
 | `params` | yes | Parameters documented for the selected assertion type. |
 | `targetStep` | no | Operation evidence to inspect; defaults to the last `execute` step. A grouping step holds no evidence of its own, so name one of its children. |
 | `dependsOn` | no | Additional dependencies that must pass first. |
-| `message` | no | Reserved; 0.4.0 reports the assertion provider's evaluated message. |
+| `message` | no | Reserved; 0.5.0 reports the assertion provider's evaluated message. |
 | `metadata` | no | Arbitrary assertion metadata. |
 
 An assertion that cannot be evaluated is treated as a failed node rather than
@@ -694,6 +764,8 @@ Faultora fails validation or plan compilation instead of silently ignoring:
 - `retry`, `expectError`, `outputAs`, `inputs`, and `operationId` on a
   grouping step instead of on its children;
 - repeat groups whose iteration count is only known at runtime;
+- generating values constrained by a regular expression, and shrinking a
+  generated payload to a minimal failing case;
 - eventually blocks that would need more than 100 polls;
 - assertions targeting a grouping step instead of one of its children;
 - parallel, repeat, and eventually steps in cleanup, nested groups, and wait

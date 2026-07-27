@@ -27,6 +27,7 @@ import java.util.Map;
 public final class EventuallyGroupExecutor {
 
     private final OperationInvoker invoker;
+    private final InputResolver inputResolver = new InputResolver();
     private final Map<String, AssertionProvider> assertionProviders;
 
     public EventuallyGroupExecutor(
@@ -61,6 +62,20 @@ public final class EventuallyGroupExecutor {
 
         context.journal().nodeStarted(child.nodeId(), "operation", child.operationId());
 
+        // Every poll asks the identical question: inputs are resolved once.
+        Map<String, Object> inputs;
+        try {
+            inputs = inputResolver.resolve(child, context, expressionContext);
+        } catch (RuntimeException unresolvable) {
+            // Compilation proves generated values are satisfiable, but a
+            // schema with alternatives can still surprise a run. Failing the
+            // group keeps cleanup and the run's terminal event intact.
+            return failed(context, groupId, child, new NormalizedError(
+                    NormalizedError.ErrorCategory.VALIDATION, "INPUTS_UNRESOLVABLE",
+                    "Cannot resolve the polled step's inputs: " + unresolvable.getMessage(),
+                    false, Map.of()), System.currentTimeMillis() - groupStart);
+        }
+
         List<AssertionResult> conditionResults = List.of();
         NodeEvidence evidence = null;
         boolean satisfied = false;
@@ -70,7 +85,7 @@ public final class EventuallyGroupExecutor {
             attempt++;
 
             evidence = new NodeEvidence(context.connectorContext().evidencePolicy());
-            OperationResult result = invoker.invoke(child, context, expressionContext);
+            OperationResult result = invoker.invoke(child, context, inputs);
             OperationInvoker.populateEvidence(evidence, result);
 
             conditionResults = evaluateConditions(group, evidence);
@@ -134,6 +149,21 @@ public final class EventuallyGroupExecutor {
         return new GroupOutcome(new RunResult.NodeResult(
                 groupId, "eventually", RunResult.Status.FAILED,
                 statusCode, durationMs, conditionResults, error), childResults);
+    }
+
+    /** The group and its polled step both failed, for reasons outside polling. */
+    private GroupOutcome failed(
+            NodeContext context, NodeId groupId, PlanNode.OperationNode child,
+            NormalizedError error, long durationMs) {
+        context.journal().nodeFailed(child.nodeId(), error, durationMs);
+        context.journal().nodeFailed(groupId, error, durationMs);
+        Map<NodeId, RunResult.NodeResult> childResults = new LinkedHashMap<>();
+        childResults.put(child.nodeId(), new RunResult.NodeResult(
+                child.nodeId(), "operation", RunResult.Status.FAILED,
+                -1, durationMs, List.of(), error));
+        return new GroupOutcome(new RunResult.NodeResult(
+                groupId, "eventually", RunResult.Status.FAILED,
+                -1, durationMs, List.of(), error), childResults);
     }
 
     private String firstUnknownConditionType(PlanNode.EventuallyNode group) {

@@ -88,6 +88,15 @@ public final class JournalWriter {
                 failedAttempt, maxAttempts, nextDelayMs, errorCode));
     }
 
+    /** A generated request value, referenced by digest rather than recorded. */
+    public void inputsGenerated(
+            NodeId nodeId, String field, String strategy, long seed,
+            String schemaId, byte[] value, String violation) {
+        append(new RunEvent.InputsGenerated(
+                "INPUTS_GENERATED", now(), runId, nodeId, field, strategy, seed,
+                schemaId, ContentDigest.sha256Uri(value), violation));
+    }
+
     public void faultInjected(ActiveFault fault) {
         append(new RunEvent.FaultInjected(
                 "FAULT_INJECTED", now(), runId, fault.handle(), fault.faultType(),

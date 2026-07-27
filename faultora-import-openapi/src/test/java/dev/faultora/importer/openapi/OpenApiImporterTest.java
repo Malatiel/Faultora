@@ -264,4 +264,81 @@ class OpenApiImporterTest {
             return new String(is.readAllBytes(), StandardCharsets.UTF_8);
         }
     }
+
+    @Test
+    void inlineRequestBodySchemasAreRegisteredInTheCatalog() {
+        String document = """
+                openapi: "3.0.3"
+                info:
+                  title: Inline schemas
+                  version: "1.0.0"
+                paths:
+                  /payments:
+                    post:
+                      operationId: create-payment
+                      requestBody:
+                        required: true
+                        content:
+                          application/json:
+                            schema:
+                              type: object
+                              required: [amount]
+                              properties:
+                                amount:
+                                  type: integer
+                      responses:
+                        "201":
+                          description: Created
+                """;
+
+        ImportResult result = importer.importSource(document, context);
+
+        assertThat(result.isSuccess()).isTrue();
+        OperationDefinition operation = result.catalog().operations().get(0);
+
+        // An inline body schema has no name in the document; without a
+        // synthetic one the operation would look as if it took no input.
+        assertThat(operation.requestSchemaId()).isNotNull();
+        DataSchema schema = result.catalog().schemas().get(operation.requestSchemaId());
+        assertThat(schema).isNotNull();
+        assertThat(schema.schemaType()).isEqualTo("object");
+        assertThat(schema.sourcePath()).contains("/payments");
+        assertThat(schema.definition()).containsKey("properties");
+    }
+
+    @Test
+    void referencedRequestBodySchemasKeepTheirComponentName() {
+        String document = """
+                openapi: "3.0.3"
+                info:
+                  title: Referenced schemas
+                  version: "1.0.0"
+                paths:
+                  /payments:
+                    post:
+                      operationId: create-payment
+                      requestBody:
+                        content:
+                          application/json:
+                            schema:
+                              $ref: "#/components/schemas/PaymentRequest"
+                      responses:
+                        "201":
+                          description: Created
+                components:
+                  schemas:
+                    PaymentRequest:
+                      type: object
+                      properties:
+                        amount:
+                          type: integer
+                """;
+
+        ImportResult result = importer.importSource(document, context);
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.catalog().operations().get(0).requestSchemaId())
+                .isEqualTo(new SchemaId("PaymentRequest"));
+    }
+
 }

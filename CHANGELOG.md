@@ -2,6 +2,45 @@
 
 All notable changes to Faultora are documented in this file.
 
+## 0.5.0 — 2026-07-27
+
+Requests can be built from the contract instead of written out by hand.
+
+### Added
+
+- Generated request values: a `generate` block on an operation step builds the
+  named inputs from the operation's schemas. Strategies are `valid` (default),
+  `boundary` — the smallest accepted payload with constrained values on their
+  limits — and `invalid`, which breaks exactly one constraint and names it in
+  the report. Explicit `inputs` are applied over generated values, merging
+  objects field by field, so a scenario can generate a payload and still pin
+  what it asserts on.
+- Generation is reproducible: values derive from the run seed and the step ID,
+  so the same `--seed` replays the identical payload. A retry and an
+  `eventually` poll resend the same payload — inputs are now resolved once per
+  step rather than once per attempt — while `repeat` iterations each get their
+  own.
+- An `example` declared in a schema is sent verbatim only when it satisfies
+  that schema; a stale example falls through to generation.
+- A schema the generator cannot satisfy fails plan compilation naming the
+  field, instead of sending a request the contract rejects. Supported
+  constraints are documented; `pattern` is deliberately not among them.
+- `INPUTS_GENERATED` journal events record the seed, schema, strategy, and a
+  digest of each generated value. The payload itself is request data and stays
+  out of the journal. Console and HTML reports name the strategy per step.
+- New module `faultora-schema` with the generator and a matching
+  `SchemaValidator`, which is what proves generated payloads satisfy their
+  source schema rather than the generator vouching for itself.
+- Reference scenario `generated-payment.yaml`, and constraints on the example
+  API's request schema so generation has something real to satisfy.
+
+### Fixed
+
+- The OpenAPI importer registers inline schemas — request bodies, parameters,
+  and responses written without a `$ref` — under a synthetic ID instead of
+  discarding them. An operation whose body was declared inline previously
+  looked as if it took no structured input at all.
+
 ## 0.4.0 — 2026-07-27
 
 Scenarios can now express iteration, convergence, and time limits: the last

@@ -52,6 +52,7 @@ public final class RunSummary {
         Map<String, List<Assertion>> pendingAssertions = new HashMap<>();
         Map<String, Integer> retries = new HashMap<>();
         Map<String, Integer> polls = new HashMap<>();
+        Map<String, String> generated = new HashMap<>();
 
         for (RunEvent event : events) {
             switch (event) {
@@ -62,6 +63,9 @@ public final class RunSummary {
                         retries.merge(retried.nodeId().value(), 1, Integer::sum);
                 case RunEvent.ConditionPolled polled ->
                         polls.merge(polled.nodeId().value(), 1, Integer::sum);
+                case RunEvent.InputsGenerated inputs -> generated.merge(
+                        inputs.nodeId().value(), describe(inputs),
+                        (existing, added) -> existing + ", " + added);
                 case RunEvent.NodeCompleted nodeCompleted -> {
                     Node node = new Node(
                             nodeCompleted.nodeId().value(), "PASSED",
@@ -99,10 +103,17 @@ public final class RunSummary {
         for (Node node : nodes) {
             node.retries = retries.get(node.name());
             node.polls = polls.get(node.name());
+            node.generated = generated.get(node.name());
         }
 
         return new RunSummary(
                 started, completed, failed, nodes, FaultTimeline.windows(events));
+    }
+
+    /** How a generated input is described in a report. */
+    private static String describe(RunEvent.InputsGenerated inputs) {
+        String label = inputs.field() + " (" + inputs.strategy() + ")";
+        return inputs.violation() == null ? label : label + ": " + inputs.violation();
     }
 
     public boolean passed() {
@@ -182,6 +193,7 @@ public final class RunSummary {
         private String status;
         private Integer retries;
         private Integer polls;
+        private String generated;
 
         private Node(String name, String status, long durationMs,
                      int statusCode, NormalizedError error) {
@@ -240,6 +252,16 @@ public final class RunSummary {
         /** Poll count, or null when the node is not a polling group. */
         public Integer polls() {
             return polls;
+        }
+
+        /**
+         * Generated inputs of this node, or null when it sent only values the
+         * scenario stated. Naming the strategy — and, for a deliberately
+         * invalid payload, the constraint broken — is what makes a run
+         * reviewable without the payload itself.
+         */
+        public String generated() {
+            return generated;
         }
 
         /** Messages of the assertions that did not pass. */

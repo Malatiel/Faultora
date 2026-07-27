@@ -4,6 +4,7 @@ import dev.faultora.spec.model.*;
 import dev.faultora.spec.parser.Diagnostic;
 import dev.faultora.spec.parser.DurationSyntax;
 import dev.faultora.spec.parser.ParseResult;
+import dev.faultora.schema.GenerationStrategy;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -193,6 +194,7 @@ public class ScenarioValidator {
                 diagnostics.add(Diagnostic.error(path,
                         "interval and until are only allowed on eventually steps"));
             }
+            validateGenerate(step, type, path, diagnostics);
             if ("wait".equals(type) && !isPositiveDuration(step.timeout())) {
                 diagnostics.add(Diagnostic.error(path + ".timeout",
                         "Wait step requires a positive duration"));
@@ -416,6 +418,45 @@ public class ScenarioValidator {
                     groupLabel + " groups cannot be nested"));
         }
         validateRetryPolicy(child, childPath, diagnostics);
+        validateGenerate(child, "operation", childPath, diagnostics);
+    }
+
+    /**
+     * Generated request values are meaningful only where an operation with
+     * declared schemas is invoked.
+     */
+    private void validateGenerate(
+            ScenarioStep step, String type, String path, List<Diagnostic> diagnostics) {
+        ScenarioStep.Generate generate = step.generate();
+        if (generate == null) {
+            return;
+        }
+        if (!"operation".equals(type)) {
+            diagnostics.add(Diagnostic.error(path + ".generate",
+                    "generate is only allowed on operation steps"));
+            return;
+        }
+        if (generate.fields() == null || generate.fields().isEmpty()) {
+            diagnostics.add(Diagnostic.error(path + ".generate.fields",
+                    "generate requires at least one input name, for example [body]"));
+        } else {
+            Set<String> seen = new HashSet<>();
+            for (String field : generate.fields()) {
+                if (field == null || field.isBlank()) {
+                    diagnostics.add(Diagnostic.error(path + ".generate.fields",
+                            "generated input names must not be blank"));
+                } else if (!seen.add(field)) {
+                    diagnostics.add(Diagnostic.error(path + ".generate.fields",
+                            "duplicate generated input: " + field));
+                }
+            }
+        }
+        if (generate.strategy() != null
+                && GenerationStrategy.from(generate.strategy()) == null) {
+            diagnostics.add(Diagnostic.error(path + ".generate.strategy",
+                    "Unknown generation strategy: " + generate.strategy()
+                            + ". Supported: valid, boundary, invalid"));
+        }
     }
 
     /** The one retry rule, applied to plain steps and to group children alike. */

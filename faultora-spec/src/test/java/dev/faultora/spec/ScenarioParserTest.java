@@ -408,6 +408,62 @@ class ScenarioParserTest {
                 .contains("Scenario timeout must be a positive duration: soon");
     }
 
+    @Test
+    void parsesAndValidatesGeneratedRequestValues() {
+        String content = """
+                apiVersion: faultora.dev/v1alpha1
+                kind: Scenario
+                metadata:
+                  name: generated-request
+                execute:
+                  - id: create-payment
+                    type: operation
+                    operationId: create-payment
+                    generate:
+                      fields: [body]
+                      strategy: boundary
+                      preferExamples: false
+                    inputs:
+                      body:
+                        currency: EUR
+                """;
+
+        ParseResult<ScenarioDocument> parsed = parser.parse(content);
+
+        assertThat(parsed.isSuccess()).isTrue();
+        ScenarioStep step = parsed.document().execute().get(0);
+        assertThat(step.generate().fields()).containsExactly("body");
+        assertThat(step.generate().strategy()).isEqualTo("boundary");
+        assertThat(step.generate().preferExamples()).isFalse();
+        assertThat(validator.validate(parsed.document()).isSuccess()).isTrue();
+    }
+
+    @Test
+    void validatorRejectsAnUnknownGenerationStrategy() {
+        ScenarioStep step = new ScenarioStep(
+                "create", "operation", "create-payment", Map.of(), null, List.of(),
+                null, null, false, null, null, null, null, null,
+                new ScenarioStep.Generate(List.of("body"), "creative", null), Map.of());
+
+        ParseResult<ScenarioDocument> result = validator.validate(documentWith(step));
+
+        assertThat(result.errors()).extracting(Diagnostic::message)
+                .anyMatch(message -> message.contains("Unknown generation strategy: creative"));
+    }
+
+    @Test
+    void validatorRejectsGenerateOnAStepThatInvokesNoOperation() {
+        ScenarioStep step = new ScenarioStep(
+                "pause", "wait", null, Map.of(), null, List.of(),
+                "100ms", null, false, null, null, null, null, null,
+                new ScenarioStep.Generate(List.of("body"), null, null), Map.of());
+
+        ParseResult<ScenarioDocument> result = validator.validate(documentWith(step));
+
+        assertThat(result.errors()).extracting(Diagnostic::message)
+                .contains("generate is only allowed on operation steps");
+    }
+
     private ScenarioDocument documentWith(ScenarioStep step) {
         return new ScenarioDocument(
                 "faultora.dev/v1alpha1", "Scenario",

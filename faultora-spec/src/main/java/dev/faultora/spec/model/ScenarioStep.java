@@ -25,6 +25,7 @@ import java.util.Map;
  * @param interval    delay between polls (for eventually groups)
  * @param until       conditions that must all hold in one poll (for eventually
  *                    groups)
+ * @param generate    request values to generate from the operation's schemas
  * @param metadata    additional step metadata
  */
 public record ScenarioStep(
@@ -42,6 +43,7 @@ public record ScenarioStep(
         List<Object> forEach,
         String interval,
         List<Condition> until,
+        Generate generate,
         Map<String, Object> metadata
 ) {
     /** Convenience constructor for steps without {@code expectError} or children. */
@@ -92,7 +94,29 @@ public record ScenarioStep(
             Map<String, Object> metadata
     ) {
         this(id, type, operationId, inputs, outputAs, dependsOn, timeout, retry,
-                expectError, steps, null, null, null, null, metadata);
+                expectError, steps, null, null, null, null, null, metadata);
+    }
+
+    /** Convenience constructor for steps without generated request values. */
+    public ScenarioStep(
+            String id,
+            String type,
+            String operationId,
+            Map<String, Object> inputs,
+            String outputAs,
+            List<String> dependsOn,
+            String timeout,
+            RetryPolicy retry,
+            boolean expectError,
+            List<ScenarioStep> steps,
+            Integer count,
+            List<Object> forEach,
+            String interval,
+            List<Condition> until,
+            Map<String, Object> metadata
+    ) {
+        this(id, type, operationId, inputs, outputAs, dependsOn, timeout, retry,
+                expectError, steps, count, forEach, interval, until, null, metadata);
     }
 
     /**
@@ -127,6 +151,25 @@ public record ScenarioStep(
             return maxAttempts > 1;
         }
     }
+
+    /**
+     * Request values generated from the operation's declared schemas.
+     * <p>
+     * Explicit {@code inputs} of the step are applied over generated values,
+     * so a scenario can generate a whole payload and still pin the fields it
+     * makes assertions about.
+     *
+     * @param fields         declared inputs to generate, such as {@code body}
+     * @param strategy       {@code valid} (default), {@code boundary}, or
+     *                       {@code invalid}
+     * @param preferExamples whether an {@code example} in the schema is used
+     *                       verbatim; defaults to true
+     */
+    public record Generate(
+            List<String> fields,
+            String strategy,
+            Boolean preferExamples
+    ) {}
 
     /**
      * A condition evaluated against the polled step's evidence inside an

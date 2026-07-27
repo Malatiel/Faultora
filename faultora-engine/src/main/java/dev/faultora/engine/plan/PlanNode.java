@@ -45,6 +45,30 @@ public sealed interface PlanNode permits
     SafetyClassification safety();
 
     /**
+     * Request values an operation node generates from the catalog's schemas.
+     * <p>
+     * The named inputs are generated at execution time; values the step states
+     * explicitly are applied over them, so a scenario can generate a payload
+     * and still pin what it asserts on.
+     *
+     * @param fields         declared inputs to generate, such as {@code body}
+     * @param strategy       relation between generated values and constraints
+     * @param preferExamples whether authored examples are used verbatim
+     */
+    record GenerationRequest(
+            List<String> fields,
+            dev.faultora.schema.GenerationStrategy strategy,
+            boolean preferExamples
+    ) {
+        public GenerationRequest {
+            if (fields == null || fields.isEmpty()) {
+                throw new IllegalArgumentException("generation requires at least one field");
+            }
+            fields = List.copyOf(fields);
+        }
+    }
+
+    /**
      * Retry behavior for an operation node. Delays follow exponential backoff
      * with deterministic seed-derived jitter, capped at {@code maxBackoffMs}
      * when it is positive.
@@ -81,8 +105,27 @@ public sealed interface PlanNode permits
             List<NodeId> dependencies,
             SafetyClassification safety,
             long deadlineMs,
-            int maxRetries
+            int maxRetries,
+            GenerationRequest generation
     ) implements PlanNode {
+        /** Convenience constructor for nodes without generated inputs. */
+        public OperationNode(
+                NodeId nodeId,
+                OperationId operationId,
+                OperationDefinition operation,
+                Map<String, Object> inputExpressions,
+                String outputBinding,
+                boolean expectError,
+                RetrySpec retrySpec,
+                List<NodeId> dependencies,
+                SafetyClassification safety,
+                long deadlineMs,
+                int maxRetries
+        ) {
+            this(nodeId, operationId, operation, inputExpressions, outputBinding,
+                    expectError, retrySpec, dependencies, safety, deadlineMs, maxRetries, null);
+        }
+
         /** Convenience constructor for nodes that expect success and never retry. */
         public OperationNode(
                 NodeId nodeId,
@@ -96,7 +139,7 @@ public sealed interface PlanNode permits
                 int maxRetries
         ) {
             this(nodeId, operationId, operation, inputExpressions, outputBinding,
-                    false, null, dependencies, safety, deadlineMs, maxRetries);
+                    false, null, dependencies, safety, deadlineMs, maxRetries, null);
         }
 
         /** Convenience constructor for nodes without retry. */
@@ -113,7 +156,7 @@ public sealed interface PlanNode permits
                 int maxRetries
         ) {
             this(nodeId, operationId, operation, inputExpressions, outputBinding,
-                    expectError, null, dependencies, safety, deadlineMs, maxRetries);
+                    expectError, null, dependencies, safety, deadlineMs, maxRetries, null);
         }
 
         /** The same node under a different ID, used for repeat iterations. */
@@ -121,7 +164,7 @@ public sealed interface PlanNode permits
             return new OperationNode(
                     iterationNodeId, operationId, operation, inputExpressions,
                     outputBinding, expectError, retrySpec, dependencies, safety,
-                    deadlineMs, maxRetries);
+                    deadlineMs, maxRetries, generation);
         }
     }
 

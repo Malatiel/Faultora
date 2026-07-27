@@ -7,7 +7,7 @@
     <parent>
         <groupId>dev.faultora</groupId>
         <artifactId>faultora-parent</artifactId>
-        <version>0.4.0</version>
+        <version>0.5.0</version>
     </parent>
 
     <artifactId>faultora-spec</artifactId>
@@ -15,6 +15,10 @@
     <description>Scenario document parsing and validation</description>
 
     <dependencies>
+        <dependency>
+            <groupId>dev.faultora</groupId>
+            <artifactId>faultora-schema</artifactId>
+        </dependency>
         <!-- JMESPath expression evaluation -->
         <dependency>
             <groupId>io.burt</groupId>

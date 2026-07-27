@@ -61,8 +61,11 @@ public class OpenApiImporter implements SourceImporter {
 
             // Build the catalog
             List<TargetDefinition> targets = extractTargets(root);
-            List<OperationDefinition> operations = extractOperations(root, targets);
+            // Component schemas first: operations register their inline schemas
+            // into the same map, so every schema an operation references is
+            // resolvable from the catalog alone.
             Map<SchemaId, DataSchema> schemas = extractSchemas(root);
+            List<OperationDefinition> operations = extractOperations(root, targets, schemas);
             Map<AuthSchemeId, AuthSchemeDefinition> authSchemes = extractSecuritySchemes(root);
 
             ApiCatalog catalog = new ApiCatalog(
@@ -149,7 +152,8 @@ public class OpenApiImporter implements SourceImporter {
     /**
      * Extract operation definitions from paths.
      */
-    private List<OperationDefinition> extractOperations(JsonNode root, List<TargetDefinition> targets) {
+    private List<OperationDefinition> extractOperations(
+            JsonNode root, List<TargetDefinition> targets, Map<SchemaId, DataSchema> schemas) {
         List<OperationDefinition> operations = new ArrayList<>();
         JsonNode paths = root.get("paths");
 
@@ -209,7 +213,10 @@ public class OpenApiImporter implements SourceImporter {
 
                     boolean required = param.has("required") && param.get("required").asBoolean(false);
                     String description = OpenApiUtils.getText(param, "description");
-                    SchemaId schemaId = extractSchemaRef(param.get("schema"));
+                    SchemaId schemaId = resolveSchema(
+                            param.get("schema"), schemas,
+                            operationId + "." + paramName,
+                            "#/paths/" + path + "/" + method + "/parameters/" + paramName);
 
                     Map<String, Object> metadata = new LinkedHashMap<>();
                     if (description != null) metadata.put("description", description);
@@ -222,7 +229,9 @@ public class OpenApiImporter implements SourceImporter {
                 // Request body
                 JsonNode requestBody = operation.get("requestBody");
                 if (requestBody != null && requestBody.isObject()) {
-                    SchemaId bodySchema = extractRequestBodySchema(requestBody);
+                    SchemaId bodySchema = extractRequestBodySchema(
+                            requestBody, schemas, operationId,
+                            "#/paths/" + path + "/" + method + "/requestBody");
                     boolean required = requestBody.has("required") && requestBody.get("required").asBoolean(false);
                     Map<String, Object> bodyMeta = new LinkedHashMap<>();
                     String bodyDesc = OpenApiUtils.getText(requestBody, "description");
@@ -235,6 +244,9 @@ public class OpenApiImporter implements SourceImporter {
                 }
 
                 // Extract response schemas (outcomes)
+                final String currentOperationId = operationId;
+                final String responseSourcePrefix = "#/paths/" + path + "/" + method
+                        + "/responses/";
                 Map<String, SchemaId> outcomes = new LinkedHashMap<>();
                 JsonNode responses = operation.get("responses");
                 if (responses != null && responses.isObject()) {
@@ -247,7 +259,10 @@ public class OpenApiImporter implements SourceImporter {
                                 // Try application/json first
                                 JsonNode jsonContent = content.get("application/json");
                                 if (jsonContent != null) {
-                                    SchemaId respSchema = extractSchemaRef(jsonContent.get("schema"));
+                                    SchemaId respSchema = resolveSchema(
+                                            jsonContent.get("schema"), schemas,
+                                            currentOperationId + ".response-" + statusCode,
+                                            responseSourcePrefix + statusCode);
                                     if (respSchema != null) {
                                         outcomes.put(statusCode, respSchema);
                                     }
@@ -313,15 +328,7 @@ public class OpenApiImporter implements SourceImporter {
             JsonNode schema = entry.getValue();
 
             SchemaId id = new SchemaId(name);
-            String schemaType = OpenApiUtils.getText(schema, "type");
-            if (schemaType == null) {
-                // Infer type from structure
-                if (schema.has("properties")) schemaType = "object";
-                else if (schema.has("items")) schemaType = "array";
-                else if (schema.has("oneOf") || schema.has("anyOf") || schema.has("allOf")) {
-                    schemaType = "composite";
-                } else schemaType = "unknown";
-            }
+            String schemaType = schemaTypeOf(schema);
 
             // Convert schema to a Map for storage
             @SuppressWarnings("unchecked")
@@ -426,23 +433,71 @@ public class OpenApiImporter implements SourceImporter {
     /**
      * Extract request body schema reference.
      */
-    private SchemaId extractRequestBodySchema(JsonNode requestBody) {
+    private SchemaId extractRequestBodySchema(
+            JsonNode requestBody, Map<SchemaId, DataSchema> schemas,
+            String operationId, String sourcePath) {
         JsonNode content = requestBody.get("content");
         if (content == null) return null;
 
-        // Try application/json
         JsonNode json = content.get("application/json");
         if (json != null) {
-            return extractSchemaRef(json.get("schema"));
+            return resolveSchema(
+                    json.get("schema"), schemas, operationId + ".body", sourcePath);
         }
 
-        // Try first available content type
+        // Fall back to the first declared content type.
         Iterator<JsonNode> it = content.elements();
         if (it.hasNext()) {
-            return extractSchemaRef(it.next().get("schema"));
+            return resolveSchema(
+                    it.next().get("schema"), schemas, operationId + ".body", sourcePath);
         }
 
         return null;
+    }
+
+    /**
+     * Resolve a schema node to a catalog schema ID.
+     * <p>
+     * A {@code $ref} names a component schema. An inline schema has no name in
+     * the source document, so it is registered under a synthetic ID derived
+     * from where it appears — otherwise every request body written inline
+     * would be dropped, and the operation would look as if it took no
+     * structured input at all.
+     *
+     * @param schemaNode     the schema node, or null
+     * @param schemas        catalog schemas, extended with inline definitions
+     * @param syntheticName  ID to register an inline schema under
+     * @param sourcePath     location in the source document, for diagnostics
+     * @return the schema ID, or null when there is no schema
+     */
+    private SchemaId resolveSchema(
+            JsonNode schemaNode, Map<SchemaId, DataSchema> schemas,
+            String syntheticName, String sourcePath) {
+        if (schemaNode == null || !schemaNode.isObject()) return null;
+
+        SchemaId referenced = extractSchemaRef(schemaNode);
+        if (referenced != null) {
+            return referenced;
+        }
+        if (schemaNode.isEmpty()) {
+            return null;
+        }
+
+        SchemaId id = new SchemaId(syntheticName);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> definition = MAPPER.convertValue(schemaNode, Map.class);
+        schemas.put(id, new DataSchema(id, schemaTypeOf(schemaNode), sourcePath, definition));
+        return id;
+    }
+
+    /** Declared type, or the one implied by the schema's structure. */
+    private String schemaTypeOf(JsonNode schema) {
+        String declared = OpenApiUtils.getText(schema, "type");
+        if (declared != null) return declared;
+        if (schema.has("properties")) return "object";
+        if (schema.has("items")) return "array";
+        if (schema.has("oneOf") || schema.has("anyOf") || schema.has("allOf")) return "composite";
+        return "unknown";
     }
 
     private String extractTitle(JsonNode root) {

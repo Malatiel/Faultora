@@ -1,0 +1,51 @@
+apiVersion: faultora.dev/v1alpha1
+kind: Scenario
+
+metadata:
+  name: payment-generated-request
+  description: >-
+    Build the request body from the operation's schema instead of writing it
+    out, while pinning the one field the assertions depend on. Re-running with
+    the same --seed sends the identical payload.
+  labels:
+    team: payments
+    suite: contract
+
+timeout: 1m
+
+execute:
+  - id: create-payment
+    type: operation
+    operationId: create-payment
+    outputAs: created
+    generate:
+      fields:
+        - body
+      strategy: valid
+    inputs:
+      body:
+        currency: EUR
+
+assertions:
+  - id: created
+    assertionType: status
+    targetStep: create-payment
+    params:
+      expected: 201
+    message: A generated payload satisfies the schema, so the API accepts it
+
+  - id: pinned-currency-survives
+    assertionType: jsonpath
+    targetStep: create-payment
+    params:
+      path: currency
+      equals: EUR
+    message: An explicit input is applied over the generated value
+
+  - id: generated-amount-is-within-its-range
+    assertionType: jsonpath
+    targetStep: create-payment
+    params:
+      path: amount
+      type: number
+    message: The amount came from the schema's declared range

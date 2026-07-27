@@ -14,3 +14,4 @@
 | [ADR-010](ADR-010-toxiproxy-admin-client.md) | Toxiproxy network faults through a minimal admin client | Accepted |
 | [ADR-011](ADR-011-bounded-control-flow.md) | Repeat and eventually blocks with compile-time bounds | Accepted |
 | [ADR-012](ADR-012-target-resolution.md) | Catalog-based target resolution with operator redirects | Accepted |
+| [ADR-013](ADR-013-request-generation.md) | Request generation from catalog schemas | Accepted |

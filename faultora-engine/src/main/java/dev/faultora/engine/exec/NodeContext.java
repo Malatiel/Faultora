@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * @param connectorContext deadlines, evidence policy, and secret resolution
  * @param evidence         evidence collected so far, keyed by node
  * @param faults           the run's fault session (rollback obligations)
+ * @param schemas          the catalog's schemas, resolved once for the run
  * @param cancellation     cooperative cancellation flag for the whole run
  */
 public record NodeContext(
@@ -29,6 +30,7 @@ public record NodeContext(
         ConnectorContext connectorContext,
         Map<NodeId, NodeEvidence> evidence,
         FaultSession faults,
+        dev.faultora.schema.SchemaCatalog schemas,
         AtomicBoolean cancellation
 ) {
     /**
@@ -38,7 +40,7 @@ public record NodeContext(
      */
     public NodeContext withEvidence(Map<NodeId, NodeEvidence> otherEvidence) {
         return new NodeContext(
-                plan, journal, connectorContext, otherEvidence, faults, cancellation);
+                plan, journal, connectorContext, otherEvidence, faults, schemas, cancellation);
     }
 
     public boolean cancelled() {

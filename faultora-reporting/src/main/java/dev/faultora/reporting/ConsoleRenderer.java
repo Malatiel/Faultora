@@ -74,14 +74,18 @@ public class ConsoleRenderer implements ReportRenderer {
         output.flush();
     }
 
-    /** Attempt counts are only shown for nodes that made more than one. */
+    /** What a node did beyond a single plain request, if anything. */
     private static String attemptSuffix(RunSummary.Node node) {
+        List<String> notes = new java.util.ArrayList<>();
         if (node.retries() != null) {
-            return " — " + node.retries() + " retr" + (node.retries() == 1 ? "y" : "ies");
+            notes.add(node.retries() + " retr" + (node.retries() == 1 ? "y" : "ies"));
         }
         if (node.polls() != null) {
-            return " — " + node.polls() + " poll" + (node.polls() == 1 ? "" : "s");
+            notes.add(node.polls() + " poll" + (node.polls() == 1 ? "" : "s"));
         }
-        return "";
+        if (node.generated() != null) {
+            notes.add("generated " + node.generated());
+        }
+        return notes.isEmpty() ? "" : " — " + String.join(", ", notes);
     }
 }

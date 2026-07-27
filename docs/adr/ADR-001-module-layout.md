@@ -16,8 +16,13 @@ interfaces.
 
 - Use Java 21 Maven multi-module build with a parent POM.
 - Group modules by concern: `faultora-model`, `faultora-spi`, `faultora-spec`,
-  `faultora-engine`, protocol importers, connectors, fault providers,
-  assertion providers, reporting, CLI, testkit, examples, and integration tests.
+  `faultora-schema`, `faultora-engine`, protocol importers, connectors, fault
+  providers, assertion providers, reporting, CLI, testkit, examples, and
+  integration tests.
+- A capability used by more than one consumer gets its own module rather than
+  a home inside one of them: `faultora-schema` generates and validates values
+  against catalog schemas for the engine today and for response-schema
+  assertions next, and depends only on `faultora-model`.
 - Enforce dependency direction with `maven-enforcer-plugin` and
   `bannedDependencies` rules.
 - Centralize dependency and plugin versions in the parent POM's

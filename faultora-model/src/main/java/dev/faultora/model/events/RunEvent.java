@@ -24,6 +24,7 @@ import java.util.Map;
         @JsonSubTypes.Type(value = RunEvent.NodeFailed.class, name = "NODE_FAILED"),
         @JsonSubTypes.Type(value = RunEvent.OperationRetried.class, name = "OPERATION_RETRIED"),
         @JsonSubTypes.Type(value = RunEvent.ConditionPolled.class, name = "CONDITION_POLLED"),
+        @JsonSubTypes.Type(value = RunEvent.InputsGenerated.class, name = "INPUTS_GENERATED"),
         @JsonSubTypes.Type(value = RunEvent.FaultInjected.class, name = "FAULT_INJECTED"),
         @JsonSubTypes.Type(value = RunEvent.FaultRolledBack.class, name = "FAULT_ROLLED_BACK"),
         @JsonSubTypes.Type(value = RunEvent.AssertionEvaluated.class, name = "ASSERTION_EVALUATED"),
@@ -136,6 +137,38 @@ public sealed interface RunEvent {
     ) implements RunEvent {
         public OperationRetried {
             eventType = "OPERATION_RETRIED";
+        }
+    }
+
+    /**
+     * A request value was generated from a schema.
+     * <p>
+     * The value itself is referenced by digest, never recorded: a generated
+     * payload is request data like any other, and the evidence policy decides
+     * whether request data is kept. The seed and the schema are what a replay
+     * needs.
+     *
+     * @param field     name of the generated input
+     * @param strategy  generation strategy used
+     * @param seed      seed the value was derived from
+     * @param schemaId  schema the value was generated from
+     * @param digest    digest of the generated value
+     * @param violation constraint deliberately broken, or null
+     */
+    record InputsGenerated(
+            String eventType,
+            long timestamp,
+            RunId runId,
+            NodeId nodeId,
+            String field,
+            String strategy,
+            long seed,
+            String schemaId,
+            String digest,
+            String violation
+    ) implements RunEvent {
+        public InputsGenerated {
+            eventType = "INPUTS_GENERATED";
         }
     }
 

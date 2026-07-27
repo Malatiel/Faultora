@@ -49,9 +49,11 @@ public class PlanCompiler {
             operationIndex.put(op.id().value(), op);
         }
 
+        GeneratedInputCompiler generatedInputs = new GeneratedInputCompiler(catalog, seed);
+
         // Compile setup steps
         compileSteps(scenario.setup(), "setup", operationIndex, targetPolicy,
-                childToGroup, nodes, diagnostics);
+                childToGroup, generatedInputs, nodes, diagnostics);
 
         // Compile fault steps before execute: a fault with no dependencies
         // activates before the first execute step runs.
@@ -59,7 +61,7 @@ public class PlanCompiler {
 
         // Compile execute steps
         compileSteps(scenario.execute(), "execute", operationIndex, targetPolicy,
-                childToGroup, nodes, diagnostics);
+                childToGroup, generatedInputs, nodes, diagnostics);
 
         // Compile assertion steps
         compileAssertionSteps(
@@ -68,7 +70,7 @@ public class PlanCompiler {
 
         // Compile cleanup steps
         compileSteps(scenario.cleanup(), "cleanup", operationIndex, targetPolicy,
-                childToGroup, nodes, diagnostics);
+                childToGroup, generatedInputs, nodes, diagnostics);
 
         long scenarioTimeoutMs = parseTimeout(
                 scenario.timeout(), "scenario", "", "timeout", diagnostics);
@@ -136,6 +138,7 @@ public class PlanCompiler {
             Map<String, OperationDefinition> operationIndex,
             TargetPolicy targetPolicy,
             Map<String, String> childToGroup,
+            GeneratedInputCompiler generatedInputs,
             List<PlanNode> nodes,
             List<PlanDiagnostic> diagnostics
     ) {
@@ -148,7 +151,8 @@ public class PlanCompiler {
             if ("operation".equals(step.type()) || step.type() == null) {
                 PlanNode.OperationNode operationNode = compileOperation(
                         step, phase, operationIndex, targetPolicy,
-                        resolveDependencies(step.dependsOn(), childToGroup), diagnostics);
+                        resolveDependencies(step.dependsOn(), childToGroup),
+                        generatedInputs, diagnostics);
                 if (operationNode == null) {
                     continue;
                 }
@@ -179,7 +183,8 @@ public class PlanCompiler {
                 }
 
                 List<PlanNode.OperationNode> children = compileGroupChildren(
-                        step, phase, "Parallel", operationIndex, targetPolicy, diagnostics);
+                        step, phase, "Parallel", operationIndex, targetPolicy,
+                        generatedInputs, diagnostics);
                 if (children == null) {
                     continue;
                 }
@@ -194,14 +199,16 @@ public class PlanCompiler {
 
             } else if ("repeat".equals(step.type())) {
                 PlanNode repeatNode = compileRepeat(
-                        step, phase, operationIndex, targetPolicy, childToGroup, diagnostics);
+                        step, phase, operationIndex, targetPolicy, childToGroup,
+                        generatedInputs, diagnostics);
                 if (repeatNode != null) {
                     nodes.add(repeatNode);
                 }
 
             } else if ("eventually".equals(step.type())) {
                 PlanNode eventuallyNode = compileEventually(
-                        step, phase, operationIndex, targetPolicy, childToGroup, diagnostics);
+                        step, phase, operationIndex, targetPolicy, childToGroup,
+                        generatedInputs, diagnostics);
                 if (eventuallyNode != null) {
                     nodes.add(eventuallyNode);
                 }
@@ -236,6 +243,7 @@ public class PlanCompiler {
             Map<String, OperationDefinition> operationIndex,
             TargetPolicy targetPolicy,
             Map<String, String> childToGroup,
+            GeneratedInputCompiler generatedInputs,
             List<PlanDiagnostic> diagnostics
     ) {
         String stepId = step.id();
@@ -261,7 +269,8 @@ public class PlanCompiler {
         }
 
         List<PlanNode.OperationNode> children = compileGroupChildren(
-                step, phase, "Repeat", operationIndex, targetPolicy, diagnostics);
+                step, phase, "Repeat", operationIndex, targetPolicy,
+                generatedInputs, diagnostics);
         if (children == null) {
             return null;
         }
@@ -285,6 +294,7 @@ public class PlanCompiler {
             Map<String, OperationDefinition> operationIndex,
             TargetPolicy targetPolicy,
             Map<String, String> childToGroup,
+            GeneratedInputCompiler generatedInputs,
             List<PlanDiagnostic> diagnostics
     ) {
         String stepId = step.id();
@@ -332,7 +342,8 @@ public class PlanCompiler {
         }
 
         List<PlanNode.OperationNode> children = compileGroupChildren(
-                step, phase, "Eventually", operationIndex, targetPolicy, diagnostics);
+                step, phase, "Eventually", operationIndex, targetPolicy,
+                generatedInputs, diagnostics);
         if (children == null) {
             return null;
         }
@@ -369,6 +380,7 @@ public class PlanCompiler {
             String groupLabel,
             Map<String, OperationDefinition> operationIndex,
             TargetPolicy targetPolicy,
+            GeneratedInputCompiler generatedInputs,
             List<PlanDiagnostic> diagnostics
     ) {
         List<ScenarioStep> childSteps = step.steps() == null ? List.of() : step.steps();
@@ -381,7 +393,8 @@ public class PlanCompiler {
         boolean valid = true;
         for (ScenarioStep child : childSteps) {
             PlanNode.OperationNode childNode = compileOperation(
-                    child, phase, operationIndex, targetPolicy, List.of(), diagnostics);
+                    child, phase, operationIndex, targetPolicy, List.of(),
+                    generatedInputs, diagnostics);
             if (childNode == null) {
                 valid = false;
                 continue;
@@ -415,6 +428,7 @@ public class PlanCompiler {
             Map<String, OperationDefinition> operationIndex,
             TargetPolicy targetPolicy,
             List<NodeId> deps,
+            GeneratedInputCompiler generatedInputs,
             List<PlanDiagnostic> diagnostics
     ) {
         String stepId = step.id();
@@ -482,13 +496,21 @@ public class PlanCompiler {
         }
         int maxRetries = retrySpec == null ? 0 : retrySpec.maxAttempts() - 1;
 
+        PlanNode.GenerationRequest generation = null;
+        if (step.generate() != null) {
+            generation = generatedInputs.compile(step, operation, phase, diagnostics);
+            if (generation == null) {
+                return null;
+            }
+        }
+
         Map<String, Object> inputExpressions = step.inputs() != null ?
                 new LinkedHashMap<>(step.inputs()) : Map.of();
 
         return new PlanNode.OperationNode(
                 new NodeId(stepId), new OperationId(opId), operation,
                 inputExpressions, step.outputAs(), step.expectError(),
-                retrySpec, deps, operation.safety(), deadlineMs, maxRetries
+                retrySpec, deps, operation.safety(), deadlineMs, maxRetries, generation
         );
     }
 

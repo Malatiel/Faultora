@@ -28,6 +28,7 @@ import java.util.Optional;
 public final class NodeExecutor {
 
     private final OperationInvoker invoker;
+    private final InputResolver inputResolver = new InputResolver();
     private final AssertionNodeExecutor assertions;
     private final FaultNodeExecutor faults;
 
@@ -116,7 +117,10 @@ public final class NodeExecutor {
             PlanNode.OperationNode node, NodeContext context,
             ExpressionContext expressionContext, NodeEvidence evidence)
             throws InterruptedException {
-        OperationResult result = invoker.invokeWithRetry(node, context, expressionContext);
+        // Inputs are resolved once: every attempt of this node sends the
+        // identical request.
+        OperationResult result = invoker.invokeWithRetry(
+                node, context, inputResolver.resolve(node, context, expressionContext));
         OperationInvoker.populateEvidence(evidence, result);
         return Optional.empty();
     }
@@ -139,7 +143,8 @@ public final class NodeExecutor {
         PlanNode.OperationNode asOperation = new PlanNode.OperationNode(
                 node.nodeId(), node.operationId(), definition, node.inputExpressions(),
                 null, node.dependencies(), node.safety(), node.deadlineMs(), node.maxRetries());
-        OperationResult result = invoker.invoke(asOperation, context, expressionContext);
+        OperationResult result = invoker.invoke(asOperation, context,
+                inputResolver.resolve(asOperation, context, expressionContext));
         OperationInvoker.populateEvidence(evidence, result);
         return Optional.empty();
     }

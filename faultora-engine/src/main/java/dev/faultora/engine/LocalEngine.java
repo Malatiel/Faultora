@@ -111,7 +111,9 @@ public class LocalEngine {
                 .toList();
 
         NodeContext nodeContext = new NodeContext(
-                plan, writer, connectorContext, evidence, faultSession, cancellation);
+                plan, writer, connectorContext, evidence, faultSession,
+                new dev.faultora.schema.SchemaCatalog(plan.catalog().schemas()),
+                cancellation);
 
         // Step outputs accumulate into the expression context as nodes finish.
         ExpressionContext currentContext = context;
