@@ -59,6 +59,14 @@ project's "no implicit egress" and "safe defaults" principles.
 - Adding a connector or fault provider still requires a deliberate change to
   the composition root — accepted, because that is where the policy that
   bounds it is assembled.
+- `ExtensionPolicy.allowedExtensions` is **not yet consulted at discovery
+  time**. The release JAR contains only built-in extensions, so SEC-08's
+  "built-in extensions compiled and reviewed with the release" still holds for
+  the shipped artifact; but a jar added to the classpath by hand would
+  contribute an assertion type or report format without an allowlist or digest
+  check, and a duplicate `type()` is resolved by classpath order. Enforcing
+  the allowlist belongs with extension isolation (M6-02), and SEC-08's
+  requirements for dynamic extensions remain unmet until then.
 - Extension isolation remains limited to classloader boundaries until the
   out-of-process plugin protocol (M6-02).
 - The SPI interface design must not expose implementation details that would

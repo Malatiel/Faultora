@@ -414,7 +414,8 @@ class LocalEngineTest {
         LocalEngine engine = new LocalEngine(Map.of(), Map.of());
 
         long started = System.nanoTime();
-        try (RunJournal journal = new RunJournal(tempDir.resolve("wait.ndjson"), true)) {
+        Path waitJournal = tempDir.resolve("wait.ndjson");
+        try (RunJournal journal = new RunJournal(waitJournal, true)) {
             RunResult result = engine.execute(
                     plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
             long elapsedMs =
@@ -423,6 +424,12 @@ class LocalEngineTest {
             assertThat(result.status()).isEqualTo(RunResult.Status.PASSED);
             assertThat(elapsedMs).isGreaterThanOrEqualTo(1100);
         }
+
+        // A wait makes no request: it is journalled as its own node type and
+        // carries no operation ID.
+        String events = Files.readString(waitJournal);
+        assertThat(events).contains("\"nodeType\":\"wait\"");
+        assertThat(events).doesNotContain("_wait");
     }
 
     @Test

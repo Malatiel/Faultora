@@ -200,17 +200,14 @@ The compiled plan is a directed acyclic graph of typed nodes:
 - `AssertionNode`
 - `CleanupNode`
 
-Each node declares:
+Every node declares a stable node ID, its dependencies, and a safety
+classification. The rest belongs to the node kinds that can honour it:
 
-- stable node ID;
-- dependencies;
-- required capabilities;
-- input expressions;
-- output bindings;
-- deadline and retry policy;
-- safety classification;
-- idempotency behavior;
-- cleanup ownership.
+- required capabilities, input expressions, and output bindings — nodes that
+  invoke an operation;
+- deadline and retry policy — operation and group nodes; an assertion, fault,
+  or wait node carries neither;
+- idempotency behavior and cleanup ownership — nodes with side effects.
 
 Compilation fails before execution when an operation, variable, plugin
 capability, or policy cannot be resolved.

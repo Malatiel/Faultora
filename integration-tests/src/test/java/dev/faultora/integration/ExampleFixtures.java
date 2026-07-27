@@ -13,7 +13,10 @@ import java.nio.file.Path;
  */
 final class ExampleFixtures {
 
-    private static final Path EXAMPLE_ROOT = Path.of("..", "examples", "payment-service");
+    private static final Path PROJECT_ROOT =
+            Path.of(System.getProperty("user.dir")).getParent();
+    private static final Path EXAMPLE_ROOT =
+            PROJECT_ROOT.resolve("examples").resolve("payment-service");
 
     private ExampleFixtures() {
     }
