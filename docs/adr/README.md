@@ -13,3 +13,4 @@
 | [ADR-009](ADR-009-in-process-fault-provider.md) | In-process fault provider for the first fault-injection slice | Accepted |
 | [ADR-010](ADR-010-toxiproxy-admin-client.md) | Toxiproxy network faults through a minimal admin client | Accepted |
 | [ADR-011](ADR-011-bounded-control-flow.md) | Repeat and eventually blocks with compile-time bounds | Accepted |
+| [ADR-012](ADR-012-target-resolution.md) | Catalog-based target resolution with operator redirects | Accepted |

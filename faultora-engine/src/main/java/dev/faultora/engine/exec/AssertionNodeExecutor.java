@@ -54,13 +54,27 @@ final class AssertionNodeExecutor {
                 nodeId, node.assertionType(), result.outcome().name(), result.message());
         context.evidence().put(nodeId, ownEvidence);
 
-        RunResult.Status status =
-                result.outcome() == AssertionResult.Outcome.PASS
-                        ? RunResult.Status.PASSED : RunResult.Status.FAILED;
-        context.journal().nodeCompleted(nodeId, ownEvidence.durationMs(), 0, 0);
+        if (result.outcome() == AssertionResult.Outcome.PASS) {
+            context.journal().nodeCompleted(nodeId, ownEvidence.durationMs(), 0, 0);
+            return new RunResult.NodeResult(
+                    nodeId, NodeResults.typeOf(node), RunResult.Status.PASSED,
+                    0, ownEvidence.durationMs(), List.of(result), null);
+        }
 
+        // The journal must say the node failed, not merely that an assertion
+        // event happened to be FAIL. A reader of the event stream — a CI
+        // parser, a future controller — sees the same verdict the engine
+        // returns, without having to correlate two events.
+        NormalizedError error = new NormalizedError(
+                NormalizedError.ErrorCategory.VALIDATION,
+                result.outcome() == AssertionResult.Outcome.INDETERMINATE
+                        ? "ASSERTION_INDETERMINATE" : "ASSERTION_FAILED",
+                result.message(), false,
+                Map.of("assertionType", node.assertionType(),
+                        "outcome", result.outcome().name()));
+        context.journal().nodeFailed(nodeId, error, ownEvidence.durationMs());
         return new RunResult.NodeResult(
-                nodeId, NodeResults.typeOf(node), status,
-                0, ownEvidence.durationMs(), List.of(result), null);
+                nodeId, NodeResults.typeOf(node), RunResult.Status.FAILED,
+                0, ownEvidence.durationMs(), List.of(result), error);
     }
 }

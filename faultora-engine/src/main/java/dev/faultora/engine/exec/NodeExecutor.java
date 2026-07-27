@@ -139,8 +139,7 @@ public final class NodeExecutor {
         PlanNode.OperationNode asOperation = new PlanNode.OperationNode(
                 node.nodeId(), node.operationId(), definition, node.inputExpressions(),
                 null, node.dependencies(), node.safety(), node.deadlineMs(), node.maxRetries());
-        OperationResult result = invoker.invoke(
-                asOperation, expressionContext, context.connectorContext());
+        OperationResult result = invoker.invoke(asOperation, context, expressionContext);
         OperationInvoker.populateEvidence(evidence, result);
         return Optional.empty();
     }

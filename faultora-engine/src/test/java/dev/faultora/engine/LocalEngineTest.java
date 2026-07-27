@@ -1150,6 +1150,63 @@ class LocalEngineTest {
                 .isEqualTo(RunResult.Status.PASSED);
     }
 
+    @Test
+    void failedAssertionIsJournalledAsAFailedNode() throws Exception {
+        ExecutionPlan plan = ExecutionPlan.builder()
+                .runId(new RunId("run-assertion-journal"))
+                .scenario(buildScenario())
+                .catalog(catalog)
+                .targetPolicy(policy)
+                .seed(42L)
+                .scenarioDigest("sha256:abc")
+                .catalogDigest("sha256:def")
+                .addNode(new PlanNode.OperationNode(
+                        new NodeId("create"), new OperationId("create-payment"),
+                        findOp("create-payment"), Map.of(), null, List.of(),
+                        SafetyClassification.MUTATING, 0, 0))
+                .addNode(new PlanNode.AssertionNode(
+                        new NodeId("expects-201"), "status", Map.of("expected", 201),
+                        new NodeId("create"), null, List.of(new NodeId("create")),
+                        SafetyClassification.READ_ONLY))
+                .build();
+
+        LocalEngine engine = new LocalEngine(
+                Map.of("http", new SuccessConnector()),
+                Map.of("status", new StatusAssertionProvider()));
+
+        Path journalPath = tempDir.resolve("assertion-journal.ndjson");
+        RunResult result;
+        try (RunJournal journal = new RunJournal(journalPath, true)) {
+            result = engine.execute(
+                    plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+        }
+
+        RunResult.NodeResult assertionResult =
+                result.nodeResults().get(new NodeId("expects-201"));
+        assertThat(assertionResult.status()).isEqualTo(RunResult.Status.FAILED);
+        assertThat(assertionResult.error().code()).isEqualTo("ASSERTION_FAILED");
+
+        // The journal reports the same verdict the engine returned: a reader
+        // must not have to correlate the assertion event to learn the node failed.
+        List<RunEvent> events = journal(journalPath);
+        assertThat(events).anyMatch(event -> event instanceof RunEvent.NodeFailed failed
+                && failed.nodeId().equals(new NodeId("expects-201")));
+        assertThat(events).noneMatch(event -> event instanceof RunEvent.NodeCompleted completed
+                && completed.nodeId().equals(new NodeId("expects-201")));
+    }
+
+    /** Events as written to disk, parsed back the way the reports read them. */
+    private List<RunEvent> journal(Path journalPath) throws IOException {
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        List<RunEvent> events = new ArrayList<>();
+        for (String line : Files.readAllLines(journalPath)) {
+            if (!line.isBlank()) {
+                events.add(mapper.readValue(line, RunEvent.class));
+            }
+        }
+        return events;
+    }
+
     private OperationDefinition findOp(String id) {
         return catalog.operations().stream()
                 .filter(op -> op.id().value().equals(id))

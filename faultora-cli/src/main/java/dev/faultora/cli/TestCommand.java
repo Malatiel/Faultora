@@ -1,48 +1,51 @@
 package dev.faultora.cli;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.faultora.connector.http.DestinationPolicy;
 import dev.faultora.connector.http.HttpConnector;
 import dev.faultora.engine.LocalEngine;
 import dev.faultora.engine.journal.RunJournal;
-import dev.faultora.faults.local.FaultInjectingConnector;
-import dev.faultora.faults.local.LocalFaultProvider;
-import dev.faultora.faults.toxiproxy.ToxiproxyFaultProvider;
-import dev.faultora.spi.contract.FaultProvider;
 import dev.faultora.engine.plan.PlanCompilationResult;
 import dev.faultora.engine.plan.PlanCompiler;
 import dev.faultora.engine.plan.PlanDiagnostic;
 import dev.faultora.engine.run.RunResult;
+import dev.faultora.faults.local.FaultInjectingConnector;
+import dev.faultora.faults.local.LocalFaultProvider;
 import dev.faultora.model.catalog.ApiCatalog;
-import dev.faultora.model.catalog.OperationDefinition;
-import dev.faultora.model.catalog.SafetyClassification;
-import dev.faultora.model.catalog.TargetDefinition;
 import dev.faultora.model.events.RunEvent;
-import dev.faultora.model.identifier.*;
+import dev.faultora.model.identifier.RunId;
 import dev.faultora.model.security.ContentDigest;
-import dev.faultora.model.security.EvidencePolicy;
 import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.spec.expression.ExpressionContext;
+import dev.faultora.spec.model.InputDeclaration;
 import dev.faultora.spec.model.ScenarioDocument;
 import dev.faultora.spec.parser.ParseResult;
 import dev.faultora.spec.parser.ScenarioParser;
 import dev.faultora.spec.validator.ScenarioValidator;
 import dev.faultora.spi.contract.AssertionProvider;
 import dev.faultora.spi.contract.Connector;
+import dev.faultora.spi.contract.FaultProvider;
 import dev.faultora.spi.contract.ReportRenderer;
-import dev.faultora.spi.contract.SourceImporter;
 import dev.faultora.spi.context.ConnectorContext;
-import dev.faultora.spi.context.ImportContext;
-import dev.faultora.spi.result.ImportResult;
 
-import java.io.*;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Runs a scenario against a target and produces reports.
+ * <p>
+ * This is the composition root of a local run: it wires the parsed options,
+ * the discovered extensions, and the policies together, then hands control to
+ * the engine. Argument syntax lives in {@link TestOptions}, the bounds of a run
+ * in {@link RunPolicies}, catalog loading in {@link CatalogLoader}, and report
+ * rendering in {@link ReportWriter}.
  *
  * Usage: faultora test --scenario &lt;path&gt; [--openapi &lt;path&gt;] [--target &lt;url&gt;]
  *                      [--format console,json,junit,html] [--output &lt;dir&gt;]
@@ -50,208 +53,73 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class TestCommand implements Command {
 
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
     @Override
     public int execute(List<String> args) {
-        Path scenarioPath = null;
-        Path openApiPath = null;
-        String targetUrl = "http://localhost:8080";
-        List<String> formats = List.of("console");
-        Path outputDir = Path.of("faultora-results");
-        long seed = System.currentTimeMillis();
-        boolean allowPrivate = false;
-        String authSecretId = null;
-        String toxiproxyUrl = null;
-        Map<String, Object> cliInputs = new LinkedHashMap<>();
-
-        Iterator<String> it = args.iterator();
-        while (it.hasNext()) {
-            String arg = it.next();
-            switch (arg) {
-                case "--scenario", "-s" -> scenarioPath = Path.of(requireNext(it, "--scenario"));
-                case "--openapi", "-o" -> openApiPath = Path.of(requireNext(it, "--openapi"));
-                case "--target", "-t" -> targetUrl = requireNext(it, "--target");
-                case "--format", "-f" -> formats = parseFormats(requireNext(it, "--format"));
-                case "--output" -> outputDir = Path.of(requireNext(it, "--output"));
-                case "--seed" -> seed = parseSeed(requireNext(it, "--seed"));
-                case "--allow-private" -> allowPrivate = true;
-                case "--auth-secret-id" -> authSecretId = requireNext(it, "--auth-secret-id");
-                case "--toxiproxy-url" -> toxiproxyUrl = requireNext(it, "--toxiproxy-url");
-                case "--input", "-i" -> {
-                    String pair = requireNext(it, "--input");
-                    int eq = pair.indexOf('=');
-                    if (eq <= 0) {
-                        System.err.println("Option --input requires key=value, got: " + pair);
-                        return FaultoraCli.EXIT_INVALID_CONFIG;
-                    }
-                    cliInputs.put(pair.substring(0, eq), parseInputValue(pair.substring(eq + 1)));
-                }
-                case "--help", "-h" -> {
-                    printHelp();
-                    return FaultoraCli.EXIT_PASS;
-                }
-                default -> {
-                    System.err.println("Unknown option: " + arg);
-                    return FaultoraCli.EXIT_INVALID_CONFIG;
-                }
-            }
+        TestOptions options;
+        try {
+            options = TestOptions.parse(args);
+        } catch (CliException e) {
+            System.err.println(e.getMessage());
+            return e.exitCode();
+        }
+        if (options.helpRequested()) {
+            printHelp();
+            return FaultoraCli.EXIT_PASS;
         }
 
-        if (scenarioPath == null) {
-            System.err.println("Error: --scenario is required");
-            return FaultoraCli.EXIT_INVALID_CONFIG;
-        }
         Map<String, ReportRenderer> renderers = ExtensionRegistry.renderers();
-        if (formats.isEmpty() || !renderers.keySet().containsAll(formats)) {
+        if (!renderers.keySet().containsAll(options.formats())) {
             System.err.println("Unknown format. Supported formats: "
                     + String.join(",", renderers.keySet()));
             return FaultoraCli.EXIT_INVALID_CONFIG;
         }
 
         try {
-            String scenarioContent = Files.readString(scenarioPath, StandardCharsets.UTF_8);
-            ScenarioParser parser = new ScenarioParser();
-            ParseResult<ScenarioDocument> parseResult = parser.parse(scenarioContent);
-
-            if (!parseResult.isSuccess()) {
-                System.err.println("Scenario validation failed:");
-                parseResult.errors().forEach(d -> System.err.println("  " + d.message()));
+            String scenarioContent = Files.readString(
+                    options.scenarioPath(), StandardCharsets.UTF_8);
+            ScenarioDocument scenario = loadScenario(scenarioContent);
+            if (scenario == null) {
                 return FaultoraCli.EXIT_INVALID_CONFIG;
             }
 
-            parseResult.warnings().forEach(d -> System.err.println("Warning: " + d.message()));
-            ParseResult<ScenarioDocument> validation =
-                    new ScenarioValidator().validate(parseResult.document());
-            if (!validation.isSuccess()) {
-                System.err.println("Scenario validation failed:");
-                validation.errors().forEach(d -> System.err.println("  " + d.message()));
-                return FaultoraCli.EXIT_INVALID_CONFIG;
-            }
-            validation.warnings().forEach(d -> System.err.println("Warning: " + d.message()));
-            ScenarioDocument scenario = validation.document();
+            ApiCatalog catalog = CatalogLoader.load(options, scenario);
+            Map<String, FaultProvider> faultProviders = RunPolicies.faultProviders(options);
+            TargetPolicy targetPolicy = RunPolicies.targetPolicy(faultProviders);
+            ConnectorContext connectorContext = RunPolicies.connectorContext(
+                    options, targetPolicy, new EnvironmentSecretResolver());
 
-            ApiCatalog catalog;
-            if (openApiPath != null) {
-                catalog = importCatalog(openApiPath);
-            } else {
-                catalog = buildCatalogFromScenario(scenario, targetUrl);
-            }
-
-            // Local faults act only on Faultora's own outbound requests, so the
-            // default policy allows every capability of the in-process provider.
-            // Network fault types are allowed only when the operator supplies a
-            // Toxiproxy admin endpoint.
-            LocalFaultProvider faultProvider = new LocalFaultProvider();
-            Map<String, FaultProvider> faultProviders = new LinkedHashMap<>();
-            faultProviders.put("local", faultProvider);
-            Set<String> allowedFaultTypes = new LinkedHashSet<>(faultProvider.capabilities());
-            if (toxiproxyUrl != null) {
-                ToxiproxyFaultProvider toxiproxy =
-                        new ToxiproxyFaultProvider(java.net.URI.create(toxiproxyUrl));
-                faultProviders.put("toxiproxy", toxiproxy);
-                allowedFaultTypes.addAll(toxiproxy.capabilities());
-            }
-            TargetPolicy targetPolicy = new TargetPolicy(
-                    Set.of(),
-                    Set.of(SafetyClassification.READ_ONLY, SafetyClassification.MUTATING),
-                    1000, 10, 300_000, 1_048_576,
-                    allowedFaultTypes, Set.of());
-
-            Map<String, Object> resolvedInputs;
-            try {
-                resolvedInputs = resolveDeclaredInputs(scenario, cliInputs);
-            } catch (CliException e) {
-                System.err.println(e.getMessage());
-                return FaultoraCli.EXIT_INVALID_CONFIG;
-            }
-            ExpressionContext exprContext = ExpressionContext.builder()
-                    .inputs(resolvedInputs)
-                    .runMetadata(Map.of("seed", seed, "target", targetUrl))
+            ExpressionContext expressionContext = ExpressionContext.builder()
+                    .inputs(resolveDeclaredInputs(scenario, options.inputs()))
+                    .runMetadata(Map.of("seed", options.seed(), "target", options.targetUrl()))
                     .build();
 
-            EnvironmentSecretResolver secretResolver = new EnvironmentSecretResolver();
-            EvidencePolicy evidencePolicy = new EvidencePolicy(
-                    true, true,
-                    Set.of("authorization", "cookie", "set-cookie", "proxy-authorization"),
-                    10 * 1024 * 1024, 1000, List.of(), Set.of(), "session");
-            Map<String, Object> connectorConfig = new LinkedHashMap<>();
-            connectorConfig.put("baseUrl", targetUrl);
-            connectorConfig.put("maxResponseBytes", targetPolicy.maxPayloadBytes());
-            if (authSecretId != null) {
-                connectorConfig.put("authSecretId", authSecretId);
-            }
-            ConnectorContext connectorContext = new ConnectorContext(
-                    evidencePolicy,
-                    secretResolver::resolve,
-                    5000, 30000, 60000,
-                    connectorConfig);
-
-            String scenarioDigest = ContentDigest.sha256Uri(scenarioContent);
-            String catalogDigest = ContentDigest.sha256Uri(MAPPER.writeValueAsString(catalog));
-            RunId runId = new RunId("run-" + seed);
-
-            PlanCompiler compiler = new PlanCompiler();
-            PlanCompilationResult compilation = compiler.compile(
-                    scenario, catalog, targetPolicy, runId, seed,
-                    scenarioDigest, catalogDigest);
+            RunId runId = new RunId("run-" + options.seed());
+            PlanCompilationResult compilation = new PlanCompiler().compile(
+                    scenario, catalog, targetPolicy, runId, options.seed(),
+                    ContentDigest.sha256Uri(scenarioContent),
+                    ContentDigest.sha256Uri(MAPPER.writeValueAsString(catalog)));
 
             if (compilation.plan() == null) {
                 System.err.println("Plan compilation failed:");
                 compilation.diagnostics().forEach(d -> System.err.println("  " + d.message()));
                 return FaultoraCli.EXIT_INVALID_CONFIG;
             }
-
             compilation.diagnostics().stream()
                     .filter(d -> d.severity() == PlanDiagnostic.Severity.WARNING)
                     .forEach(d -> System.err.println("Warning: " + d.message()));
 
-            Map<String, AssertionProvider> assertionProviders =
-                    ExtensionRegistry.assertionProviders();
-
-            Files.createDirectories(outputDir);
-            Path journalPath = outputDir.resolve("events.ndjson");
+            Files.createDirectories(options.outputDir());
+            Path journalPath = options.outputDir().resolve("events.ndjson");
             Files.deleteIfExists(journalPath);
 
-            RunResult result;
-            try (HttpConnector httpConnector = allowPrivate
-                    ? new HttpConnector(DestinationPolicy.permissive())
-                    : new HttpConnector()) {
-                Connector faultAwareConnector =
-                        new FaultInjectingConnector(httpConnector, faultProvider);
-                LocalEngine engine = new LocalEngine(
-                        Map.of("http", faultAwareConnector), assertionProviders,
-                        faultProviders);
-                try (RunJournal journal = new RunJournal(journalPath, true)) {
-                    System.out.println("Running scenario: " + scenario.metadata().name());
-                    System.out.println("Target: " + targetUrl);
-                    System.out.println("Seed: " + seed);
-                    System.out.println();
+            RunResult result = run(
+                    options, compilation, faultProviders, connectorContext,
+                    expressionContext, journalPath, scenario);
 
-                    result = engine.execute(
-                            compilation.plan(), journal, exprContext,
-                            connectorContext, new AtomicBoolean(false));
-                }
-            }
-
-            List<RunEvent> events = loadEvents(journalPath);
-            for (String format : formats) {
-                ReportRenderer renderer = renderers.get(format);
-
-                if ("console".equals(format)) {
-                    renderer.render(events, new PrintWriter(System.out, true));
-                } else {
-                    String ext = switch (format.toLowerCase(Locale.ROOT)) {
-                        case "json" -> ".json";
-                        case "junit" -> ".xml";
-                        case "html" -> ".html";
-                        default -> "." + format;
-                    };
-                    Path reportPath = outputDir.resolve("report" + ext);
-                    try (Writer w = Files.newBufferedWriter(reportPath, StandardCharsets.UTF_8)) {
-                        renderer.render(events, w);
-                    }
-                    System.out.println("Report written: " + reportPath);
-                }
-            }
+            ReportWriter.writeAll(
+                    options.formats(), renderers, loadEvents(journalPath), options.outputDir());
 
             System.out.printf("%nResult: %s — %d nodes, %d passed, %d failed (%dms)%n",
                     result.status(), result.totalNodes(),
@@ -273,19 +141,83 @@ public class TestCommand implements Command {
     }
 
     /**
+     * Execute the compiled plan.
+     * <p>
+     * The connector stack is assembled here rather than discovered: the
+     * destination policy and the fault-injecting wrapper decide what this run
+     * may reach and what may be broken, so they are the operator's choice, not
+     * the classpath's.
+     */
+    private RunResult run(
+            TestOptions options,
+            PlanCompilationResult compilation,
+            Map<String, FaultProvider> faultProviders,
+            ConnectorContext connectorContext,
+            ExpressionContext expressionContext,
+            Path journalPath,
+            ScenarioDocument scenario
+    ) throws IOException {
+        Map<String, AssertionProvider> assertionProviders =
+                ExtensionRegistry.assertionProviders();
+        LocalFaultProvider localFaults = (LocalFaultProvider) faultProviders.get("local");
+
+        try (HttpConnector httpConnector = options.allowPrivate()
+                ? new HttpConnector(DestinationPolicy.permissive())
+                : new HttpConnector()) {
+            Connector faultAwareConnector =
+                    new FaultInjectingConnector(httpConnector, localFaults);
+            LocalEngine engine = new LocalEngine(
+                    Map.of("http", faultAwareConnector), assertionProviders, faultProviders);
+
+            try (RunJournal journal = new RunJournal(journalPath, true)) {
+                System.out.println("Running scenario: " + scenario.metadata().name());
+                System.out.println("Target: " + options.targetUrl());
+                System.out.println("Seed: " + options.seed());
+                System.out.println();
+
+                return engine.execute(
+                        compilation.plan(), journal, expressionContext,
+                        connectorContext, new AtomicBoolean(false));
+            }
+        }
+    }
+
+    /** Parse and validate the scenario, or null when it is not runnable. */
+    private ScenarioDocument loadScenario(String scenarioContent) {
+        ParseResult<ScenarioDocument> parsed = new ScenarioParser().parse(scenarioContent);
+        if (!parsed.isSuccess()) {
+            System.err.println("Scenario validation failed:");
+            parsed.errors().forEach(d -> System.err.println("  " + d.message()));
+            return null;
+        }
+        parsed.warnings().forEach(d -> System.err.println("Warning: " + d.message()));
+
+        ParseResult<ScenarioDocument> validated =
+                new ScenarioValidator().validate(parsed.document());
+        if (!validated.isSuccess()) {
+            System.err.println("Scenario validation failed:");
+            validated.errors().forEach(d -> System.err.println("  " + d.message()));
+            return null;
+        }
+        validated.warnings().forEach(d -> System.err.println("Warning: " + d.message()));
+        return validated.document();
+    }
+
+    /**
      * Merge CLI-provided inputs with the scenario's declared defaults.
      * Unknown input names and missing required inputs are configuration errors.
      */
     private Map<String, Object> resolveDeclaredInputs(
             ScenarioDocument scenario, Map<String, Object> cliInputs) {
-        Map<String, dev.faultora.spec.model.InputDeclaration> declared =
+        Map<String, InputDeclaration> declared =
                 scenario.inputs() != null ? scenario.inputs() : Map.of();
 
         for (String name : cliInputs.keySet()) {
             if (!declared.containsKey(name)) {
                 throw new CliException(
                         "Unknown input '" + name + "'. Declared inputs: "
-                                + (declared.isEmpty() ? "(none)" : String.join(", ", declared.keySet())),
+                                + (declared.isEmpty() ? "(none)"
+                                        : String.join(", ", declared.keySet())),
                         FaultoraCli.EXIT_INVALID_CONFIG);
             }
         }
@@ -293,7 +225,7 @@ public class TestCommand implements Command {
         Map<String, Object> resolved = new LinkedHashMap<>();
         for (var entry : declared.entrySet()) {
             String name = entry.getKey();
-            var declaration = entry.getValue();
+            InputDeclaration declaration = entry.getValue();
             if (cliInputs.containsKey(name)) {
                 resolved.put(name, cliInputs.get(name));
             } else if (declaration.defaultValue() != null) {
@@ -308,115 +240,18 @@ public class TestCommand implements Command {
         return resolved;
     }
 
-    private static Object parseInputValue(String raw) {
-        if ("true".equalsIgnoreCase(raw) || "false".equalsIgnoreCase(raw)) {
-            return Boolean.parseBoolean(raw);
-        }
-        try {
-            return Long.parseLong(raw);
-        } catch (NumberFormatException notLong) {
-            try {
-                return Double.parseDouble(raw);
-            } catch (NumberFormatException notDouble) {
-                return raw;
-            }
-        }
-    }
-
-    private ApiCatalog importCatalog(Path openApiPath) throws IOException {
-        String content = Files.readString(openApiPath, StandardCharsets.UTF_8);
-        SourceImporter importer = ExtensionRegistry.importerFor("openapi");
-        if (importer == null) {
-            throw new CliException(
-                    "No importer for OpenAPI documents is installed",
-                    FaultoraCli.EXIT_RUNNER_FAILURE);
-        }
-        ImportContext context = new ImportContext(
-                "openapi", Path.of("."), Set.of(), 10, 1_000_000, Map.of());
-        ImportResult result = importer.importSource(content, context);
-
-        if (!result.isSuccess()) {
-            System.err.println("Failed to import OpenAPI document:");
-            result.errors().forEach(e -> System.err.println("  " + e.message()));
-            throw new CliException("OpenAPI import failed", FaultoraCli.EXIT_INVALID_CONFIG);
-        }
-        return result.catalog();
-    }
-
-    private ApiCatalog buildCatalogFromScenario(ScenarioDocument scenario, String targetUrl) {
-        var targetId = new TargetId("default");
-        var target = new TargetDefinition(
-                targetId, "Default", targetUrl,
-                List.of(new ProtocolId("http")), List.of(), Map.of());
-
-        Set<String> operationIds = new LinkedHashSet<>();
-        collectOperationIds(scenario.setup(), operationIds);
-        collectOperationIds(scenario.execute(), operationIds);
-        collectOperationIds(scenario.cleanup(), operationIds);
-
-        List<OperationDefinition> operations = new ArrayList<>();
-        for (String opId : operationIds) {
-            operations.add(new OperationDefinition(
-                    new OperationId(opId), new ProtocolId("http"), targetId,
-                    SafetyClassification.READ_ONLY,
-                    Map.of(), null, Map.of(),
-                    Map.of("method", "GET", "path", "/" + opId)));
-        }
-
-        return new ApiCatalog(
-                new CatalogVersion("v1alpha1"),
-                List.of(target), operations,
-                Map.of(), Map.of(), List.of());
-    }
-
-    private void collectOperationIds(List<dev.faultora.spec.model.ScenarioStep> steps, Set<String> ids) {
-        if (steps == null) return;
-        for (var step : steps) {
-            if (step.operationId() != null) ids.add(step.operationId());
-        }
-    }
-
     private List<RunEvent> loadEvents(Path journalPath) throws IOException {
-        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
         List<RunEvent> events = new ArrayList<>();
         try (var reader = Files.newBufferedReader(journalPath)) {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (!line.isBlank()) {
-                    events.add(mapper.readValue(line, RunEvent.class));
+                    events.add(MAPPER.readValue(line, RunEvent.class));
                 }
             }
         }
         return events;
     }
-
-    private List<String> parseFormats(String value) {
-        return Arrays.stream(value.split(","))
-                .map(String::trim)
-                .filter(format -> !format.isEmpty())
-                .map(format -> format.toLowerCase(Locale.ROOT))
-                .distinct()
-                .toList();
-    }
-
-    private long parseSeed(String value) {
-        try {
-            return Long.parseLong(value);
-        } catch (NumberFormatException invalid) {
-            throw new CliException(
-                    "Option --seed requires an integer", FaultoraCli.EXIT_INVALID_CONFIG);
-        }
-    }
-
-    private String requireNext(Iterator<String> it, String flag) {
-        if (!it.hasNext()) {
-            throw new CliException("Option " + flag + " requires a value", FaultoraCli.EXIT_INVALID_CONFIG);
-        }
-        return it.next();
-    }
-
-    private static final com.fasterxml.jackson.databind.ObjectMapper MAPPER =
-            new com.fasterxml.jackson.databind.ObjectMapper();
 
     private void printHelp() {
         System.out.println("Usage: faultora test --scenario <path> [options]");
@@ -424,13 +259,15 @@ public class TestCommand implements Command {
         System.out.println("Options:");
         System.out.println("  -s, --scenario <path>      Scenario YAML file (required)");
         System.out.println("  -o, --openapi <path>       OpenAPI document for catalog");
-        System.out.println("  -t, --target <url>         Target base URL (default: http://localhost:8080)");
+        System.out.println("  -t, --target <url>         Base URL for every catalog target");
+        System.out.println("                             (default: " + TestOptions.DEFAULT_TARGET_URL + ")");
+        System.out.println("  -t, --target <id>=<url>    Base URL for one catalog target (repeatable)");
         System.out.println("  -f, --format <formats>     Output formats: console,json,junit,html (default: console)");
-        System.out.println("  --output <dir>             Output directory (default: faultora-results)");
-        System.out.println("  --seed <n>                 Random seed (default: current time)");
-        System.out.println("  --allow-private            Allow connections to private/local networks");
-        System.out.println("  --auth-secret-id <id>      Secret handle ID for Authorization header (resolved from env)");
-        System.out.println("  --toxiproxy-url <url>      Toxiproxy admin endpoint; enables network-* fault types");
+        System.out.println("      --output <dir>         Output directory (default: faultora-results)");
+        System.out.println("      --seed <n>             Random seed (default: current time)");
+        System.out.println("      --allow-private        Allow connections to private/local networks");
+        System.out.println("      --auth-secret-id <id>  Secret handle ID for Authorization header (resolved from env)");
+        System.out.println("      --toxiproxy-url <url>  Toxiproxy admin endpoint; enables network-* fault types");
         System.out.println("  -i, --input <key=value>    Value for a declared scenario input (repeatable)");
         System.out.println("  -h, --help                 Show this help");
         System.out.println();

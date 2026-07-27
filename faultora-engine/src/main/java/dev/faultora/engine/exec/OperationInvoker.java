@@ -4,8 +4,6 @@ import dev.faultora.engine.evidence.NodeEvidence;
 import dev.faultora.engine.plan.PlanNode;
 import dev.faultora.model.catalog.NormalizedError;
 import dev.faultora.model.catalog.TargetDefinition;
-import dev.faultora.model.identifier.ProtocolId;
-import dev.faultora.model.identifier.TargetId;
 import dev.faultora.spec.expression.ExpressionContext;
 import dev.faultora.spec.expression.ExpressionEvaluator;
 import dev.faultora.spi.contract.Connector;
@@ -33,15 +31,16 @@ public final class OperationInvoker {
 
     /**
      * Execute the node once, resolving its input expressions against the given
-     * context.
+     * expression context.
      */
     public OperationResult invoke(
             PlanNode.OperationNode node,
-            ExpressionContext context,
-            ConnectorContext connectorContext
+            NodeContext context,
+            ExpressionContext expressionContext
     ) {
+        ConnectorContext connectorContext = context.connectorContext();
         Map<String, Object> resolvedInputs = expressionEvaluator.resolveInputs(
-                node.inputExpressions(), context);
+                node.inputExpressions(), expressionContext);
 
         String protocol = node.operation().protocol().value();
         Connector connector = connectors.get(protocol);
@@ -53,12 +52,14 @@ public final class OperationInvoker {
                     false, Map.of()), 0);
         }
 
-        TargetDefinition target = resolveTarget(node.operation().target(), connectorContext);
+        TargetDefinition target = TargetResolver.resolve(
+                node.operation().target(), context.plan().catalog(), connectorContext);
         if (target == null) {
             return OperationResult.failure(new NormalizedError(
                     NormalizedError.ErrorCategory.VALIDATION,
                     "TARGET_NOT_FOUND",
-                    "Target not found: " + node.operation().target().value(),
+                    "Target is neither declared in the catalog nor bound to a URL: "
+                            + node.operation().target().value(),
                     false, Map.of()), 0);
         }
 
@@ -85,7 +86,7 @@ public final class OperationInvoker {
         PlanNode.RetrySpec retry = node.retrySpec();
         int maxAttempts = retry == null ? 1 : retry.maxAttempts();
 
-        OperationResult result = invoke(node, expressionContext, context.connectorContext());
+        OperationResult result = invoke(node, context, expressionContext);
         for (int failedAttempt = 1; failedAttempt < maxAttempts; failedAttempt++) {
             if (result.error() == null || !result.error().retryable() || context.cancelled()) {
                 return result;
@@ -100,7 +101,7 @@ public final class OperationInvoker {
             if (context.cancelled()) {
                 return result;
             }
-            result = invoke(node, expressionContext, context.connectorContext());
+            result = invoke(node, context, expressionContext);
         }
         return result;
     }
@@ -140,17 +141,4 @@ public final class OperationInvoker {
                 connectorContext.config());
     }
 
-    /**
-     * Resolve the target a node runs against.
-     * <p>
-     * The local runner binds every operation to the single target supplied on
-     * the command line; multi-target catalogs arrive with the distributed
-     * milestones.
-     */
-    private TargetDefinition resolveTarget(TargetId targetId, ConnectorContext context) {
-        String baseUrl = (String) context.config().getOrDefault("baseUrl", "http://localhost:8080");
-        return new TargetDefinition(
-                targetId, targetId.value(), baseUrl,
-                List.of(new ProtocolId("http")), List.of(), Map.of());
-    }
 }

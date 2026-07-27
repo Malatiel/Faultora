@@ -70,8 +70,7 @@ public final class EventuallyGroupExecutor {
             attempt++;
 
             evidence = new NodeEvidence(context.connectorContext().evidencePolicy());
-            OperationResult result = invoker.invoke(
-                    child, expressionContext, context.connectorContext());
+            OperationResult result = invoker.invoke(child, context, expressionContext);
             OperationInvoker.populateEvidence(evidence, result);
 
             conditionResults = evaluateConditions(group, evidence);

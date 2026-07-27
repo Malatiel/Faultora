@@ -36,6 +36,16 @@ restructured along the way, with no change to what a scenario does.
 
 ### Fixed
 
+- Targets are resolved through the catalog instead of being fabricated from
+  the CLI's base URL. A target's name, protocols, authentication schemes, and
+  metadata now reach the connector; `--target <id>=<url>` binds one catalog
+  target and plain `--target <url>` binds them all; an operation whose target
+  is neither declared nor bound fails with `TARGET_NOT_FOUND` instead of being
+  sent to a synthesized endpoint. ADR-012 records the decision.
+- A failed assertion is journalled as `NODE_FAILED` with an `ASSERTION_FAILED`
+  error. It previously emitted `NODE_COMPLETED` while returning a failed
+  status, so the event stream disagreed with the run result and reports had to
+  reconstruct the verdict from the assertion event.
 - A `timeout` on a parallel group is now enforced instead of being parsed and
   discarded: children still running when it elapses are cancelled and reported
   as `DEADLINE_EXCEEDED`.
@@ -50,6 +60,9 @@ restructured along the way, with no change to what a scenario does.
 
 ### Changed
 
+- `TestCommand` keeps only the composition root. Argument syntax moved to
+  `TestOptions`, run bounds to `RunPolicies`, catalog loading to
+  `CatalogLoader`, and report rendering to `ReportWriter`.
 - The execution engine is split by responsibility: `LocalEngine` now only
   schedules, and each node kind — operation, wait, assertion, fault, and the
   three group kinds — is executed by its own class in

@@ -144,6 +144,28 @@ java -jar faultora-cli/target/faultora-0.4.0.jar \
 Private, loopback, and link-local destinations are blocked by default. Use
 `--allow-private` only for an explicitly trusted local test environment.
 
+### Targets
+
+Target identity — name, protocols, authentication schemes — comes from the
+imported description. `--target` decides where that target actually lives for
+this run:
+
+```bash
+# every catalog target answers at one URL
+--target https://staging.example.com
+
+# one catalog target is bound separately, the rest follow the plain --target
+--target https://staging.example.com --target ledger=http://localhost:7777
+```
+
+An operation whose target is neither declared in the catalog nor bound to a
+URL fails with `TARGET_NOT_FOUND` instead of being sent somewhere arbitrary.
+
+The base URL inside an OpenAPI document is never contacted on its own: without
+`--target`, every target is bound to `http://localhost:8080`. A description
+committed to a repository cannot direct a run at the environment it
+documents.
+
 ## Fault injection
 
 The flagship reliability scenario races two concurrent `create-payment`
