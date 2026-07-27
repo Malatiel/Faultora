@@ -2,6 +2,7 @@ package dev.faultora.spec.validator;
 
 import dev.faultora.spec.model.*;
 import dev.faultora.spec.parser.Diagnostic;
+import dev.faultora.spec.parser.DurationSyntax;
 import dev.faultora.spec.parser.ParseResult;
 
 import java.util.ArrayList;
@@ -14,9 +15,6 @@ import java.util.Set;
  * Does not resolve catalog references (that's the compiler's job).
  */
 public class ScenarioValidator {
-
-    /** Upper bound on iterations of a single repeat group. */
-    public static final int MAX_REPEAT_ITERATIONS = 100;
 
     /** Step types that group child steps instead of invoking an operation. */
     private static final Set<String> GROUP_TYPES = Set.of("parallel", "repeat", "eventually");
@@ -203,20 +201,8 @@ public class ScenarioValidator {
                 diagnostics.add(Diagnostic.error(path + ".timeout",
                         "Invalid timeout: " + step.timeout()));
             }
-            if (step.retry() != null && !GROUP_TYPES.contains(type)) {
-                ScenarioStep.RetryPolicy retry = step.retry();
-                if (retry.maxAttempts() < 1
-                        || retry.backoffMs() < 0
-                        || retry.backoffMultiplier() < 1
-                        || retry.maxBackoffMs() < 0) {
-                    diagnostics.add(Diagnostic.error(path + ".retry",
-                            "Retry values are out of range"));
-                }
-                if (step.expectError() && retry.maxAttempts() > 1) {
-                    diagnostics.add(Diagnostic.error(path + ".retry",
-                            "expectError cannot be combined with retry: "
-                                    + "a step that must fail has nothing to retry toward"));
-                }
+            if (!GROUP_TYPES.contains(type)) {
+                validateRetryPolicy(step, path, diagnostics);
             }
         }
     }
@@ -337,18 +323,18 @@ public class ScenarioValidator {
             diagnostics.add(Diagnostic.error(path,
                     "Repeat step requires exactly one of count or forEach"));
         } else if (hasCount) {
-            if (step.count() < 1 || step.count() > MAX_REPEAT_ITERATIONS) {
+            if (step.count() < 1 || step.count() > ScenarioLimits.MAX_REPEAT_ITERATIONS) {
                 diagnostics.add(Diagnostic.error(path + ".count",
-                        "Repeat count must be between 1 and " + MAX_REPEAT_ITERATIONS
+                        "Repeat count must be between 1 and " + ScenarioLimits.MAX_REPEAT_ITERATIONS
                                 + ", got: " + step.count()));
             }
         } else {
             if (step.forEach().isEmpty()) {
                 diagnostics.add(Diagnostic.error(path + ".forEach",
                         "Repeat forEach requires at least one item"));
-            } else if (step.forEach().size() > MAX_REPEAT_ITERATIONS) {
+            } else if (step.forEach().size() > ScenarioLimits.MAX_REPEAT_ITERATIONS) {
                 diagnostics.add(Diagnostic.error(path + ".forEach",
-                        "Repeat forEach must not exceed " + MAX_REPEAT_ITERATIONS
+                        "Repeat forEach must not exceed " + ScenarioLimits.MAX_REPEAT_ITERATIONS
                                 + " items, got: " + step.forEach().size()));
             }
         }
@@ -429,20 +415,24 @@ public class ScenarioValidator {
             diagnostics.add(Diagnostic.error(childPath + ".steps",
                     groupLabel + " groups cannot be nested"));
         }
-        if (child.retry() != null) {
-            ScenarioStep.RetryPolicy retry = child.retry();
-            if (retry.maxAttempts() < 1
-                    || retry.backoffMs() < 0
-                    || retry.backoffMultiplier() < 1
-                    || retry.maxBackoffMs() < 0) {
-                diagnostics.add(Diagnostic.error(childPath + ".retry",
-                        "Retry values are out of range"));
-            }
-            if (child.expectError() && retry.maxAttempts() > 1) {
-                diagnostics.add(Diagnostic.error(childPath + ".retry",
-                        "expectError cannot be combined with retry: "
-                                + "a step that must fail has nothing to retry toward"));
-            }
+        validateRetryPolicy(child, childPath, diagnostics);
+    }
+
+    /** The one retry rule, applied to plain steps and to group children alike. */
+    private void validateRetryPolicy(
+            ScenarioStep step, String path, List<Diagnostic> diagnostics) {
+        ScenarioStep.RetryPolicy retry = step.retry();
+        if (retry == null) {
+            return;
+        }
+        if (!retry.isWithinRange()) {
+            diagnostics.add(Diagnostic.error(path + ".retry",
+                    "Retry values are out of range"));
+        }
+        if (step.expectError() && retry.retriesAtAll()) {
+            diagnostics.add(Diagnostic.error(path + ".retry",
+                    "expectError cannot be combined with retry: "
+                            + "a step that must fail has nothing to retry toward"));
         }
     }
 
@@ -451,22 +441,6 @@ public class ScenarioValidator {
     }
 
     private boolean isPositiveDuration(String value) {
-        if (value == null || value.isBlank()) return false;
-        String normalized = value.trim().toLowerCase();
-        long multiplier = 1;
-        if (normalized.endsWith("ms")) {
-            normalized = normalized.substring(0, normalized.length() - 2);
-        } else if (normalized.endsWith("s")) {
-            normalized = normalized.substring(0, normalized.length() - 1);
-            multiplier = 1000;
-        } else if (normalized.endsWith("m")) {
-            normalized = normalized.substring(0, normalized.length() - 1);
-            multiplier = 60_000;
-        }
-        try {
-            return Math.multiplyExact(Long.parseLong(normalized), multiplier) > 0;
-        } catch (ArithmeticException | NumberFormatException invalid) {
-            return false;
-        }
+        return DurationSyntax.isPositive(value);
     }
 }

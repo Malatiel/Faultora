@@ -1,9 +1,5 @@
 package dev.faultora.cli;
 
-import dev.faultora.assertions.core.DurationAssertionProvider;
-import dev.faultora.assertions.core.HeaderAssertionProvider;
-import dev.faultora.assertions.core.JsonPathAssertionProvider;
-import dev.faultora.assertions.core.StatusAssertionProvider;
 import dev.faultora.connector.http.DestinationPolicy;
 import dev.faultora.connector.http.HttpConnector;
 import dev.faultora.engine.LocalEngine;
@@ -16,19 +12,15 @@ import dev.faultora.engine.plan.PlanCompilationResult;
 import dev.faultora.engine.plan.PlanCompiler;
 import dev.faultora.engine.plan.PlanDiagnostic;
 import dev.faultora.engine.run.RunResult;
-import dev.faultora.importer.openapi.OpenApiImporter;
 import dev.faultora.model.catalog.ApiCatalog;
 import dev.faultora.model.catalog.OperationDefinition;
 import dev.faultora.model.catalog.SafetyClassification;
 import dev.faultora.model.catalog.TargetDefinition;
 import dev.faultora.model.events.RunEvent;
 import dev.faultora.model.identifier.*;
+import dev.faultora.model.security.ContentDigest;
 import dev.faultora.model.security.EvidencePolicy;
 import dev.faultora.model.security.TargetPolicy;
-import dev.faultora.reporting.ConsoleRenderer;
-import dev.faultora.reporting.HtmlRenderer;
-import dev.faultora.reporting.JsonRenderer;
-import dev.faultora.reporting.JUnitXmlRenderer;
 import dev.faultora.spec.expression.ExpressionContext;
 import dev.faultora.spec.model.ScenarioDocument;
 import dev.faultora.spec.parser.ParseResult;
@@ -37,6 +29,7 @@ import dev.faultora.spec.validator.ScenarioValidator;
 import dev.faultora.spi.contract.AssertionProvider;
 import dev.faultora.spi.contract.Connector;
 import dev.faultora.spi.contract.ReportRenderer;
+import dev.faultora.spi.contract.SourceImporter;
 import dev.faultora.spi.context.ConnectorContext;
 import dev.faultora.spi.context.ImportContext;
 import dev.faultora.spi.result.ImportResult;
@@ -45,8 +38,6 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -109,9 +100,10 @@ public class TestCommand implements Command {
             System.err.println("Error: --scenario is required");
             return FaultoraCli.EXIT_INVALID_CONFIG;
         }
-        Set<String> supportedFormats = Set.of("console", "json", "junit", "html");
-        if (formats.isEmpty() || !supportedFormats.containsAll(formats)) {
-            System.err.println("Unknown format. Supported formats: console,json,junit,html");
+        Map<String, ReportRenderer> renderers = ExtensionRegistry.renderers();
+        if (formats.isEmpty() || !renderers.keySet().containsAll(formats)) {
+            System.err.println("Unknown format. Supported formats: "
+                    + String.join(",", renderers.keySet()));
             return FaultoraCli.EXIT_INVALID_CONFIG;
         }
 
@@ -193,8 +185,8 @@ public class TestCommand implements Command {
                     5000, 30000, 60000,
                     connectorConfig);
 
-            String scenarioDigest = "sha256:" + sha256Hex(scenarioContent);
-            String catalogDigest = "sha256:" + sha256Hex(MAPPER.writeValueAsString(catalog));
+            String scenarioDigest = ContentDigest.sha256Uri(scenarioContent);
+            String catalogDigest = ContentDigest.sha256Uri(MAPPER.writeValueAsString(catalog));
             RunId runId = new RunId("run-" + seed);
 
             PlanCompiler compiler = new PlanCompiler();
@@ -212,11 +204,8 @@ public class TestCommand implements Command {
                     .filter(d -> d.severity() == PlanDiagnostic.Severity.WARNING)
                     .forEach(d -> System.err.println("Warning: " + d.message()));
 
-            Map<String, AssertionProvider> assertionProviders = Map.of(
-                    "status", new StatusAssertionProvider(),
-                    "duration", new DurationAssertionProvider(),
-                    "header", new HeaderAssertionProvider(),
-                    "jsonpath", new JsonPathAssertionProvider());
+            Map<String, AssertionProvider> assertionProviders =
+                    ExtensionRegistry.assertionProviders();
 
             Files.createDirectories(outputDir);
             Path journalPath = outputDir.resolve("events.ndjson");
@@ -245,7 +234,7 @@ public class TestCommand implements Command {
 
             List<RunEvent> events = loadEvents(journalPath);
             for (String format : formats) {
-                ReportRenderer renderer = buildRenderer(format);
+                ReportRenderer renderer = renderers.get(format);
 
                 if ("console".equals(format)) {
                     renderer.render(events, new PrintWriter(System.out, true));
@@ -336,7 +325,12 @@ public class TestCommand implements Command {
 
     private ApiCatalog importCatalog(Path openApiPath) throws IOException {
         String content = Files.readString(openApiPath, StandardCharsets.UTF_8);
-        OpenApiImporter importer = new OpenApiImporter();
+        SourceImporter importer = ExtensionRegistry.importerFor("openapi");
+        if (importer == null) {
+            throw new CliException(
+                    "No importer for OpenAPI documents is installed",
+                    FaultoraCli.EXIT_RUNNER_FAILURE);
+        }
         ImportContext context = new ImportContext(
                 "openapi", Path.of("."), Set.of(), 10, 1_000_000, Map.of());
         ImportResult result = importer.importSource(content, context);
@@ -396,16 +390,6 @@ public class TestCommand implements Command {
         return events;
     }
 
-    private ReportRenderer buildRenderer(String format) {
-        return switch (format) {
-            case "console" -> new ConsoleRenderer();
-            case "json" -> new JsonRenderer();
-            case "junit" -> new JUnitXmlRenderer();
-            case "html" -> new HtmlRenderer();
-            default -> null;
-        };
-    }
-
     private List<String> parseFormats(String value) {
         return Arrays.stream(value.split(","))
                 .map(String::trim)
@@ -431,21 +415,8 @@ public class TestCommand implements Command {
         return it.next();
     }
 
-    private static final com.fasterxml.jackson.databind.ObjectMapper MAPPER = new com.fasterxml.jackson.databind.ObjectMapper();
-
-    private static String sha256Hex(String input) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder();
-            for (byte b : hash) {
-                sb.append(String.format("%02x", b & 0xff));
-            }
-            return sb.toString();
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException("SHA-256 not available", e);
-        }
-    }
+    private static final com.fasterxml.jackson.databind.ObjectMapper MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper();
 
     private void printHelp() {
         System.out.println("Usage: faultora test --scenario <path> [options]");

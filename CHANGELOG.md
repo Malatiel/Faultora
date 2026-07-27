@@ -5,7 +5,8 @@ All notable changes to Faultora are documented in this file.
 ## 0.4.0 — 2026-07-27
 
 Scenarios can now express iteration, convergence, and time limits: the last
-control-flow gaps of the reliability engine.
+control-flow gaps of the reliability engine. The engine and the reports were
+restructured along the way, with no change to what a scenario does.
 
 ### Added
 
@@ -49,6 +50,30 @@ control-flow gaps of the reliability engine.
 
 ### Changed
 
+- The execution engine is split by responsibility: `LocalEngine` now only
+  schedules, and each node kind — operation, wait, assertion, fault, and the
+  three group kinds — is executed by its own class in
+  `dev.faultora.engine.exec`. Run events are emitted through one writer
+  instead of being assembled at every call site.
+- Report renderers share one projection of the event stream (`RunSummary`)
+  instead of folding events three times. A new event type is now understood by
+  console, HTML, and JUnit output at once.
+- Assertion providers, report renderers, and source importers are discovered
+  through `ServiceLoader`, as ADR-004 always specified; the service files
+  existed but nothing loaded them. Connectors and fault providers stay
+  explicitly constructed, because both carry the run-scoped policy that bounds
+  what a run may reach or break. ADR-004 records the split.
+- Wait steps compile to a dedicated `WaitNode` instead of an operation node
+  with a synthetic `_wait` operation ID. Journal entries for wait steps now
+  carry `"nodeType":"wait"` and no operation ID; reports are unchanged.
+- The duration grammar, the scenario limits, and the SHA-256 content digest
+  each have a single definition (`DurationSyntax`, `ScenarioLimits`,
+  `ContentDigest`) shared by validation, compilation, and reporting.
+- Plan nodes only carry the fields they can honour: deadlines and retry counts
+  are no longer required of assertion, fault, and wait nodes.
+- The end-to-end suite runs the published `examples/payment-service` scenarios
+  and OpenAPI document directly. The duplicate copies under test resources had
+  already drifted, so CI was proving something users never run.
 - `retry`, `expectError`, `outputAs`, `inputs`, and `operationId` on a
   grouping step (`parallel`, `repeat`, `eventually`) are rejected during
   validation. They were previously accepted and silently ignored; they belong

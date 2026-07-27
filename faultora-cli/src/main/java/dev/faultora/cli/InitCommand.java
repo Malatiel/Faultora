@@ -1,6 +1,6 @@
 package dev.faultora.cli;
 
-import dev.faultora.importer.openapi.OpenApiImporter;
+import dev.faultora.spi.contract.SourceImporter;
 import dev.faultora.model.catalog.ApiCatalog;
 import dev.faultora.model.catalog.OperationDefinition;
 import dev.faultora.model.identifier.CatalogVersion;
@@ -50,7 +50,11 @@ public class InitCommand implements Command {
         try {
             // Read and import OpenAPI
             String content = Files.readString(openApiPath, StandardCharsets.UTF_8);
-            OpenApiImporter importer = new OpenApiImporter();
+            SourceImporter importer = ExtensionRegistry.importerFor("openapi");
+            if (importer == null) {
+                System.err.println("No importer for OpenAPI documents is installed");
+                return FaultoraCli.EXIT_RUNNER_FAILURE;
+            }
             ImportContext context = new ImportContext(
                     "openapi", Path.of("."), Set.of(), 10, 1_000_000, Map.of());
             ImportResult result = importer.importSource(content, context);

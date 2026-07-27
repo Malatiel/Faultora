@@ -5,9 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.HexFormat;
+import dev.faultora.model.security.ContentDigest;
 
 /**
  * Utility for parsing OpenAPI documents and computing content digests.
@@ -58,13 +56,7 @@ public final class OpenApiUtils {
      * @return hex-encoded SHA-256 digest
      */
     public static String computeDigest(String content) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            return "sha256:" + HexFormat.of().formatHex(hash);
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException("SHA-256 not available", e);
-        }
+        return ContentDigest.sha256Uri(content);
     }
 
     /**

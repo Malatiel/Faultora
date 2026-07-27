@@ -46,10 +46,8 @@ class ControlFlowE2ETest {
         Files.createDirectories(outputDir);
         return createCli().run(new String[]{
                 "test",
-                "--scenario", Path.of("src/test/resources/scenarios/" + scenarioName)
-                        .toAbsolutePath().toString(),
-                "--openapi", Path.of("src/test/resources/openapi.yaml")
-                        .toAbsolutePath().toString(),
+                "--scenario", ExampleFixtures.scenario(scenarioName).toString(),
+                "--openapi", ExampleFixtures.openApi().toString(),
                 "--target", api.baseUrl(),
                 "--allow-private",
                 "--format", "console,json,junit,html",
@@ -119,8 +117,7 @@ class ControlFlowE2ETest {
         int exit = createCli().run(new String[]{
                 "test",
                 "--scenario", scenario.toAbsolutePath().toString(),
-                "--openapi", Path.of("src/test/resources/openapi.yaml")
-                        .toAbsolutePath().toString(),
+                "--openapi", ExampleFixtures.openApi().toString(),
                 "--target", api.baseUrl(),
                 "--allow-private",
                 "--format", "console,json",
@@ -156,8 +153,7 @@ class ControlFlowE2ETest {
                 "eventually-settlement.yaml", "repeat-batch.yaml"}) {
             int exit = createCli().run(new String[]{
                     "validate",
-                    "--scenario", Path.of("src/test/resources/scenarios/" + scenarioName)
-                            .toAbsolutePath().toString()
+                    "--scenario", ExampleFixtures.scenario(scenarioName).toString()
             });
             assertThat(exit).isEqualTo(FaultoraCli.EXIT_PASS);
         }

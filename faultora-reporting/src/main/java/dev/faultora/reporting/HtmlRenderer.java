@@ -1,15 +1,11 @@
 package dev.faultora.reporting;
 
-import dev.faultora.model.catalog.NormalizedError;
 import dev.faultora.model.events.RunEvent;
 import dev.faultora.spi.contract.ReportRenderer;
 
 import java.io.IOException;
 import java.io.Writer;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * Renders run results as a self-contained HTML report.
@@ -25,123 +21,59 @@ public class HtmlRenderer implements ReportRenderer {
 
     @Override
     public void render(List<RunEvent> events, Writer output) throws IOException {
-        RunEvent.RunStarted started = null;
-        RunEvent.RunCompleted completed = null;
-        RunEvent.RunFailed failed = null;
-        List<NodeRecord> nodes = new ArrayList<>();
-        Map<String, NodeRecord> nodeIndex = new HashMap<>();
-        Map<String, List<AssertionRecord>> pendingAssertions = new HashMap<>();
-        Map<String, Integer> retryCounts = new HashMap<>();
-        Map<String, Integer> pollCounts = new HashMap<>();
-
-        for (RunEvent event : events) {
-            switch (event) {
-                case RunEvent.OperationRetried or ->
-                        retryCounts.merge(or.nodeId().value(), 1, Integer::sum);
-                case RunEvent.ConditionPolled cp ->
-                        pollCounts.merge(cp.nodeId().value(), 1, Integer::sum);
-                case RunEvent.RunStarted rs -> started = rs;
-                case RunEvent.RunCompleted rc -> completed = rc;
-                case RunEvent.RunFailed rf -> failed = rf;
-                case RunEvent.NodeCompleted nc -> {
-                    String nodeId = nc.nodeId().value();
-                    NodeRecord node = new NodeRecord(
-                            nodeId, "PASSED", nc.durationMs(), nc.statusCode(), null);
-                    applyAssertions(node, pendingAssertions.remove(nodeId));
-                    nodes.add(node);
-                    nodeIndex.put(nodeId, node);
-                }
-                case RunEvent.NodeFailed nf -> {
-                    String nodeId = nf.nodeId().value();
-                    NodeRecord node = new NodeRecord(
-                            nodeId, "FAILED", nf.durationMs(), -1, nf.error());
-                    applyAssertions(node, pendingAssertions.remove(nodeId));
-                    nodes.add(node);
-                    nodeIndex.put(nodeId, node);
-                }
-                case RunEvent.AssertionEvaluated ae -> {
-                    String nodeId = ae.nodeId().value();
-                    AssertionRecord assertion = new AssertionRecord(ae.outcome(), ae.message());
-                    NodeRecord node = nodeIndex.get(nodeId);
-                    if (node != null) {
-                        applyAssertions(node, List.of(assertion));
-                    } else {
-                        pendingAssertions
-                                .computeIfAbsent(nodeId, key -> new ArrayList<>())
-                                .add(assertion);
-                    }
-                }
-                default -> { /* skip */ }
-            }
-        }
-
-        String runId = started != null ? started.runId().value() : "unknown";
-        String scenarioDigest = started != null ? started.scenarioDigest() : "";
-        String catalogDigest = started != null ? started.catalogDigest() : "";
-        long seed = started != null ? started.seed() : 0;
-        boolean passed = completed != null;
-        long totalDuration = completed != null ? completed.durationMs()
-                : (failed != null ? failed.durationMs() : 0);
-        int passedAssertions = completed != null ? completed.passedAssertions() : 0;
-        int failedAssertions = completed != null ? completed.failedAssertions() : 0;
+        RunSummary summary = RunSummary.of(events);
 
         output.write("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
         output.write("<meta charset=\"UTF-8\">\n");
         output.write("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n");
-        output.write("<title>Faultora Run Report — " + escapeHtml(runId) + "</title>\n");
+        output.write("<title>Faultora Run Report — " + escapeHtml(summary.runId()) + "</title>\n");
         output.write("<style>\n");
         output.write(CSS);
         output.write("</style>\n</head>\n<body>\n");
 
-        // Header
         output.write("<header>\n");
         output.write("<h1>Faultora Run Report</h1>\n");
         output.write(String.format("<span class=\"badge %s\">%s</span>\n",
-                passed ? "pass" : "fail", passed ? "PASSED" : "FAILED"));
+                summary.passed() ? "pass" : "fail", summary.passed() ? "PASSED" : "FAILED"));
         output.write("</header>\n");
 
-        // Run metadata
         output.write("<section class=\"metadata\">\n");
         output.write("<table>\n");
-        output.write(metaRow("Run ID", runId));
-        output.write(metaRow("Scenario digest", scenarioDigest));
-        output.write(metaRow("Catalog digest", catalogDigest));
-        output.write(metaRow("Seed", String.valueOf(seed)));
-        output.write(metaRow("Duration", totalDuration + "ms"));
-        output.write(metaRow("Passed assertions", String.valueOf(passedAssertions)));
-        output.write(metaRow("Failed assertions", String.valueOf(failedAssertions)));
+        output.write(metaRow("Run ID", summary.runId()));
+        output.write(metaRow("Scenario digest", summary.scenarioDigest()));
+        output.write(metaRow("Catalog digest", summary.catalogDigest()));
+        output.write(metaRow("Seed", String.valueOf(summary.seed())));
+        output.write(metaRow("Duration", summary.durationMs() + "ms"));
+        output.write(metaRow("Passed assertions", String.valueOf(summary.passedAssertions())));
+        output.write(metaRow("Failed assertions", String.valueOf(summary.failedAssertions())));
         output.write("</table>\n</section>\n");
 
-        // Node table
         output.write("<section class=\"nodes\">\n<h2>Nodes</h2>\n");
         output.write("<table>\n<thead><tr>");
         output.write("<th>Node</th><th>Status</th><th>Status Code</th>");
         output.write("<th>Duration</th><th>Details</th></tr></thead>\n<tbody>\n");
-        for (NodeRecord node : nodes) {
-            String statusClass = "PASSED".equals(node.status) ? "pass" : "fail";
+        for (RunSummary.Node node : summary.nodes()) {
             output.write("<tr>");
-            output.write("<td>" + escapeHtml(node.name) + "</td>");
+            output.write("<td>" + escapeHtml(node.name()) + "</td>");
             output.write(String.format("<td><span class=\"badge %s\">%s</span></td>",
-                    statusClass, node.status));
-            output.write("<td>" + (node.statusCode >= 0 ? node.statusCode : "—") + "</td>");
-            output.write("<td>" + node.durationMs + "ms</td>");
+                    node.passed() ? "pass" : "fail", node.status()));
+            output.write("<td>" + (node.statusCode() >= 0 ? node.statusCode() : "—") + "</td>");
+            output.write("<td>" + node.durationMs() + "ms</td>");
             output.write("<td>");
-            Integer retries = retryCounts.get(node.name);
-            if (retries != null) {
-                output.write("<span class=\"muted\">" + retries + " retr"
-                        + (retries == 1 ? "y" : "ies") + "</span> ");
+            if (node.retries() != null) {
+                output.write("<span class=\"muted\">" + node.retries() + " retr"
+                        + (node.retries() == 1 ? "y" : "ies") + "</span> ");
             }
-            Integer polls = pollCounts.get(node.name);
-            if (polls != null) {
-                output.write("<span class=\"muted\">" + polls + " poll"
-                        + (polls == 1 ? "" : "s") + "</span> ");
+            if (node.polls() != null) {
+                output.write("<span class=\"muted\">" + node.polls() + " poll"
+                        + (node.polls() == 1 ? "" : "s") + "</span> ");
             }
-            if (node.error != null) {
-                output.write(escapeHtml(node.error.message()));
+            if (node.error() != null) {
+                output.write(escapeHtml(node.error().message()));
             }
-            for (AssertionRecord assertion : node.assertions) {
+            for (RunSummary.Assertion assertion : node.assertions()) {
                 output.write(String.format("<span class=\"badge %s\">%s</span>",
-                        "PASS".equals(assertion.outcome()) ? "pass" : "fail",
+                        assertion.passed() ? "pass" : "fail",
                         escapeHtml(assertion.outcome())));
                 if (assertion.message() != null) {
                     output.write(" — " + escapeHtml(assertion.message()));
@@ -151,14 +83,12 @@ public class HtmlRenderer implements ReportRenderer {
         }
         output.write("</tbody>\n</table>\n</section>\n");
 
-        // Fault windows and attribution
-        List<FaultTimeline.Window> faultWindows = FaultTimeline.windows(events);
-        if (!faultWindows.isEmpty()) {
+        if (!summary.faultWindows().isEmpty()) {
             output.write("<section class=\"nodes\">\n<h2>Faults</h2>\n");
             output.write("<table>\n<thead><tr>");
             output.write("<th>Fault</th><th>Target</th><th>Active</th>");
             output.write("<th>Rollback</th><th>Nodes during fault</th></tr></thead>\n<tbody>\n");
-            for (FaultTimeline.Window window : faultWindows) {
+            for (FaultTimeline.Window window : summary.faultWindows()) {
                 output.write("<tr>");
                 output.write("<td>" + escapeHtml(window.faultType())
                         + " <span class=\"muted\">(" + escapeHtml(window.handle()) + ")</span></td>");
@@ -173,14 +103,12 @@ public class HtmlRenderer implements ReportRenderer {
             output.write("</tbody>\n</table>\n</section>\n");
         }
 
-        // Error details if run failed
-        if (failed != null && failed.error() != null) {
+        if (summary.runError() != null) {
             output.write("<section class=\"error\">\n<h2>Error</h2>\n");
-            output.write("<pre>" + escapeHtml(failed.error().message()) + "</pre>\n");
+            output.write("<pre>" + escapeHtml(summary.runError().message()) + "</pre>\n");
             output.write("</section>\n");
         }
 
-        // Footer
         output.write("<footer>Generated by Faultora — offline report, no external assets</footer>\n");
         output.write("</body>\n</html>\n");
     }
@@ -196,38 +124,6 @@ public class HtmlRenderer implements ReportRenderer {
                 .replace("<", "&lt;")
                 .replace(">", "&gt;")
                 .replace("\"", "&quot;");
-    }
-
-    private static void applyAssertions(NodeRecord node, List<AssertionRecord> assertions) {
-        if (assertions == null) {
-            return;
-        }
-        node.assertions.addAll(assertions);
-        for (AssertionRecord assertion : assertions) {
-            if (!"PASS".equals(assertion.outcome())) {
-                node.status = "FAILED";
-            }
-        }
-    }
-
-    private record AssertionRecord(String outcome, String message) {}
-
-    private static class NodeRecord {
-        final String name;
-        final List<AssertionRecord> assertions = new ArrayList<>();
-        String status;
-        long durationMs;
-        int statusCode;
-        NormalizedError error;
-
-        NodeRecord(String name, String status, long durationMs, int statusCode,
-                   NormalizedError error) {
-            this.name = name;
-            this.status = status;
-            this.durationMs = durationMs;
-            this.statusCode = statusCode;
-            this.error = error;
-        }
     }
 
     private static final String CSS = """

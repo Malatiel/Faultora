@@ -4,6 +4,7 @@ import dev.faultora.model.catalog.*;
 import dev.faultora.model.identifier.*;
 import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.spec.model.*;
+import dev.faultora.spec.parser.DurationSyntax;
 
 import java.util.*;
 
@@ -13,18 +14,6 @@ import java.util.*;
  * checks safety classification, and produces a DAG with stable node IDs.
  */
 public class PlanCompiler {
-
-    /** Upper bound on retry attempts per step, preventing retry storms. */
-    static final int MAX_RETRY_ATTEMPTS = 10;
-
-    /** Upper bound on iterations of a single repeat group. */
-    static final int MAX_REPEAT_ITERATIONS = 100;
-
-    /** Upper bound on polls of a single eventually group. */
-    static final int MAX_POLL_ATTEMPTS = 100;
-
-    /** Poll interval used when an eventually step does not declare one. */
-    static final long DEFAULT_POLL_INTERVAL_MS = 1000;
 
     /**
      * Compile a scenario against a catalog.
@@ -200,7 +189,7 @@ public class PlanCompiler {
                 nodes.add(new PlanNode.ParallelNode(
                         nodeId, children,
                         resolveDependencies(step.dependsOn(), childToGroup),
-                        groupSafety(children), deadlineMs, 0
+                        groupSafety(children), deadlineMs
                 ));
 
             } else if ("repeat".equals(step.type())) {
@@ -225,11 +214,10 @@ public class PlanCompiler {
                             phase, stepId, "Wait step requires a positive timeout"));
                     continue;
                 }
-                List<NodeId> deps = resolveDependencies(step.dependsOn(), childToGroup);
-                nodes.add(new PlanNode.OperationNode(
-                        nodeId, new OperationId("_wait"), null,
-                        Map.of("waitMs", waitMs), step.outputAs(),
-                        deps, dev.faultora.model.catalog.SafetyClassification.READ_ONLY, 0, 0
+                nodes.add(new PlanNode.WaitNode(
+                        nodeId, waitMs,
+                        resolveDependencies(step.dependsOn(), childToGroup),
+                        SafetyClassification.READ_ONLY
                 ));
             } else {
                 diagnostics.add(PlanDiagnostic.error(phase, stepId,
@@ -265,9 +253,9 @@ public class PlanCompiler {
             return null;
         }
         int iterations = hasCount ? step.count() : step.forEach().size();
-        if (iterations < 1 || iterations > MAX_REPEAT_ITERATIONS) {
+        if (iterations < 1 || iterations > ScenarioLimits.MAX_REPEAT_ITERATIONS) {
             diagnostics.add(PlanDiagnostic.error(phase, stepId,
-                    "Repeat step requires 1 to " + MAX_REPEAT_ITERATIONS
+                    "Repeat step requires 1 to " + ScenarioLimits.MAX_REPEAT_ITERATIONS
                             + " iterations, got: " + iterations));
             return null;
         }
@@ -282,7 +270,7 @@ public class PlanCompiler {
                 new NodeId(stepId), children,
                 hasForEach ? step.forEach() : null, iterations,
                 resolveDependencies(step.dependsOn(), childToGroup), groupSafety(children),
-                parseTimeout(step.timeout(), phase, stepId, "timeout", diagnostics), 0
+                parseTimeout(step.timeout(), phase, stepId, "timeout", diagnostics)
         );
     }
 
@@ -313,7 +301,7 @@ public class PlanCompiler {
             return null;
         }
         long intervalMs = step.interval() == null || step.interval().isBlank()
-                ? DEFAULT_POLL_INTERVAL_MS
+                ? ScenarioLimits.DEFAULT_POLL_INTERVAL_MS
                 : parseTimeout(step.interval(), phase, stepId, "interval", diagnostics);
         if (intervalMs <= 0) {
             diagnostics.add(PlanDiagnostic.error(phase, stepId,
@@ -355,11 +343,11 @@ public class PlanCompiler {
         }
 
         long requestedPolls = 1 + timeoutMs / intervalMs;
-        if (requestedPolls > MAX_POLL_ATTEMPTS) {
+        if (requestedPolls > ScenarioLimits.MAX_POLL_ATTEMPTS) {
             diagnostics.add(PlanDiagnostic.error(phase, stepId,
                     "Eventually step would need " + requestedPolls + " polls, the maximum is "
-                            + MAX_POLL_ATTEMPTS + "; raise interval to at least "
-                            + (timeoutMs / (MAX_POLL_ATTEMPTS - 1) + 1) + "ms"));
+                            + ScenarioLimits.MAX_POLL_ATTEMPTS + "; raise interval to at least "
+                            + (timeoutMs / (ScenarioLimits.MAX_POLL_ATTEMPTS - 1) + 1) + "ms"));
             return null;
         }
         int maxPolls = (int) requestedPolls;
@@ -367,7 +355,7 @@ public class PlanCompiler {
                 new NodeId(stepId), children.get(0), conditions,
                 timeoutMs, intervalMs, maxPolls,
                 resolveDependencies(step.dependsOn(), childToGroup),
-                groupSafety(children), 0, 0
+                groupSafety(children)
         );
     }
 
@@ -465,27 +453,28 @@ public class PlanCompiler {
         PlanNode.RetrySpec retrySpec = null;
         if (step.retry() != null) {
             ScenarioStep.RetryPolicy retry = step.retry();
-            if (retry.maxAttempts() < 1) {
+            if (!retry.isWithinRange()) {
                 diagnostics.add(PlanDiagnostic.error(phase, stepId,
                         "retry.maxAttempts must be at least 1"));
                 return null;
             }
-            if (retry.maxAttempts() > MAX_RETRY_ATTEMPTS) {
+            if (retry.exceedsAttemptLimit()) {
                 diagnostics.add(PlanDiagnostic.error(phase, stepId,
-                        "retry.maxAttempts must not exceed " + MAX_RETRY_ATTEMPTS));
+                        "retry.maxAttempts must not exceed "
+                                + ScenarioLimits.MAX_RETRY_ATTEMPTS));
                 return null;
             }
-            if ("cleanup".equals(phase) && retry.maxAttempts() > 1) {
+            if ("cleanup".equals(phase) && retry.retriesAtAll()) {
                 diagnostics.add(PlanDiagnostic.error(phase, stepId,
                         "Retries are not supported for cleanup steps"));
                 return null;
             }
-            if (step.expectError() && retry.maxAttempts() > 1) {
+            if (step.expectError() && retry.retriesAtAll()) {
                 diagnostics.add(PlanDiagnostic.error(phase, stepId,
                         "expectError cannot be combined with retry"));
                 return null;
             }
-            if (retry.maxAttempts() > 1) {
+            if (retry.retriesAtAll()) {
                 retrySpec = new PlanNode.RetrySpec(
                         retry.maxAttempts(), retry.backoffMs(),
                         retry.backoffMultiplier(), retry.maxBackoffMs());
@@ -540,7 +529,7 @@ public class PlanCompiler {
                     step.params() != null ? new LinkedHashMap<>(step.params()) : Map.of(),
                     durationMs,
                     resolveDependencies(step.dependsOn(), childToGroup),
-                    SafetyClassification.MUTATING, 0, 0
+                    SafetyClassification.MUTATING
             ));
         }
     }
@@ -638,7 +627,7 @@ public class PlanCompiler {
             nodes.add(new PlanNode.AssertionNode(
                     nodeId, step.assertionType(), params,
                     targetNode, step.message(), deps,
-                    SafetyClassification.READ_ONLY, 0, 0
+                    SafetyClassification.READ_ONLY
             ));
         }
     }
@@ -697,27 +686,14 @@ public class PlanCompiler {
             String field,
             List<PlanDiagnostic> diagnostics
     ) {
-        if (timeout == null || timeout.isBlank()) return 0;
-        try {
-            String trimmed = timeout.trim().toLowerCase();
-            long multiplier = 1;
-            if (trimmed.endsWith("ms")) {
-                trimmed = trimmed.substring(0, trimmed.length() - 2);
-            } else if (trimmed.endsWith("s")) {
-                trimmed = trimmed.substring(0, trimmed.length() - 1);
-                multiplier = 1000;
-            } else if (trimmed.endsWith("m")) {
-                trimmed = trimmed.substring(0, trimmed.length() - 1);
-                multiplier = 60_000;
-            }
-            long parsed = Math.multiplyExact(Long.parseLong(trimmed), multiplier);
-            if (parsed < 0) throw new NumberFormatException("negative duration");
-            return parsed;
-        } catch (ArithmeticException | NumberFormatException e) {
+        if (DurationSyntax.isAbsent(timeout)) return 0;
+        java.util.OptionalLong parsed = DurationSyntax.parseMillis(timeout);
+        if (parsed.isEmpty() || parsed.getAsLong() < 0) {
             diagnostics.add(PlanDiagnostic.error(
                     phase, stepId, "Invalid " + field + ": " + timeout));
             return 0;
         }
+        return parsed.getAsLong();
     }
 
     private boolean hasCycles(List<PlanNode> nodes) {

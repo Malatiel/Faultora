@@ -732,7 +732,7 @@ class PlanCompilerTest {
                 .stream()
                 .filter(node -> node instanceof PlanNode.EventuallyNode)
                 .findFirst().orElseThrow();
-        assertThat(eventually.intervalMs()).isEqualTo(PlanCompiler.DEFAULT_POLL_INTERVAL_MS);
+        assertThat(eventually.intervalMs()).isEqualTo(ScenarioLimits.DEFAULT_POLL_INTERVAL_MS);
     }
 
     @Test
@@ -791,7 +791,7 @@ class PlanCompilerTest {
         assertThat(result.isSuccess()).isFalse();
         assertThat(result.errors()).extracting(PlanDiagnostic::message)
                 .anyMatch(message -> message.contains("the maximum is "
-                        + PlanCompiler.MAX_POLL_ATTEMPTS)
+                        + ScenarioLimits.MAX_POLL_ATTEMPTS)
                         && message.contains("raise interval"));
     }
 

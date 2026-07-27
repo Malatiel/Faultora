@@ -1,15 +1,11 @@
 package dev.faultora.reporting;
 
-import dev.faultora.model.catalog.NormalizedError;
 import dev.faultora.model.events.RunEvent;
 import dev.faultora.spi.contract.ReportRenderer;
 
 import java.io.IOException;
 import java.io.Writer;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * Renders run results as JUnit XML.
@@ -25,92 +21,67 @@ public class JUnitXmlRenderer implements ReportRenderer {
 
     @Override
     public void render(List<RunEvent> events, Writer output) throws IOException {
-        RunEvent.RunStarted started = null;
-        RunEvent.RunCompleted completed = null;
-        RunEvent.RunFailed failed = null;
-        List<TestCase> testCases = new ArrayList<>();
-        // Assertion outcomes are matched by node ID, not by arrival order: a
-        // node may report its assertions before or after its own result.
-        Map<String, List<String>> failedAssertions = new LinkedHashMap<>();
+        RunSummary summary = RunSummary.of(events);
+        List<RunSummary.Node> nodes = summary.nodes();
 
-        for (RunEvent event : events) {
-            switch (event) {
-                case RunEvent.RunStarted rs -> started = rs;
-                case RunEvent.RunCompleted rc -> completed = rc;
-                case RunEvent.RunFailed rf -> failed = rf;
-                case RunEvent.NodeCompleted nc -> testCases.add(new TestCase(
-                        nc.nodeId().value(), nc.durationMs() / 1000.0,
-                        null, null, false));
-                case RunEvent.NodeFailed nf -> testCases.add(new TestCase(
-                        nf.nodeId().value(), nf.durationMs() / 1000.0,
-                        nf.error(), nf.error() != null ? nf.error().message() : null, true));
-                case RunEvent.AssertionEvaluated ae -> {
-                    if (!"PASS".equals(ae.outcome())) {
-                        failedAssertions
-                                .computeIfAbsent(ae.nodeId().value(), key -> new ArrayList<>())
-                                .add(ae.message() != null
-                                        ? ae.message() : ae.outcome() + " assertion");
-                    }
-                }
-                default -> { /* skip */ }
-            }
-        }
+        int failures = (int) nodes.stream().filter(node -> !node.passed()).count();
+        double totalTime = nodes.stream().mapToDouble(node -> node.durationMs() / 1000.0).sum();
+        String suiteName = "faultora-run-" + summary.runId();
 
-        for (TestCase testCase : testCases) {
-            List<String> messages = failedAssertions.get(testCase.name);
-            if (messages != null && !messages.isEmpty()) {
-                testCase.isFailure = true;
-                if (testCase.failure == null) {
-                    testCase.failure = String.join("; ", messages);
-                }
-            }
-        }
-
-        // Determine overall attributes
-        int totalTests = testCases.size();
-        int failures = (int) testCases.stream().filter(tc -> tc.isFailure).count();
-        double totalTime = testCases.stream().mapToDouble(tc -> tc.timeSeconds).sum();
-        String suiteName = started != null
-                ? "faultora-run-" + started.runId().value()
-                : "faultora-run";
-
-        // XML output
         output.write("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         output.write(String.format(
                 "<testsuite name=\"%s\" tests=\"%d\" failures=\"%d\" errors=\"0\" time=\"%.3f\">\n",
-                escapeXml(suiteName), totalTests, failures, totalTime));
+                escapeXml(suiteName), nodes.size(), failures, totalTime));
 
-        for (TestCase tc : testCases) {
+        for (RunSummary.Node node : nodes) {
             output.write(String.format(
                     "  <testcase name=\"%s\" classname=\"%s\" time=\"%.3f\"",
-                    escapeXml(tc.name), escapeXml("faultora"), tc.timeSeconds));
+                    escapeXml(node.name()), escapeXml("faultora"), node.durationMs() / 1000.0));
 
-            if (tc.isFailure) {
-                output.write(">\n");
-                output.write(String.format(
-                        "    <failure message=\"%s\" type=\"%s\">%s</failure>\n",
-                        escapeXml(tc.failure != null ? tc.failure : "assertion failed"),
-                        escapeXml(tc.error != null ? tc.error.code() : "ASSERTION_FAILURE"),
-                        escapeXml(tc.failure != null ? tc.failure : "")));
-                output.write("  </testcase>\n");
-            } else {
+            if (node.passed()) {
                 output.write(" />\n");
+                continue;
             }
+            String message = failureMessage(node);
+            output.write(">\n");
+            output.write(String.format(
+                    "    <failure message=\"%s\" type=\"%s\">%s</failure>\n",
+                    escapeXml(message),
+                    escapeXml(node.error() != null ? node.error().code() : "ASSERTION_FAILURE"),
+                    escapeXml(message)));
+            output.write("  </testcase>\n");
         }
 
-        // If the run itself failed, add a synthetic failure case
-        if (failed != null && testCases.stream().noneMatch(tc -> tc.isFailure)) {
+        // A run can fail for reasons no single node owns — a scenario deadline,
+        // cancellation, or a cleanup failure. CI must still see a failure.
+        if (summary.failed() && failures == 0) {
             output.write(String.format(
                     "  <testcase name=\"run-failure\" classname=\"faultora\" time=\"%.3f\">\n",
-                    failed.durationMs() / 1000.0));
+                    summary.durationMs() / 1000.0));
             output.write(String.format(
                     "    <failure message=\"%s\" type=\"RUN_FAILURE\">%s</failure>\n",
-                    escapeXml(failed.error() != null ? failed.error().message() : "run failed"),
-                    escapeXml(failed.error() != null ? failed.error().code() : "")));
+                    escapeXml(summary.runError() != null
+                            ? summary.runError().message() : "run failed"),
+                    escapeXml(summary.runError() != null ? summary.runError().code() : "")));
             output.write("  </testcase>\n");
         }
 
         output.write("</testsuite>\n");
+    }
+
+    /**
+     * The node's own error explains the failure when it has one; otherwise the
+     * assertions that did not pass do.
+     */
+    private static String failureMessage(RunSummary.Node node) {
+        if (node.error() != null && node.error().message() != null) {
+            return node.error().message();
+        }
+        List<String> assertionMessages = node.failedAssertionMessages();
+        if (!assertionMessages.isEmpty()) {
+            return String.join("; ", assertionMessages);
+        }
+        return "assertion failed";
     }
 
     private static String escapeXml(String text) {
@@ -121,22 +92,5 @@ public class JUnitXmlRenderer implements ReportRenderer {
                 .replace(">", "&gt;")
                 .replace("\"", "&quot;")
                 .replace("'", "&apos;");
-    }
-
-    private static class TestCase {
-        final String name;
-        final double timeSeconds;
-        NormalizedError error;
-        String failure;
-        boolean isFailure;
-
-        TestCase(String name, double timeSeconds, NormalizedError error,
-                 String failure, boolean isFailure) {
-            this.name = name;
-            this.timeSeconds = timeSeconds;
-            this.error = error;
-            this.failure = failure;
-            this.isFailure = isFailure;
-        }
     }
 }

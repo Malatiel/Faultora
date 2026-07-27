@@ -108,7 +108,25 @@ public record ScenarioStep(
             long backoffMs,
             double backoffMultiplier,
             long maxBackoffMs
-    ) {}
+    ) {
+        /** Whether every declared value is inside its allowed range. */
+        public boolean isWithinRange() {
+            return maxAttempts >= 1
+                    && backoffMs >= 0
+                    && backoffMultiplier >= 1
+                    && maxBackoffMs >= 0;
+        }
+
+        /** Whether the policy asks for more attempts than the language allows. */
+        public boolean exceedsAttemptLimit() {
+            return maxAttempts > ScenarioLimits.MAX_RETRY_ATTEMPTS;
+        }
+
+        /** Whether the policy would re-execute a step at all. */
+        public boolean retriesAtAll() {
+            return maxAttempts > 1;
+        }
+    }
 
     /**
      * A condition evaluated against the polled step's evidence inside an

@@ -30,8 +30,8 @@ class ConcurrentDuplicateE2ETest {
     }
 
     private int runScenario(String outputDirName) throws IOException {
-        Path scenario = Path.of("src/test/resources/scenarios/fault-concurrent-duplicate.yaml");
-        Path openApi = Path.of("src/test/resources/openapi.yaml");
+        Path scenario = ExampleFixtures.scenario("fault-concurrent-duplicate.yaml");
+        Path openApi = ExampleFixtures.openApi();
         Path outputDir = Path.of(System.getProperty("java.io.tmpdir"), outputDirName);
         Files.createDirectories(outputDir);
 
@@ -76,8 +76,8 @@ class ConcurrentDuplicateE2ETest {
         api = new PaymentApi(true);
         api.start();
 
-        Path scenario = Path.of("src/test/resources/scenarios/fault-concurrent-duplicate.yaml");
-        Path openApi = Path.of("src/test/resources/openapi.yaml");
+        Path scenario = ExampleFixtures.scenario("fault-concurrent-duplicate.yaml");
+        Path openApi = ExampleFixtures.openApi();
         Path outputDir = Path.of(System.getProperty("java.io.tmpdir"), "faultora-e2e-race-input");
         Files.createDirectories(outputDir);
 

@@ -43,8 +43,8 @@ class FaultInjectionE2ETest {
 
     @Test
     void latencyFaultScenarioPassesAndReportsTheFaultWindow() throws IOException {
-        Path scenario = Path.of("src/test/resources/scenarios/fault-latency.yaml");
-        Path openApi = Path.of("src/test/resources/openapi.yaml");
+        Path scenario = ExampleFixtures.scenario("fault-latency.yaml");
+        Path openApi = ExampleFixtures.openApi();
         Path outputDir = Path.of(System.getProperty("java.io.tmpdir"), "faultora-e2e-fault-latency");
         Files.createDirectories(outputDir);
 
@@ -72,8 +72,8 @@ class FaultInjectionE2ETest {
 
     @Test
     void duplicatePaymentIsPreventedUnderResponseLoss() throws IOException {
-        Path scenario = Path.of("src/test/resources/scenarios/fault-duplicate-payment.yaml");
-        Path openApi = Path.of("src/test/resources/openapi.yaml");
+        Path scenario = ExampleFixtures.scenario("fault-duplicate-payment.yaml");
+        Path openApi = ExampleFixtures.openApi();
         Path outputDir = Path.of(System.getProperty("java.io.tmpdir"), "faultora-e2e-fault-dup");
         Files.createDirectories(outputDir);
 
@@ -96,8 +96,8 @@ class FaultInjectionE2ETest {
 
     @Test
     void retryScenarioRecoversOnceTheOutageClears() throws IOException {
-        Path scenario = Path.of("src/test/resources/scenarios/fault-retry.yaml");
-        Path openApi = Path.of("src/test/resources/openapi.yaml");
+        Path scenario = ExampleFixtures.scenario("fault-retry.yaml");
+        Path openApi = ExampleFixtures.openApi();
         Path outputDir = Path.of(System.getProperty("java.io.tmpdir"), "faultora-e2e-fault-retry");
         Files.createDirectories(outputDir);
 
@@ -143,8 +143,7 @@ class FaultInjectionE2ETest {
         int exit = createCli().run(new String[]{
                 "test",
                 "--scenario", scenario.toAbsolutePath().toString(),
-                "--openapi", Path.of("src/test/resources/openapi.yaml")
-                        .toAbsolutePath().toString(),
+                "--openapi", ExampleFixtures.openApi().toString(),
                 "--target", api.baseUrl(),
                 "--allow-private"
         });
@@ -156,7 +155,7 @@ class FaultInjectionE2ETest {
 
     @Test
     void faultScenarioValidatesWithoutContactingTheTarget() {
-        Path scenario = Path.of("src/test/resources/scenarios/fault-duplicate-payment.yaml");
+        Path scenario = ExampleFixtures.scenario("fault-duplicate-payment.yaml");
 
         int exit = createCli().run(new String[]{
                 "validate",

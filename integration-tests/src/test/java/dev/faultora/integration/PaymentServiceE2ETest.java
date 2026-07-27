@@ -39,7 +39,7 @@ class PaymentServiceE2ETest {
 
     @Test
     void validateCommandAcceptsValidScenario() {
-        Path scenario = Path.of("src/test/resources/scenarios/passing.yaml");
+        Path scenario = ExampleFixtures.scenario("passing.yaml");
 
         int exit = createCli().run(new String[]{
                 "validate",
@@ -51,7 +51,7 @@ class PaymentServiceE2ETest {
 
     @Test
     void discoverCommandListsOperations() {
-        Path openApi = Path.of("src/test/resources/openapi.yaml");
+        Path openApi = ExampleFixtures.openApi();
 
         int exit = createCli().run(new String[]{
                 "discover",
@@ -63,7 +63,7 @@ class PaymentServiceE2ETest {
 
     @Test
     void initCommandGeneratesScenario() throws IOException {
-        Path openApi = Path.of("src/test/resources/openapi.yaml");
+        Path openApi = ExampleFixtures.openApi();
         Path outputDir = Path.of(System.getProperty("java.io.tmpdir"), "faultora-e2e-init");
 
         int exit = createCli().run(new String[]{
@@ -78,8 +78,8 @@ class PaymentServiceE2ETest {
 
     @Test
     void passingScenarioRunsSuccessfully() throws IOException {
-        Path scenario = Path.of("src/test/resources/scenarios/passing.yaml");
-        Path openApi = Path.of("src/test/resources/openapi.yaml");
+        Path scenario = ExampleFixtures.scenario("passing.yaml");
+        Path openApi = ExampleFixtures.openApi();
         Path outputDir = Path.of(System.getProperty("java.io.tmpdir"), "faultora-e2e-pass");
         Files.createDirectories(outputDir);
         Files.writeString(outputDir.resolve("events.ndjson"), "{\"stale\":true}\n");
@@ -105,8 +105,8 @@ class PaymentServiceE2ETest {
 
     @Test
     void failingScenarioReturnsNonZero() {
-        Path scenario = Path.of("src/test/resources/scenarios/failing.yaml");
-        Path openApi = Path.of("src/test/resources/openapi.yaml");
+        Path scenario = ExampleFixtures.scenario("failing.yaml");
+        Path openApi = ExampleFixtures.openApi();
 
         int exit = createCli().run(new String[]{
                 "test",

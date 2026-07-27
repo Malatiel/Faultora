@@ -5,15 +5,22 @@ import dev.faultora.model.catalog.SafetyClassification;
 import dev.faultora.model.identifier.NodeId;
 import dev.faultora.model.identifier.OperationId;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
 /**
  * A node in the compiled execution plan DAG.
- * Each node has a stable ID, dependencies, and execution metadata.
+ * <p>
+ * Every node has an identity, its place in the graph, and a safety
+ * classification the policy can reason about. Everything else — deadlines,
+ * retries, poll budgets — belongs to the node kinds that actually have it, so
+ * a node never carries a field it cannot honour.
  */
 public sealed interface PlanNode permits
         PlanNode.OperationNode,
+        PlanNode.WaitNode,
         PlanNode.ParallelNode,
         PlanNode.RepeatNode,
         PlanNode.EventuallyNode,
@@ -36,16 +43,6 @@ public sealed interface PlanNode permits
      * Safety classification for this node.
      */
     SafetyClassification safety();
-
-    /**
-     * Deadline in milliseconds from run start (0 = no deadline).
-     */
-    long deadlineMs();
-
-    /**
-     * Maximum retry attempts (0 = no retry).
-     */
-    int maxRetries();
 
     /**
      * Retry behavior for an operation node. Delays follow exponential backoff
@@ -118,6 +115,31 @@ public sealed interface PlanNode permits
             this(nodeId, operationId, operation, inputExpressions, outputBinding,
                     expectError, null, dependencies, safety, deadlineMs, maxRetries);
         }
+
+        /** The same node under a different ID, used for repeat iterations. */
+        public OperationNode withNodeId(NodeId iterationNodeId) {
+            return new OperationNode(
+                    iterationNodeId, operationId, operation, inputExpressions,
+                    outputBinding, expectError, retrySpec, dependencies, safety,
+                    deadlineMs, maxRetries);
+        }
+    }
+
+    /**
+     * Node representing a local pause. A wait makes no request and therefore
+     * has neither a connector nor a retry policy.
+     */
+    record WaitNode(
+            NodeId nodeId,
+            long waitMs,
+            List<NodeId> dependencies,
+            SafetyClassification safety
+    ) implements PlanNode {
+        public WaitNode {
+            if (waitMs < 1) {
+                throw new IllegalArgumentException("wait node requires a positive duration");
+            }
+        }
     }
 
     /**
@@ -130,8 +152,7 @@ public sealed interface PlanNode permits
             List<OperationNode> children,
             List<NodeId> dependencies,
             SafetyClassification safety,
-            long deadlineMs,
-            int maxRetries
+            long deadlineMs
     ) implements PlanNode {
         public ParallelNode {
             if (children == null || children.isEmpty()) {
@@ -154,8 +175,7 @@ public sealed interface PlanNode permits
             int iterations,
             List<NodeId> dependencies,
             SafetyClassification safety,
-            long deadlineMs,
-            int maxRetries
+            long deadlineMs
     ) implements PlanNode {
         public RepeatNode {
             if (children == null || children.isEmpty()) {
@@ -165,8 +185,7 @@ public sealed interface PlanNode permits
                 throw new IllegalArgumentException("repeat node requires at least one iteration");
             }
             children = List.copyOf(children);
-            items = items == null ? null : java.util.Collections.unmodifiableList(
-                    new java.util.ArrayList<>(items));
+            items = items == null ? null : Collections.unmodifiableList(new ArrayList<>(items));
         }
     }
 
@@ -183,9 +202,7 @@ public sealed interface PlanNode permits
             long intervalMs,
             int maxPolls,
             List<NodeId> dependencies,
-            SafetyClassification safety,
-            long deadlineMs,
-            int maxRetries
+            SafetyClassification safety
     ) implements PlanNode {
         public EventuallyNode {
             if (child == null) {
@@ -224,9 +241,7 @@ public sealed interface PlanNode permits
             NodeId targetNode,
             String message,
             List<NodeId> dependencies,
-            SafetyClassification safety,
-            long deadlineMs,
-            int maxRetries
+            SafetyClassification safety
     ) implements PlanNode {}
 
     /**
@@ -239,9 +254,7 @@ public sealed interface PlanNode permits
             Map<String, Object> params,
             long durationMs,
             List<NodeId> dependencies,
-            SafetyClassification safety,
-            long deadlineMs,
-            int maxRetries
+            SafetyClassification safety
     ) implements PlanNode {}
 
     /**
@@ -251,9 +264,7 @@ public sealed interface PlanNode permits
             NodeId nodeId,
             NodeId faultStartNode,
             List<NodeId> dependencies,
-            SafetyClassification safety,
-            long deadlineMs,
-            int maxRetries
+            SafetyClassification safety
     ) implements PlanNode {}
 
     /**

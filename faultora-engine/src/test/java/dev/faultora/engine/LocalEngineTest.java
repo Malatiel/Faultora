@@ -1,5 +1,6 @@
 package dev.faultora.engine;
 
+import dev.faultora.engine.exec.RetryBackoff;
 import dev.faultora.engine.journal.RunJournal;
 import dev.faultora.engine.plan.ExecutionPlan;
 import dev.faultora.engine.plan.PlanNode;
@@ -123,7 +124,7 @@ class LocalEngineTest {
                         new NodeId("failing-op"),
                         null,
                         List.of(new NodeId("failing-op")),
-                        SafetyClassification.READ_ONLY, 0, 0
+                        SafetyClassification.READ_ONLY
                 ))
                 .addNode(new PlanNode.CleanupNode(
                         new NodeId("cleanup-step"),
@@ -329,7 +330,7 @@ class LocalEngineTest {
                         new NodeId("op"),
                         null,
                         List.of(new NodeId("op")),
-                        SafetyClassification.READ_ONLY, 0, 0
+                        SafetyClassification.READ_ONLY
                 ))
                 .addNode(new PlanNode.AssertionNode(
                         new NodeId("assert-fail"),
@@ -338,7 +339,7 @@ class LocalEngineTest {
                         new NodeId("op"),
                         null,
                         List.of(new NodeId("op")),
-                        SafetyClassification.READ_ONLY, 0, 0
+                        SafetyClassification.READ_ONLY
                 ))
                 .build();
 
@@ -406,12 +407,9 @@ class LocalEngineTest {
                 .seed(42L)
                 .scenarioDigest("sha256:abc")
                 .catalogDigest("sha256:def")
-                .addNode(new PlanNode.OperationNode(
-                        new NodeId("wait"),
-                        new OperationId("_wait"),
-                        null,
-                        Map.of("waitMs", 1200L), null, List.of(),
-                        SafetyClassification.READ_ONLY, 0, 0))
+                .addNode(new PlanNode.WaitNode(
+                        new NodeId("wait"), 1200L, List.of(),
+                        SafetyClassification.READ_ONLY))
                 .build();
         LocalEngine engine = new LocalEngine(Map.of(), Map.of());
 
@@ -431,7 +429,7 @@ class LocalEngineTest {
     void faultNodeWithoutMatchingProviderFailsInsteadOfPassingSilently() throws Exception {
         ExecutionPlan plan = planWithNodes("run-fault", new PlanNode.FaultStartNode(
                 new NodeId("fault"), "latency", "default", Map.of(), 100,
-                List.of(), SafetyClassification.MUTATING, 0, 0));
+                List.of(), SafetyClassification.MUTATING));
         LocalEngine engine = new LocalEngine(Map.of(), Map.of());
 
         try (RunJournal journal = new RunJournal(tempDir.resolve("fault.ndjson"), true)) {
@@ -451,7 +449,7 @@ class LocalEngineTest {
                 new PlanNode.FaultStartNode(
                         new NodeId("inject"), "stub-fault", "default",
                         Map.of("delayMs", 10), 60_000,
-                        List.of(), SafetyClassification.MUTATING, 0, 0),
+                        List.of(), SafetyClassification.MUTATING),
                 new PlanNode.OperationNode(
                         new NodeId("op"), new OperationId("create-payment"),
                         findOp("create-payment"), Map.of(), null,
@@ -484,12 +482,11 @@ class LocalEngineTest {
                 new PlanNode.FaultStartNode(
                         new NodeId("inject"), "stub-fault", "default",
                         Map.of(), 100,
-                        List.of(), SafetyClassification.MUTATING, 0, 0),
-                new PlanNode.OperationNode(
-                        new NodeId("wait"), new OperationId("_wait"), null,
-                        Map.of("waitMs", 700L), null,
+                        List.of(), SafetyClassification.MUTATING),
+                new PlanNode.WaitNode(
+                        new NodeId("wait"), 700L,
                         List.of(new NodeId("inject")),
-                        SafetyClassification.READ_ONLY, 0, 0));
+                        SafetyClassification.READ_ONLY));
         LocalEngine engine = new LocalEngine(Map.of(), Map.of(), Map.of("stub", provider));
 
         try (RunJournal journal = new RunJournal(tempDir.resolve("fault-exp.ndjson"), true)) {
@@ -510,11 +507,11 @@ class LocalEngineTest {
                 new PlanNode.FaultStartNode(
                         new NodeId("inject"), "stub-fault", "default",
                         Map.of(), 60_000,
-                        List.of(), SafetyClassification.MUTATING, 0, 0),
+                        List.of(), SafetyClassification.MUTATING),
                 new PlanNode.FaultStopNode(
                         new NodeId("stop"), new NodeId("inject"),
                         List.of(new NodeId("inject")),
-                        SafetyClassification.MUTATING, 0, 0));
+                        SafetyClassification.MUTATING));
         LocalEngine engine = new LocalEngine(Map.of(), Map.of(), Map.of("stub", provider));
 
         try (RunJournal journal = new RunJournal(tempDir.resolve("fault-stop.ndjson"), true)) {
@@ -674,8 +671,8 @@ class LocalEngineTest {
         NodeId nodeId = new NodeId("flaky");
 
         for (int attempt = 1; attempt <= 4; attempt++) {
-            long first = LocalEngine.retryDelayMs(retry, 42L, nodeId, attempt);
-            long second = LocalEngine.retryDelayMs(retry, 42L, nodeId, attempt);
+            long first = RetryBackoff.delayMs(retry, 42L, nodeId, attempt);
+            long second = RetryBackoff.delayMs(retry, 42L, nodeId, attempt);
             assertThat(second).isEqualTo(first);
 
             double base = 100 * Math.pow(2.0, attempt - 1);
@@ -685,7 +682,7 @@ class LocalEngineTest {
 
         // The cap applies after jitter.
         PlanNode.RetrySpec capped = new PlanNode.RetrySpec(5, 100, 2.0, 150);
-        assertThat(LocalEngine.retryDelayMs(capped, 42L, nodeId, 4))
+        assertThat(RetryBackoff.delayMs(capped, 42L, nodeId, 4))
                 .isLessThanOrEqualTo(150);
     }
 
@@ -758,7 +755,7 @@ class LocalEngineTest {
                         List.of(
                                 childOp("first", "create-payment"),
                                 childOp("second", "create-payment")),
-                        List.of(), SafetyClassification.MUTATING, 0, 0));
+                        List.of(), SafetyClassification.MUTATING, 0));
         LocalEngine engine = new LocalEngine(Map.of("http", connector), Map.of());
 
         try (RunJournal journal = new RunJournal(tempDir.resolve("parallel.ndjson"), true)) {
@@ -786,7 +783,7 @@ class LocalEngineTest {
                         List.of(
                                 childOp("failing", "create-payment"),
                                 childOp("passing", "get-payment")),
-                        List.of(), SafetyClassification.MUTATING, 0, 0));
+                        List.of(), SafetyClassification.MUTATING, 0));
         LocalEngine engine = new LocalEngine(
                 Map.of("http", new FailCreatePaymentConnector()), Map.of());
 
@@ -814,7 +811,7 @@ class LocalEngineTest {
                                 new NodeId("first"), new OperationId("create-payment"),
                                 findOp("create-payment"), Map.of(), "winner",
                                 List.of(), SafetyClassification.MUTATING, 0, 0)),
-                        List.of(), SafetyClassification.MUTATING, 0, 0),
+                        List.of(), SafetyClassification.MUTATING, 0),
                 new PlanNode.OperationNode(
                         new NodeId("after"), new OperationId("get-payment"),
                         findOp("get-payment"),
@@ -892,7 +889,7 @@ class LocalEngineTest {
                                         findOp("create-payment"),
                                         Map.of(), null, List.of(),
                                         SafetyClassification.MUTATING, 0, 0)),
-                        List.of(), SafetyClassification.MUTATING, 200, 0))
+                        List.of(), SafetyClassification.MUTATING, 200))
                 .addNode(new PlanNode.CleanupNode(
                         new NodeId("cleanup-step"),
                         new OperationId("cleanup-op"),
@@ -947,7 +944,7 @@ class LocalEngineTest {
                                 null, List.of(),
                                 SafetyClassification.MUTATING, 0, 0)),
                         List.of(100, 200, 300), 3,
-                        List.of(), SafetyClassification.MUTATING, 0, 0))
+                        List.of(), SafetyClassification.MUTATING, 0))
                 .build();
 
         LocalEngine engine = new LocalEngine(
@@ -991,7 +988,7 @@ class LocalEngineTest {
                                 Map.of(), null, List.of(),
                                 SafetyClassification.MUTATING, 0, 0)),
                         null, 3,
-                        List.of(), SafetyClassification.MUTATING, 0, 0))
+                        List.of(), SafetyClassification.MUTATING, 0))
                 .build();
 
         LocalEngine engine = new LocalEngine(
@@ -1034,7 +1031,7 @@ class LocalEngineTest {
                         List.of(new PlanNode.Condition(
                                 "status", Map.of("expected", 200), null)),
                         2000, 20, 50,
-                        List.of(), SafetyClassification.READ_ONLY, 0, 0))
+                        List.of(), SafetyClassification.READ_ONLY))
                 .build();
 
         LocalEngine engine = new LocalEngine(
@@ -1081,7 +1078,7 @@ class LocalEngineTest {
                         List.of(new PlanNode.Condition(
                                 "status", Map.of("expected", 999), null)),
                         120, 20, 4,
-                        List.of(), SafetyClassification.READ_ONLY, 0, 0))
+                        List.of(), SafetyClassification.READ_ONLY))
                 .build();
 
         LocalEngine engine = new LocalEngine(
@@ -1113,11 +1110,9 @@ class LocalEngineTest {
                 .scenarioTimeoutMs(50)
                 .scenarioDigest("sha256:abc")
                 .catalogDigest("sha256:def")
-                .addNode(new PlanNode.OperationNode(
-                        new NodeId("slow-step"),
-                        new OperationId("_wait"), null,
-                        Map.of("waitMs", 120L), null, List.of(),
-                        SafetyClassification.READ_ONLY, 0, 0))
+                .addNode(new PlanNode.WaitNode(
+                        new NodeId("slow-step"), 120L, List.of(),
+                        SafetyClassification.READ_ONLY))
                 .addNode(new PlanNode.OperationNode(
                         new NodeId("never-runs"),
                         new OperationId("create-payment"),
@@ -1186,7 +1181,7 @@ class LocalEngineTest {
                         new NodeId("step-1"),
                         null,
                         List.of(new NodeId("step-1")),
-                        SafetyClassification.READ_ONLY, 0, 0
+                        SafetyClassification.READ_ONLY
                 ))
                 .build();
     }
