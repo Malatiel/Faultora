@@ -88,6 +88,12 @@ public final class SchemaValidator {
         if (type == null) {
             return;
         }
+        // OpenAPI 3.0 spells an optional null as a flag beside the type;
+        // JSON Schema 2020 puts "null" in a type union. Both mean the same.
+        if (value.isNull() && (schema.path("nullable").asBoolean(false)
+                || unionAllowsNull(schema))) {
+            return;
+        }
         if (!matchesType(value, type)) {
             violations.add(new Violation(path, "is " + value.getNodeType()
                     + " where " + type + " is declared"));
@@ -115,6 +121,17 @@ public final class SchemaValidator {
         JsonNode properties = schema.get("properties");
         if (properties == null || !properties.isObject()) {
             return;
+        }
+        // A closed object rejects what its contract does not describe: for a
+        // response, an undeclared field is exactly the drift worth catching.
+        if (schema.path("additionalProperties").isBoolean()
+                && !schema.get("additionalProperties").asBoolean()) {
+            value.fieldNames().forEachRemaining(name -> {
+                if (!properties.has(name)) {
+                    violations.add(new Violation(path + "." + name,
+                            "is not declared by the schema, which forbids additional properties"));
+                }
+            });
         }
         properties.properties().forEach(property -> {
             JsonNode child = value.get(property.getKey());
@@ -212,6 +229,20 @@ public final class SchemaValidator {
                 violations.add(new Violation(path, "is not a multiple of " + multipleOf));
             }
         }
+    }
+
+    /** Whether a type union includes {@code null}. */
+    private boolean unionAllowsNull(JsonNode schema) {
+        JsonNode type = schema.get("type");
+        if (type == null || !type.isArray()) {
+            return false;
+        }
+        for (JsonNode member : type) {
+            if (member.isTextual() && "null".equals(member.asText())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** The OpenAPI 3.0 spelling: a flag beside the inclusive bound. */

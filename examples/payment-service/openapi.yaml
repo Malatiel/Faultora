@@ -96,6 +96,11 @@ components:
   schemas:
     Payment:
       type: object
+      required:
+        - id
+        - amount
+        - currency
+        - status
       properties:
         id:
           type: string

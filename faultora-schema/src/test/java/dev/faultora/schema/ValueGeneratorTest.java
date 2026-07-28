@@ -195,6 +195,48 @@ class ValueGeneratorTest {
     }
 
     @Test
+    void inliningMakesASchemaUnderstandableWithoutTheCatalog() throws Exception {
+        SchemaCatalog catalog = new SchemaCatalog(Map.of(
+                new SchemaId("Payment"), new DataSchema(
+                        new SchemaId("Payment"), "object", "#/components/schemas/Payment",
+                        MAPPER.convertValue(schema("""
+                                {"type":"object","required":["id"],
+                                 "properties":{"id":{"type":"string"}}}
+                                """), Map.class))));
+        JsonNode listOfPayments = schema("""
+                {"type":"array","items":{"$ref":"#/components/schemas/Payment"}}
+                """);
+
+        JsonNode inlined = catalog.inline(listOfPayments);
+
+        // A consumer holding only this schema — an assertion checking a
+        // response — has no way to follow a reference later.
+        assertThat(inlined.toString()).doesNotContain("$ref");
+        assertThat(new SchemaValidator(new SchemaCatalog(Map.of()))
+                .validate(MAPPER.readTree("[{\"id\":\"pay-1\"}]"), inlined)).isEmpty();
+        assertThat(new SchemaValidator(new SchemaCatalog(Map.of()))
+                .validate(MAPPER.readTree("[{\"amount\":1}]"), inlined)).isNotEmpty();
+    }
+
+    @Test
+    void aSelfReferencingSchemaStopsExpandingInsteadOfLooping() throws Exception {
+        SchemaCatalog catalog = new SchemaCatalog(Map.of(
+                new SchemaId("Node"), new DataSchema(
+                        new SchemaId("Node"), "object", "#/components/schemas/Node",
+                        MAPPER.convertValue(schema("""
+                                {"type":"object","properties":{
+                                   "name":{"type":"string"},
+                                   "child":{"$ref":"#/components/schemas/Node"}}}
+                                """), Map.class))));
+
+        JsonNode inlined = catalog.inline(
+                schema("{\"$ref\":\"#/components/schemas/Node\"}"));
+
+        assertThat(inlined.at("/properties/name/type").asText()).isEqualTo("string");
+        assertThat(inlined.toString()).doesNotContain("$ref");
+    }
+
+    @Test
     void aRegularExpressionIsRefusedRatherThanGuessedAt() throws Exception {
         JsonNode schema = schema("""
                 {"type":"object","required":["iban"],

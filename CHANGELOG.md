@@ -2,6 +2,30 @@
 
 All notable changes to Faultora are documented in this file.
 
+## Unreleased — 0.6 debt release, in progress
+
+### Added
+
+- Response-schema assertions (`assertionType: schema`), owed since M1-06. The
+  schema is resolved during plan compilation with every `$ref` expanded, so an
+  assertion against a contract the catalog does not declare fails before the
+  run starts, and the assertion itself never reaches back into the catalog. An
+  operation declaring several responses must be told which one to check.
+- `SchemaValidator` honours `additionalProperties: false`, so a response
+  carrying a field its contract does not declare fails, and `nullable: true`
+  in both its OpenAPI 3.0 and JSON Schema 2020 spellings.
+- `SchemaCatalog.inline` expands references into a self-contained schema, and
+  stops at a repeat rather than looping on a self-referencing definition.
+- The example smoke scenario asserts its response against the published
+  OpenAPI document, and the example `Payment` schema declares which of its
+  fields are required.
+
+### Changed
+
+- `AssertionContext` carries the resolved schema an assertion checks against.
+  A provider that needs none ignores it; the two-argument constructor is
+  unchanged.
+
 ## 0.5.2 — 2026-07-28
 
 Attribution release; no functional changes.

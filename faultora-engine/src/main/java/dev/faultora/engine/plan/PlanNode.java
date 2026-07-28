@@ -284,8 +284,23 @@ public sealed interface PlanNode permits
             NodeId targetNode,
             String message,
             List<NodeId> dependencies,
-            SafetyClassification safety
-    ) implements PlanNode {}
+            SafetyClassification safety,
+            Map<String, Object> schema
+    ) implements PlanNode {
+        /** Convenience constructor for assertions that need no schema. */
+        public AssertionNode(
+                NodeId nodeId,
+                String assertionType,
+                Map<String, Object> params,
+                NodeId targetNode,
+                String message,
+                List<NodeId> dependencies,
+                SafetyClassification safety
+        ) {
+            this(nodeId, assertionType, params, targetNode, message,
+                    dependencies, safety, null);
+        }
+    }
 
     /**
      * Node representing fault injection start.

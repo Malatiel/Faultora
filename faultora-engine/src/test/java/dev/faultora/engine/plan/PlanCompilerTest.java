@@ -70,7 +70,14 @@ class PlanCompilerTest {
                                 Map.of("method", "POST", "path", "/log")
                         )
                 ),
-                Map.of(new SchemaId("PaymentRequest"), new DataSchema(
+                Map.of(new SchemaId("Payment"), new DataSchema(
+                        new SchemaId("Payment"), "object", "#/components/schemas/Payment",
+                        Map.of("type", "object",
+                                "required", List.of("id"),
+                                "properties", Map.of(
+                                        "id", Map.of("type", "string"),
+                                        "amount", Map.of("type", "integer")))),
+                        new SchemaId("PaymentRequest"), new DataSchema(
                         new SchemaId("PaymentRequest"), "object",
                         "#/components/schemas/PaymentRequest",
                         Map.of("type", "object",
@@ -910,7 +917,14 @@ class PlanCompilerTest {
     void compileRejectsASchemaThatCannotBeSatisfied() {
         ApiCatalog withPattern = new ApiCatalog(
                 catalog.version(), catalog.targets(), catalog.operations(),
-                Map.of(new SchemaId("PaymentRequest"), new DataSchema(
+                Map.of(new SchemaId("Payment"), new DataSchema(
+                        new SchemaId("Payment"), "object", "#/components/schemas/Payment",
+                        Map.of("type", "object",
+                                "required", List.of("id"),
+                                "properties", Map.of(
+                                        "id", Map.of("type", "string"),
+                                        "amount", Map.of("type", "integer")))),
+                        new SchemaId("PaymentRequest"), new DataSchema(
                         new SchemaId("PaymentRequest"), "object", "#/components/schemas/PaymentRequest",
                         Map.of("type", "object",
                                 "required", List.of("iban"),
@@ -935,6 +949,91 @@ class PlanCompilerTest {
                 "create", "operation", "create-payment", Map.of(), null, List.of(),
                 null, null, false, null, null, null, null, null,
                 new ScenarioStep.Generate(fields, strategy, null), Map.of());
+    }
+
+    @Test
+    void compileResolvesTheResponseSchemaOfASchemaAssertion() {
+        ScenarioDocument scenario = scenarioWithAssertion(
+                new AssertionStep("body-matches", "schema", Map.of(),
+                        "step-1", List.of(), null, Map.of()));
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isTrue();
+        PlanNode.AssertionNode assertion = (PlanNode.AssertionNode) result.plan().nodes().stream()
+                .filter(node -> node instanceof PlanNode.AssertionNode)
+                .findFirst().orElseThrow();
+        // The schema travels with the plan, so the assertion never has to
+        // reach back into the catalog while the run is in flight.
+        assertThat(assertion.schema()).isNotNull();
+        assertThat(assertion.schema()).containsKey("properties");
+    }
+
+    @Test
+    void compileRejectsASchemaAssertionOnAnOperationWithoutADeclaredResponse() {
+        ScenarioDocument scenario = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("schema", "schema", Map.of(), Map.of()),
+                Map.of(), List.of(),
+                List.of(new ScenarioStep("cleanup-call", "operation", "log-cleanup",
+                        Map.of(), null, List.of(), null, null, Map.of())),
+                List.of(),
+                List.of(new AssertionStep("body-matches", "schema", Map.of(),
+                        "cleanup-call", List.of(), null, Map.of())),
+                List.of());
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.errors()).extracting(PlanDiagnostic::message)
+                .anyMatch(message -> message.contains("declares no response schema"));
+    }
+
+    @Test
+    void compileRequiresAStatusWhenAnOperationDeclaresSeveralResponseSchemas() {
+        ApiCatalog twoOutcomes = new ApiCatalog(
+                catalog.version(), catalog.targets(),
+                List.of(new OperationDefinition(
+                        new OperationId("create-payment"), new ProtocolId("http"),
+                        new TargetId("default"), SafetyClassification.MUTATING,
+                        Map.of(), null,
+                        Map.of("201", new SchemaId("Payment"), "400", new SchemaId("Error")),
+                        Map.of("method", "POST", "path", "/payments"))),
+                Map.of(new SchemaId("Payment"), new DataSchema(
+                                new SchemaId("Payment"), "object", "#/components/schemas/Payment",
+                                Map.of("type", "object")),
+                        new SchemaId("Error"), new DataSchema(
+                                new SchemaId("Error"), "object", "#/components/schemas/Error",
+                                Map.of("type", "object"))),
+                catalog.authentication(), catalog.workflows());
+        ScenarioDocument scenario = scenarioWithAssertion(
+                new AssertionStep("body-matches", "schema", Map.of(),
+                        "step-1", List.of(), null, Map.of()));
+
+        PlanCompilationResult ambiguous = compiler.compile(
+                scenario, twoOutcomes, policy, new RunId("run-001"), 42L,
+                "sha256:abc", "sha256:def");
+
+        // Guessing would check a created resource against the error shape.
+        assertThat(ambiguous.isSuccess()).isFalse();
+        assertThat(ambiguous.errors()).extracting(PlanDiagnostic::message)
+                .anyMatch(message -> message.contains("name the one to check with params.status"));
+
+        PlanCompilationResult named = compiler.compile(
+                scenarioWithAssertion(new AssertionStep("body-matches", "schema",
+                        Map.of("status", 201), "step-1", List.of(), null, Map.of())),
+                twoOutcomes, policy, new RunId("run-001"), 42L, "sha256:abc", "sha256:def");
+        assertThat(named.isSuccess()).isTrue();
+    }
+
+    private ScenarioDocument scenarioWithAssertion(AssertionStep assertion) {
+        return new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("schema", "schema", Map.of(), Map.of()),
+                Map.of(), List.of(),
+                List.of(new ScenarioStep("step-1", "operation", "create-payment",
+                        Map.of(), null, List.of(), null, null, Map.of())),
+                List.of(), List.of(assertion), List.of());
     }
 
     private PlanCompilationResult compile(ScenarioDocument scenario, TargetPolicy targetPolicy) {

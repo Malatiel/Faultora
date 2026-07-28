@@ -4,6 +4,7 @@ import dev.faultora.model.catalog.*;
 import dev.faultora.model.identifier.*;
 import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.spec.model.*;
+import dev.faultora.schema.SchemaCatalog;
 import dev.faultora.spec.parser.DurationSyntax;
 
 import java.util.*;
@@ -14,6 +15,9 @@ import java.util.*;
  * checks safety classification, and produces a DAG with stable node IDs.
  */
 public class PlanCompiler {
+
+    /** Assertion type that checks a response against its declared schema. */
+    private static final String SCHEMA_ASSERTION = "schema";
 
     /**
      * Compile a scenario against a catalog.
@@ -66,7 +70,8 @@ public class PlanCompiler {
         // Compile assertion steps
         compileAssertionSteps(
                 scenario.assertions(), lastStepId(scenario.execute()),
-                childToGroup, Set.copyOf(childToGroup.values()), nodes, diagnostics);
+                childToGroup, Set.copyOf(childToGroup.values()), catalog,
+                nodes, diagnostics);
 
         // Compile cleanup steps
         compileSteps(scenario.cleanup(), "cleanup", operationIndex, targetPolicy,
@@ -609,6 +614,7 @@ public class PlanCompiler {
             NodeId defaultTarget,
             Map<String, String> childToGroup,
             Set<String> groupIds,
+            ApiCatalog catalog,
             List<PlanNode> nodes,
             List<PlanDiagnostic> diagnostics
     ) {
@@ -646,12 +652,124 @@ public class PlanCompiler {
             Map<String, Object> params = step.params() != null ?
                     new LinkedHashMap<>(step.params()) : Map.of();
 
+            Map<String, Object> schema = null;
+            if (SCHEMA_ASSERTION.equals(step.assertionType())) {
+                schema = resolveResponseSchema(step, targetNode, catalog, nodes, diagnostics);
+                if (schema == null) {
+                    continue;
+                }
+            }
+
             nodes.add(new PlanNode.AssertionNode(
                     nodeId, step.assertionType(), params,
                     targetNode, step.message(), deps,
-                    SafetyClassification.READ_ONLY
+                    SafetyClassification.READ_ONLY, schema
             ));
         }
+    }
+
+    /**
+     * The response schema a schema assertion checks against.
+     * <p>
+     * Resolved here so that a scenario asserting against a contract the
+     * catalog does not declare fails before the run starts, naming what is
+     * missing. When the operation declares more than one response schema, the
+     * assertion has to say which status it means: guessing would silently
+     * check a created resource against the error shape.
+     *
+     * @return the schema, or null when it cannot be resolved
+     */
+    private Map<String, Object> resolveResponseSchema(
+            AssertionStep step,
+            NodeId targetNode,
+            ApiCatalog catalog,
+            List<PlanNode> nodes,
+            List<PlanDiagnostic> diagnostics
+    ) {
+        if (targetNode == null) {
+            diagnostics.add(PlanDiagnostic.error("assertions", step.id(),
+                    "A schema assertion needs a targetStep naming the operation to check"));
+            return null;
+        }
+        OperationDefinition operation = operationOf(targetNode, nodes, catalog);
+        if (operation == null) {
+            diagnostics.add(PlanDiagnostic.error("assertions", step.id(),
+                    "targetStep '" + targetNode.value() + "' does not invoke an operation, "
+                            + "so it has no declared response schema"));
+            return null;
+        }
+
+        Map<String, SchemaId> outcomes = operation.outcomes() == null
+                ? Map.of() : operation.outcomes();
+        Object declaredStatus = step.params() == null ? null : step.params().get("status");
+        SchemaId schemaId;
+        if (declaredStatus != null) {
+            schemaId = outcomes.get(String.valueOf(declaredStatus));
+            if (schemaId == null) {
+                diagnostics.add(PlanDiagnostic.error("assertions", step.id(),
+                        "Operation " + operation.id().value() + " declares no response schema "
+                                + "for status " + declaredStatus));
+                return null;
+            }
+        } else if (outcomes.size() == 1) {
+            schemaId = outcomes.values().iterator().next();
+        } else if (outcomes.isEmpty()) {
+            diagnostics.add(PlanDiagnostic.error("assertions", step.id(),
+                    "Operation " + operation.id().value()
+                            + " declares no response schema to check against"));
+            return null;
+        } else {
+            diagnostics.add(PlanDiagnostic.error("assertions", step.id(),
+                    "Operation " + operation.id().value() + " declares response schemas for "
+                            + outcomes.keySet() + "; name the one to check with params.status"));
+            return null;
+        }
+
+        DataSchema schema = catalog.schemas() == null ? null : catalog.schemas().get(schemaId);
+        if (schema == null || schema.definition() == null) {
+            diagnostics.add(PlanDiagnostic.error("assertions", step.id(),
+                    "The catalog has no schema " + schemaId.value()));
+            return null;
+        }
+        // The assertion receives the schema alone and cannot follow a
+        // reference later, so references are expanded while the catalog is
+        // still at hand.
+        SchemaCatalog schemas = new SchemaCatalog(catalog.schemas());
+        com.fasterxml.jackson.databind.ObjectMapper mapper =
+                new com.fasterxml.jackson.databind.ObjectMapper();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> inlined = mapper.convertValue(
+                schemas.inline(mapper.valueToTree(schema.definition())), Map.class);
+        return inlined;
+    }
+
+    /** The operation a target node invokes, or null when it invokes none. */
+    private OperationDefinition operationOf(
+            NodeId targetNode, List<PlanNode> nodes, ApiCatalog catalog) {
+        for (PlanNode node : nodes) {
+            if (node instanceof PlanNode.OperationNode operation
+                    && operation.nodeId().equals(targetNode)) {
+                return operation.operation();
+            }
+            if (node instanceof PlanNode.CleanupNode cleanup
+                    && cleanup.nodeId().equals(targetNode)) {
+                return catalog.operations().stream()
+                        .filter(candidate -> candidate.id().equals(cleanup.operationId()))
+                        .findFirst().orElse(null);
+            }
+            List<PlanNode.OperationNode> children = switch (node) {
+                case PlanNode.ParallelNode parallel -> parallel.children();
+                case PlanNode.RepeatNode repeat -> repeat.children();
+                case PlanNode.EventuallyNode eventually -> List.of(eventually.child());
+                default -> List.of();
+            };
+            for (PlanNode.OperationNode child : children) {
+                if (child.nodeId().equals(targetNode)) {
+                    return child.operation();
+                }
+            }
+        }
+        return null;
     }
 
     /**

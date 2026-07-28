@@ -33,6 +33,11 @@ assertions:
       exists: true
     message: Response must contain an id field
 
+  - id: response-matches-its-contract
+    assertionType: schema
+    targetStep: create-payment
+    message: The response has the shape the OpenAPI document declares for 201
+
 cleanup:
   - id: list-payments
     type: operation

@@ -615,7 +615,7 @@ Every assertion has this common shape:
 | Field | Required | Description |
 |---|---:|---|
 | `id` | yes | Stable ID, unique across every scenario section. |
-| `assertionType` | yes | `status`, `header`, `jsonpath`, or `duration`. |
+| `assertionType` | yes | `status`, `header`, `schema`, `jsonpath`, or `duration`. |
 | `params` | yes | Parameters documented for the selected assertion type. |
 | `targetStep` | no | Operation evidence to inspect; defaults to the last `execute` step. A grouping step holds no evidence of its own, so name one of its children. |
 | `dependsOn` | no | Additional dependencies that must pass first. |
@@ -679,6 +679,39 @@ Available checks:
 
 Provide one check per assertion. Evaluation precedence is `exists`, `equals`,
 `contains`, then `count`.
+
+### `schema`
+
+Checks the response body against the schema the API description declares for
+it — the assertion that catches contract drift: a field that changed type, a
+required field that stopped being sent, a value that left its enum.
+
+```yaml
+- id: response-matches-its-contract
+  assertionType: schema
+  targetStep: create-payment
+```
+
+| Parameter | Meaning |
+|---|---|
+| `status` | Which declared response to check against. Required only when the operation declares more than one. |
+
+The schema is resolved during plan compilation, with every `$ref` expanded, so
+the assertion carries a self-contained contract and never reaches back into the
+catalog mid-run. Consequences:
+
+- an operation that declares no response schema, or a `status` the operation
+  does not describe, is a compilation error naming what is missing;
+- when an operation declares several responses, the assertion must say which
+  one it means — guessing would check a created resource against the error
+  shape;
+- a body that was not captured, or that is not JSON, makes the assertion
+  **indeterminate**, which fails the node rather than passing it.
+
+Validation covers the same constructs as
+[generation](#generated-request-values), plus `additionalProperties: false`,
+which fails a response carrying a field the contract does not declare, and
+`nullable: true`, which permits an explicit null.
 
 ### `jsonpath`
 

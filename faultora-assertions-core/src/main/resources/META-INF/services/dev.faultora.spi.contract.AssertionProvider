@@ -2,3 +2,4 @@ dev.faultora.assertions.core.StatusAssertionProvider
 dev.faultora.assertions.core.HeaderAssertionProvider
 dev.faultora.assertions.core.JsonPathAssertionProvider
 dev.faultora.assertions.core.DurationAssertionProvider
+dev.faultora.assertions.core.SchemaAssertionProvider

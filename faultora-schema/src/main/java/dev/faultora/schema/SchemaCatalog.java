@@ -2,6 +2,8 @@ package dev.faultora.schema;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.faultora.model.catalog.DataSchema;
 import dev.faultora.model.identifier.SchemaId;
 
@@ -66,6 +68,61 @@ public final class SchemaCatalog {
         }
         throw new SchemaException(path,
                 "reference chain deeper than " + MAX_REFERENCE_DEPTH + " hops");
+    }
+
+    /**
+     * A copy of the schema with every {@code $ref} replaced by what it points
+     * at, so the result can be understood without the catalog.
+     * <p>
+     * Consumers that receive a schema on its own — an assertion checking a
+     * response, a plan travelling to another process — cannot resolve
+     * references later. Inlining at the point where the catalog is still
+     * available is what makes the schema self-contained.
+     * <p>
+     * A schema that refers to itself, directly or through a chain, is legal
+     * and cannot be inlined to the end. Expansion stops at the repeat and
+     * leaves an unconstrained schema there: it accepts what it can no longer
+     * describe, rather than rejecting a document for the shape of its own
+     * definition.
+     */
+    public JsonNode inline(JsonNode schema) {
+        return inline(schema, new java.util.LinkedHashSet<>(), 0);
+    }
+
+    private JsonNode inline(JsonNode schema, java.util.Set<String> expanding, int depth) {
+        if (schema == null || !schema.isContainerNode() || depth > MAX_REFERENCE_DEPTH) {
+            return schema;
+        }
+        if (schema.isArray()) {
+            ArrayNode inlined = MAPPER.createArrayNode();
+            schema.forEach(item -> inlined.add(inline(item, expanding, depth + 1)));
+            return inlined;
+        }
+
+        JsonNode ref = schema.get("$ref");
+        if (ref != null && ref.isTextual()) {
+            String name = nameOf(ref.asText());
+            JsonNode target = schemasById.get(name);
+            if (target == null || !expanding.add(name)) {
+                // Unknown, or already being expanded on this path.
+                return target == null ? MAPPER.createObjectNode() : MAPPER.createObjectNode();
+            }
+            ObjectNode expanded = (ObjectNode) inline(target, expanding, depth + 1);
+            expanding.remove(name);
+            // Keywords beside a $ref refine the target; JSON Schema 2020 says
+            // they apply, and a media-type example is attached exactly so.
+            schema.properties().forEach(field -> {
+                if (!"$ref".equals(field.getKey())) {
+                    expanded.set(field.getKey(), inline(field.getValue(), expanding, depth + 1));
+                }
+            });
+            return expanded;
+        }
+
+        ObjectNode inlined = MAPPER.createObjectNode();
+        schema.properties().forEach(field ->
+                inlined.set(field.getKey(), inline(field.getValue(), expanding, depth + 1)));
+        return inlined;
     }
 
     private static String nameOf(String reference) {

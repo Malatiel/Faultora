@@ -47,7 +47,7 @@ final class AssertionNodeExecutor {
 
         AssertionResult result = provider.evaluate(
                 node.assertionType(), node.params(), targetEvidence,
-                new AssertionContext(nodeId.value(), node.params()));
+                new AssertionContext(nodeId.value(), node.params(), node.schema()));
 
         ownEvidence.durationMs(System.currentTimeMillis() - startedAtMs);
         context.journal().assertionEvaluated(
