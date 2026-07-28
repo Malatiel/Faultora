@@ -1,6 +1,6 @@
 # Scenario reference
 
-This page documents the scenario format implemented by Faultora 0.5.0. The
+This page documents the scenario format implemented by Faultora 0.5.1. The
 format is versioned independently from the application:
 
 ```yaml
@@ -10,7 +10,7 @@ kind: Scenario
 
 Faultora rejects unsupported versions, missing required fields, duplicate step
 IDs, unknown references, dependency cycles, and execution features that are not
-available in 0.5.0.
+available in 0.5.1.
 
 ## Complete example
 
@@ -74,7 +74,7 @@ cleanup:
 Validate a document before running it:
 
 ```bash
-java -jar faultora-0.5.0.jar validate --scenario scenario.yaml
+java -jar faultora-0.5.1.jar validate --scenario scenario.yaml
 ```
 
 ## Top-level fields
@@ -415,7 +415,7 @@ Strategies:
 |---|---|
 | `valid` | A payload the schema accepts, with every declared property present. |
 | `boundary` | The smallest accepted payload — required properties only — with constrained values on their limits: `minimum`, `minLength`, `minItems`, the first `enum` member. |
-| `invalid` | A valid payload with exactly one constraint broken, for verifying that the target rejects it. The broken constraint is named in the report. |
+| `invalid` | A valid payload with exactly one constraint broken, for verifying that the target rejects it. The broken constraint is named in the report. The violation is introduced after explicit `inputs` are applied and avoids the fields they pin, so what the report describes is what the target received. |
 
 Semantics:
 
@@ -433,6 +433,9 @@ Semantics:
   journal;
 - console and HTML reports name the strategy per step, and for `invalid` the
   constraint that was broken.
+
+Properties marked `readOnly: true` are never generated into a request: they
+are server-managed, so sending one back would test the wrong thing.
 
 Supported constraints: `type` (object, array, string, integer, number,
 boolean, null), `properties`, `required`, `enum`, `const`, `items`,
@@ -616,7 +619,7 @@ Every assertion has this common shape:
 | `params` | yes | Parameters documented for the selected assertion type. |
 | `targetStep` | no | Operation evidence to inspect; defaults to the last `execute` step. A grouping step holds no evidence of its own, so name one of its children. |
 | `dependsOn` | no | Additional dependencies that must pass first. |
-| `message` | no | Reserved; 0.5.0 reports the assertion provider's evaluated message. |
+| `message` | no | Reserved; 0.5.1 reports the assertion provider's evaluated message. |
 | `metadata` | no | Arbitrary assertion metadata. |
 
 An assertion that cannot be evaluated is treated as a failed node rather than

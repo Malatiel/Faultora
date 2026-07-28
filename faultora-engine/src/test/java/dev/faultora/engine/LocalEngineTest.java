@@ -1323,6 +1323,42 @@ class LocalEngineTest {
         assertThat(connector.bodies).containsOnly(connector.bodies.get(0));
     }
 
+    @Test
+    void anInvalidPayloadStaysInvalidAfterExplicitInputsAreApplied() throws Exception {
+        CapturingConnector connector = new CapturingConnector();
+        ExecutionPlan plan = ExecutionPlan.builder()
+                .runId(new RunId("run-generate-invalid"))
+                .scenario(buildScenario())
+                .catalog(catalog)
+                .targetPolicy(policy)
+                .seed(21L)
+                .scenarioDigest("sha256:abc")
+                .catalogDigest("sha256:def")
+                .addNode(new PlanNode.OperationNode(
+                        new NodeId("create-payment"), new OperationId("create-payment"),
+                        findOp("create-payment"),
+                        Map.of("body", Map.of("currency", "EUR")), null,
+                        false, null, List.of(), SafetyClassification.MUTATING, 0, 0,
+                        new PlanNode.GenerationRequest(
+                                List.of("body"), GenerationStrategy.INVALID, true)))
+                .build();
+
+        Path journalPath = tempDir.resolve("invalid-generated.ndjson");
+        try (RunJournal journal = new RunJournal(journalPath, true)) {
+            new LocalEngine(Map.of("http", connector), Map.of())
+                    .execute(plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+        }
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body =
+                (Map<String, Object>) connector.captured.get("create-payment").get("body");
+        // The pinned field survives, and the payload that actually left is the
+        // one the journal describes as violating.
+        assertThat(body.get("currency")).isEqualTo("EUR");
+        assertThat(body).doesNotContainKey("amount");
+        assertThat(Files.readString(journalPath)).contains("required property 'amount' omitted");
+    }
+
     private ExecutionPlan planWithGeneratedBody(long seed, GenerationStrategy strategy) {
         return ExecutionPlan.builder()
                 .runId(new RunId("run-generate-" + seed))

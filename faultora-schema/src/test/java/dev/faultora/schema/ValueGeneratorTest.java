@@ -105,6 +105,59 @@ class ValueGeneratorTest {
     }
 
     @Test
+    void aRangeNarrowerThanTheDefaultPrecisionStillProducesValidNumbers() throws Exception {
+        // Rates and shares live below two decimals; rounding to a fixed scale
+        // put every generated value outside the accepted range.
+        JsonNode schema = schema("""
+                {"type":"object","required":["rate"],
+                 "properties":{"rate":{"type":"number","minimum":0.001,"maximum":0.004}}}
+                """);
+        SchemaValidator validator = new SchemaValidator(emptyCatalog);
+
+        for (long seed = 0; seed < 100; seed++) {
+            JsonNode value = generator.generate(schema, seed, GenerationSpec.DEFAULT).value();
+            assertThat(validator.validate(value, schema))
+                    .describedAs("seed %d produced %s", seed, value)
+                    .isEmpty();
+        }
+    }
+
+    @Test
+    void serverManagedPropertiesAreNotSentInARequest() throws Exception {
+        JsonNode schema = schema("""
+                {"type":"object","required":["amount"],
+                 "properties":{
+                   "id":{"type":"string","readOnly":true},
+                   "createdAt":{"type":"string","format":"date-time","readOnly":true},
+                   "amount":{"type":"integer","minimum":1}}}
+                """);
+
+        JsonNode value = generator.generate(schema, 1L, GenerationSpec.DEFAULT).value();
+
+        assertThat(value.has("id")).isFalse();
+        assertThat(value.has("createdAt")).isFalse();
+        assertThat(value.has("amount")).isTrue();
+    }
+
+    @Test
+    void aViolationAvoidsThePropertiesTheCallerPinned() throws Exception {
+        JsonNode schema = schema("""
+                {"type":"object","required":["amount","currency"],
+                 "properties":{
+                   "amount":{"type":"integer","minimum":1},
+                   "currency":{"type":"string","enum":["EUR","USD"]}}}
+                """);
+        JsonNode value = generator.generate(schema, 3L, GenerationSpec.DEFAULT).value();
+
+        GenerationResult result = generator.violate(
+                value, schema, 3L, java.util.Set.of("currency"));
+
+        assertThat(result.violation()).contains("amount");
+        assertThat(value.has("currency")).isTrue();
+        assertThat(new SchemaValidator(emptyCatalog).validate(value, schema)).isNotEmpty();
+    }
+
+    @Test
     void theInvalidStrategyBreaksExactlyOneConstraintAndSaysWhich() throws Exception {
         JsonNode schema = schema("""
                 {"type":"object",

@@ -27,15 +27,22 @@ final class ConstraintBreaker {
      *                         broken without inventing a different document
      */
     static String breakOne(
-            JsonNode value, JsonNode schema, SchemaCatalog catalog, java.util.Random random) {
+            JsonNode value, JsonNode schema, SchemaCatalog catalog,
+            java.util.Random random, java.util.Set<String> preserve) {
         if (!(value instanceof ObjectNode object) || schema == null || !schema.isObject()) {
             throw new SchemaException("$",
                     "the invalid strategy needs an object schema to break a constraint in");
         }
 
-        List<String> required = ValueGenerator.requiredProperties(schema);
-        if (!required.isEmpty()) {
-            String omitted = required.get(random.nextInt(required.size()));
+        // Values the caller pinned are left alone while anything else can be
+        // broken: a scenario that pins a field usually asserts on it.
+        List<String> required = new java.util.ArrayList<>(
+                ValueGenerator.requiredProperties(schema));
+        List<String> breakableRequired = required.stream()
+                .filter(name -> !preserve.contains(name))
+                .toList();
+        if (!breakableRequired.isEmpty()) {
+            String omitted = breakableRequired.get(random.nextInt(breakableRequired.size()));
             object.remove(omitted);
             return "required property '" + omitted + "' omitted";
         }
@@ -44,7 +51,7 @@ final class ConstraintBreaker {
         if (properties != null && properties.isObject()) {
             for (var property : properties.properties()) {
                 String name = property.getKey();
-                if (!object.has(name)) {
+                if (!object.has(name) || preserve.contains(name)) {
                     continue;
                 }
                 String violation = breakProperty(
@@ -53,6 +60,14 @@ final class ConstraintBreaker {
                     return violation;
                 }
             }
+        }
+        if (!required.isEmpty()) {
+            // Everything breakable was pinned; breaking a pinned field is
+            // still better than reporting a violation that did not happen.
+            String omitted = required.get(random.nextInt(required.size()));
+            object.remove(omitted);
+            return "required property '" + omitted + "' omitted, overriding the value "
+                    + "the step supplied for it";
         }
         throw new SchemaException("$",
                 "the schema declares no constraint that can be violated; "

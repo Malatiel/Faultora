@@ -7,8 +7,8 @@ import dev.faultora.engine.plan.PlanNode;
 import dev.faultora.model.catalog.InputDefinition;
 import dev.faultora.model.catalog.OperationDefinition;
 import dev.faultora.model.identifier.SchemaId;
-import dev.faultora.schema.GenerationResult;
 import dev.faultora.schema.GenerationSpec;
+import dev.faultora.schema.GenerationStrategy;
 import dev.faultora.schema.SchemaCatalog;
 import dev.faultora.schema.SchemaException;
 import dev.faultora.schema.ValueGenerator;
@@ -60,8 +60,14 @@ public final class InputResolver {
 
         SchemaCatalog schemas = context.schemas();
         ValueGenerator generator = new ValueGenerator(schemas);
+        boolean invalid = generation.strategy() == GenerationStrategy.INVALID;
+        // An invalid payload is built valid first: the violation is introduced
+        // after the step's own values are applied, or those values could put
+        // the broken constraint back and leave the report claiming a violation
+        // that never reached the target.
         GenerationSpec spec = new GenerationSpec(
-                generation.strategy(), generation.preferExamples());
+                invalid ? GenerationStrategy.VALID : generation.strategy(),
+                generation.preferExamples());
 
         Map<String, Object> resolved = new LinkedHashMap<>();
         for (String field : generation.fields()) {
@@ -73,15 +79,24 @@ public final class InputResolver {
             }
             long seed = Seeds.derive(
                     context.plan().seed(), node.nodeId().value(), field);
-            GenerationResult generated = generator.generate(schema, seed, spec);
+
+            JsonNode value = generator.generate(schema, seed, spec).value();
+            Object merged = merge(
+                    MAPPER.convertValue(value, Object.class), explicit.get(field));
+
+            String violation = null;
+            if (invalid) {
+                JsonNode mergedNode = MAPPER.valueToTree(merged);
+                violation = generator.violate(
+                        mergedNode, schema, seed, pinnedNames(explicit.get(field))).violation();
+                merged = MAPPER.convertValue(mergedNode, Object.class);
+            }
 
             context.journal().inputsGenerated(
                     node.nodeId(), field, generation.strategy().wireName(), seed,
-                    schemaId.value(), bytesOf(generated.value()), generated.violation());
+                    schemaId.value(), bytesOf(MAPPER.valueToTree(merged)), violation);
 
-            resolved.put(field, merge(
-                    MAPPER.convertValue(generated.value(), Object.class),
-                    explicit.get(field)));
+            resolved.put(field, merged);
         }
         // Inputs the scenario states but does not generate pass through
         // untouched.
@@ -106,6 +121,16 @@ public final class InputResolver {
             return merged;
         }
         return explicit;
+    }
+
+    /** Property names the step supplied itself, which a violation avoids. */
+    private static java.util.Set<String> pinnedNames(Object explicit) {
+        if (!(explicit instanceof Map<?, ?> map)) {
+            return java.util.Set.of();
+        }
+        java.util.Set<String> names = new java.util.LinkedHashSet<>();
+        map.keySet().forEach(key -> names.add(String.valueOf(key)));
+        return names;
     }
 
     private SchemaId schemaOf(OperationDefinition operation, String field) {

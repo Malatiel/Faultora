@@ -2,6 +2,25 @@
 
 All notable changes to Faultora are documented in this file.
 
+## 0.5.1 — 2026-07-28
+
+Corrections to request generation, found while reviewing 0.5.0.
+
+### Fixed
+
+- Numbers declared in a range narrower than two decimals — rates, shares, FX
+  factors — were generated outside that range every time: rounding used a
+  fixed scale, so a value between 0.001 and 0.004 became 0.00. The scale now
+  follows the width of the range, and a rounded value that would leave the
+  range falls back to its minimum.
+- Properties marked `readOnly: true` are no longer generated into request
+  bodies. They are server-managed, and sending one back is at best ignored
+  and at worst rejected.
+- The `invalid` strategy introduces its violation after the step's explicit
+  `inputs` are applied, and avoids the fields they pin. Previously a pinned
+  field could restore the broken constraint, so a valid payload was sent while
+  the journal reported a violation that never reached the target.
+
 ## 0.5.0 — 2026-07-27
 
 Requests can be built from the contract instead of written out by hand.

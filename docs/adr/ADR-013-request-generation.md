@@ -29,6 +29,13 @@ to do with the behaviour under test.
   is on, an `example` declared in the schema is sent verbatim only if it
   satisfies that schema; a stale example — common in real documents — falls
   through to generation rather than producing a request the contract rejects.
+- **`readOnly` properties are never generated.** OpenAPI declares them
+  server-managed; a request carrying one tests the target's tolerance for
+  echoed state rather than the behaviour under study.
+- **A violation is introduced after explicit inputs are applied**, and avoids
+  the properties they pin. Breaking a constraint first lets the pinned values
+  put it back, leaving a valid payload while the report claims a violation —
+  a negative test that silently became a positive one.
 - **Explicit inputs are applied over generated ones**, merging objects field by
   field. A scenario generates a whole payload and still pins what it asserts
   on, which is what keeps generated requests compatible with meaningful

@@ -41,6 +41,12 @@ public final class ValueGenerator {
     /** Extra characters generated beyond a string's minimum length. */
     private static final int STRING_PADDING = 6;
 
+    /** Decimal places generated for a number whose range is wide enough. */
+    private static final int DEFAULT_NUMBER_SCALE = 2;
+
+    /** Most decimal places generated for a very narrow range. */
+    private static final int MAX_NUMBER_SCALE = 10;
+
     /** Fixed instant generated date-time values are offset from. */
     private static final Instant EPOCH_BASE = Instant.parse("2020-01-01T00:00:00Z");
 
@@ -80,8 +86,28 @@ public final class ValueGenerator {
         if (strategy != GenerationStrategy.INVALID) {
             return GenerationResult.valid(value);
         }
+        return violate(value, schema, seed, java.util.Set.of());
+    }
+
+    /**
+     * Break one constraint of an already-built value.
+     * <p>
+     * Callers that apply their own values over a generated payload must break
+     * the constraint <em>afterwards</em>: a violation introduced first can be
+     * undone by the values applied on top, leaving a valid payload while the
+     * report claims a violation.
+     *
+     * @param value     the value to invalidate, modified in place
+     * @param schema    the schema it was built from
+     * @param seed      seed making the choice reproducible
+     * @param preserve  property names to leave alone when there is a choice
+     * @return the value and the constraint that was broken
+     * @throws SchemaException when the schema constrains nothing breakable
+     */
+    public GenerationResult violate(
+            JsonNode value, JsonNode schema, long seed, java.util.Set<String> preserve) {
         String violation = ConstraintBreaker.breakOne(
-                value, catalog.dereference(schema, "$"), catalog, random);
+                value, catalog.dereference(schema, "$"), catalog, new Random(seed), preserve);
         return new GenerationResult(value, violation);
     }
 
@@ -156,6 +182,12 @@ public final class ValueGenerator {
 
         properties.properties().forEach(property -> {
             String name = property.getKey();
+            // A readOnly property is server-managed: sending one back is at
+            // best ignored and at worst rejected, and either way the test
+            // would be measuring the wrong thing.
+            if (property.getValue().path("readOnly").asBoolean(false)) {
+                return;
+            }
             // The boundary strategy sends the smallest accepted payload, so it
             // carries required properties only.
             boolean include = spec.strategy() != GenerationStrategy.BOUNDARY
@@ -284,7 +316,30 @@ public final class ValueGenerator {
         double value = spec.strategy() == GenerationStrategy.BOUNDARY
                 ? minimum
                 : minimum + random.nextDouble() * (maximum - minimum);
-        return BigDecimal.valueOf(value).setScale(2, java.math.RoundingMode.HALF_UP);
+
+        // Rounding must never leave the accepted range: a rate declared
+        // between 0.001 and 0.004 rounds to 0.00 at two decimals, which the
+        // schema rejects. The scale follows the width of the range instead.
+        BigDecimal rounded = BigDecimal.valueOf(value)
+                .setScale(scaleFor(minimum, maximum), java.math.RoundingMode.HALF_UP);
+        if (rounded.doubleValue() < minimum || rounded.doubleValue() > maximum) {
+            return BigDecimal.valueOf(minimum);
+        }
+        return rounded;
+    }
+
+    /**
+     * Decimal places that keep a rounded value inside its range: enough to
+     * distinguish the bounds, and never fewer than two so ordinary money
+     * amounts still read naturally.
+     */
+    private int scaleFor(double minimum, double maximum) {
+        double width = maximum - minimum;
+        int scale = DEFAULT_NUMBER_SCALE;
+        while (width < Math.pow(10, -scale) * 10 && scale < MAX_NUMBER_SCALE) {
+            scale++;
+        }
+        return scale;
     }
 
     /**
