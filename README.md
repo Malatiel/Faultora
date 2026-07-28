@@ -407,7 +407,9 @@ advisory flow; do not open a public issue with exploit details.
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE).
+Copyright 2026 Malatiel. Apache License 2.0 — see [LICENSE](LICENSE) for the
+terms and [NOTICE](NOTICE) for the attribution that redistribution must
+preserve.
 
 The executable JAR bundles third-party components under the Apache 2.0, MIT,
 BSD 3-Clause, and EPL-1.0 licenses; their notices are preserved in

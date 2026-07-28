@@ -1,0 +1,10 @@
+Faultora
+Copyright 2026 Malatiel
+
+Licensed under the Apache License, Version 2.0. See LICENSE for the full
+terms.
+
+This product bundles third-party components in its executable artifact.
+Their copyright notices and license texts are preserved in THIRD-PARTY.txt,
+shipped in the repository root and inside the JAR as
+META-INF/THIRD-PARTY.txt.
