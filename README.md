@@ -402,6 +402,7 @@ advisory flow; do not open a public issue with exploit details.
 - [Security architecture](docs/SECURITY.md)
 - [Scenario reference](docs/SCENARIO_REFERENCE.md)
 - [Delivery roadmap](docs/ROADMAP.md)
+- [Release plan](docs/RELEASE_PLAN.md)
 - [Changelog](CHANGELOG.md)
 
 ## License

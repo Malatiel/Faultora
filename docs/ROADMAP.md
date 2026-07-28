@@ -19,6 +19,10 @@ Every milestone must also pass its assigned controls in
 policy, and evidence minimization begin in the foundation and first vertical
 slice; they are not deferred to final hardening.
 
+The milestones below define *what* is built and in which order. Their
+assignment to versions, and the rule that 1.0 freezes the scenario API, live in
+the [release plan](RELEASE_PLAN.md).
+
 ## 2. Release sequence
 
 | Milestone | User-visible outcome | Primary proof |
