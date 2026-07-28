@@ -11,12 +11,18 @@ carries fixes only: defects, security updates, and documentation. Anything that
 changes what a scenario may say, what a report contains, or what an extension
 implements has to land before 1.0 — or wait for 2.0.
 
-Two consequences worth stating plainly:
+Three consequences worth stating plainly:
 
 - a feature that only *adds* a step type still changes the scenario contract,
   so it belongs before the freeze;
 - work the roadmap already defers past 1.0 (§16 of the roadmap) stays deferred,
-  and becomes 2.0 material rather than 1.x.
+  and becomes 2.0 material rather than 1.x;
+- **2.0 is major because the deployment and trust model changes, not because
+  the contract breaks.** A scenario written for 1.0 runs unchanged on 2.0.
+  Distributed execution adds a controller, workers, and a scheduler around the
+  same compiled plan — architecture principle 1 requires local and distributed
+  runners to execute exactly that. A team that invests in a scenario suite
+  before 1.0 keeps it afterwards.
 
 ## 2. Where 0.5.1 stands
 
@@ -43,8 +49,8 @@ from schemas, four report formats, and a reproducible run journal.
 | 0.7 | M3 part 1 | A scenario can publish and observe Kafka events |
 | 0.8 | M3 part 2 | One scenario proves a business invariant across HTTP, events, and a database |
 | 0.9 | M4 | Runs execute inside a private network without inbound access |
-| 0.10 | M5 | A controller shards one run across workers and returns one result |
-| 1.0 | M6 | Frozen contracts, isolated extensions, signed artifacts, operational docs |
+| **1.0** | M6 | Frozen contracts, isolated extensions, signed artifacts, operational docs |
+| 2.0 | M5 | A controller shards one run across workers and returns one result |
 
 ### 0.6 — Close what is already promised
 
@@ -109,6 +115,15 @@ verified, with deterministic observation windows and cleanup.
 Gate: no inbound connection into the private network; disconnection cannot
 extend a run or an active fault beyond policy.
 
+**The runner protocol must carry a version and negotiate it** — M4-01 already
+lists "compatibility negotiation and graceful rejection", and here it becomes a
+release-blocking criterion rather than a wish. The reason is timing: 1.0
+freezes this protocol, while its only real consumer, the controller, arrives in
+2.0 and will want shard descriptors, scheduling hints, and shard-level leases.
+Negotiation is what lets 2.0 add a second protocol version beside the first
+instead of breaking every runner already deployed. A mismatch must produce a
+named refusal, never undefined behaviour.
+
 ### 0.10 — Distributed execution
 
 - Controller API and metadata: projects, environments, policies, catalogs,
@@ -163,21 +178,25 @@ Shrinking deserves a note: 0.5.0 records the seed that reproduces a generated
 failure, which is what makes a failure investigable. Reducing it to a minimal
 counterexample is a separate capability and stays where the roadmap put it.
 
-## 5. Scope risk, stated once
+## 5. Why the freeze falls after the runner
 
 0.7 and 0.8 together are comparable in size to everything built between 0.2 and
-0.5. 0.10 is comparable again on its own: a controller, a scheduler with
-leases, a worker, aggregation, quotas, and a qualification suite are a
-distributed system, not a feature.
+0.5. M5 is comparable again on its own: a controller, a scheduler with leases,
+a worker, aggregation, quotas, and a qualification suite are a distributed
+system, not a feature. Putting it before the freeze would mean stabilising the
+contracts at the moment the newest and least exercised part of the system had
+just arrived.
 
-An alternative worth weighing before starting 0.9: **cut 1.0 at the runner and
-move distributed execution to 2.0.** The product's differentiator — a business
-invariant verified across HTTP, events, and a database, under injected faults,
-reproducibly — is complete at 0.8, and a private-network runner at 0.9 makes it
-deployable where such systems actually live. Distributed sharding matters to
-teams whose suites outgrow one machine, which is a problem adopters have after
-the tool is in CI, not before.
+Cutting 1.0 at the runner instead means the contracts freeze after the scenario
+language has been in real use through four releases. The product's
+differentiator — a business invariant verified across HTTP, events, and a
+database, under injected faults, reproducibly — is complete at 0.8, and the
+private-network runner at 0.9 makes it deployable where such systems live.
+Distributed sharding matters to teams whose suites outgrow one machine, which
+is a problem adopters get after the tool is in CI, not before.
 
-Choosing that cut would renumber this plan: 0.9 becomes the last pre-freeze
-release, 1.0 covers M6, and M5 opens 2.0. It does not change the order of the
-work, only where the compatibility promise starts.
+One assumption underlies keeping M4 inside 1.0: that a run is worth triggering
+from outside the protected segment before a controller exists — CI in one
+network, targets in another, which is ordinary in regulated environments. If
+that turns out not to describe real users, M4 belongs beside M5 in the 2.0
+line, and 1.0 freezes on the local and CI story alone.
