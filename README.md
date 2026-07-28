@@ -8,10 +8,10 @@ invariants, and produces console, JSON, HTML, and JUnit reports. Execution stays
 inside your infrastructure and does not require a hosted control plane or
 telemetry.
 
-Version 0.5.1 is a runnable technical preview. It targets local
+Version 0.5.2 is a runnable technical preview. It targets local
 development and CI use on Java 21.
 
-## What 0.5.1 includes
+## What 0.5.2 includes
 
 Scenario execution:
 
@@ -74,7 +74,7 @@ silently accepted.
 Download the release JAR and its checksums:
 
 ```bash
-FAULTORA_VERSION=0.5.1
+FAULTORA_VERSION=0.5.2
 RELEASE_URL="https://github.com/Malatiel/Faultora/releases/download/v${FAULTORA_VERSION}"
 
 curl --fail --location --retry 3 \
@@ -102,7 +102,7 @@ Every release also includes a CycloneDX SBOM and the Apache 2.0 license.
 The executable artifact is written to:
 
 ```text
-faultora-cli/target/faultora-0.5.1.jar
+faultora-cli/target/faultora-0.5.2.jar
 ```
 
 The regular CI build can run without repository secrets. Configure the
@@ -115,9 +115,9 @@ missing.
 Check the executable and validate the example scenario:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.5.1.jar --version
+java -jar faultora-cli/target/faultora-0.5.2.jar --version
 
-java -jar faultora-cli/target/faultora-0.5.1.jar \
+java -jar faultora-cli/target/faultora-0.5.2.jar \
   validate \
   --scenario examples/payment-service/scenarios/passing.yaml
 ```
@@ -125,7 +125,7 @@ java -jar faultora-cli/target/faultora-0.5.1.jar \
 Generate a starter scenario from an OpenAPI document:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.5.1.jar \
+java -jar faultora-cli/target/faultora-0.5.2.jar \
   init \
   --from-openapi examples/payment-service/openapi.yaml \
   --output ./generated
@@ -134,7 +134,7 @@ java -jar faultora-cli/target/faultora-0.5.1.jar \
 Run a scenario against an API:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.5.1.jar \
+java -jar faultora-cli/target/faultora-0.5.2.jar \
   test \
   --scenario examples/payment-service/scenarios/passing.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -176,7 +176,7 @@ race window, then asserts the business invariant that exactly one payment
 exists:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.5.1.jar \
+java -jar faultora-cli/target/faultora-0.5.2.jar \
   test \
   --scenario examples/payment-service/scenarios/fault-concurrent-duplicate.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -356,7 +356,7 @@ handle is mapped to an environment variable with the `FAULTORA_SECRET_` prefix:
 ```bash
 export FAULTORA_SECRET_PAYMENTS_API='replace-with-a-real-token'
 
-java -jar faultora-cli/target/faultora-0.5.1.jar \
+java -jar faultora-cli/target/faultora-0.5.2.jar \
   test \
   --scenario scenario.yaml \
   --openapi openapi.yaml \

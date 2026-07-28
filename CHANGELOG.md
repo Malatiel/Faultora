@@ -2,6 +2,25 @@
 
 All notable changes to Faultora are documented in this file.
 
+## 0.5.2 — 2026-07-28
+
+Attribution release; no functional changes.
+
+### Fixed
+
+- The executable JAR carried a generated `META-INF/NOTICE` whose header read
+  "in this case for " with an empty project name, listing the notices of
+  bundled dependencies and none for Faultora itself. The shade transformer now
+  names the project and the copyright holder, and a root `NOTICE` ships in both
+  the plain and the shaded artifact as `META-INF/NOTICE-faultora.txt`.
+
+### Added
+
+- `NOTICE` in the repository root, and a copyright line in the README. The
+  project previously asserted ownership nowhere, which is friction for any
+  organisation whose legal review looks for an identifiable holder before
+  deploying self-hosted software.
+
 ## 0.5.1 — 2026-07-28
 
 Corrections to request generation, found while reviewing 0.5.0.
