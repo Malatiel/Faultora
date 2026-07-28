@@ -107,7 +107,7 @@ public class LocalEngine {
         // Cleanup obligations are collected before execution starts: a
         // deadline or cancellation must never drop them.
         List<PlanNode> cleanupNodes = nodes.stream()
-                .filter(node -> node instanceof PlanNode.CleanupNode)
+                .filter(LocalEngine::belongsToCleanup)
                 .toList();
 
         NodeContext nodeContext = new NodeContext(
@@ -123,7 +123,7 @@ public class LocalEngine {
                 if (cancellation.get()) {
                     break;
                 }
-                if (node instanceof PlanNode.CleanupNode) {
+                if (belongsToCleanup(node)) {
                     continue;
                 }
                 // The scenario deadline bounds the whole run: no further node
@@ -300,6 +300,18 @@ public class LocalEngine {
                 plan.runId(), status, nodeResults.size(),
                 tally.passedAssertions(), tally.failedAssertions(),
                 nodeResults, totalDuration, runError);
+    }
+
+    /**
+     * Whether a node runs in the cleanup phase.
+     * <p>
+     * A wait declared in cleanup is part of cleanup: it exists to let an
+     * obligation outlive something — an injected fault window, a settling
+     * target — and running it in the main phase would defeat exactly that.
+     */
+    private static boolean belongsToCleanup(PlanNode node) {
+        return node instanceof PlanNode.CleanupNode
+                || (node instanceof PlanNode.WaitNode wait && wait.cleanup());
     }
 
     private boolean dependenciesSatisfied(

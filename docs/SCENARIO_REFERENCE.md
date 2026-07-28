@@ -510,6 +510,10 @@ Wait steps pause local execution without making a network request.
 
 `timeout` is required and must be greater than zero.
 
+A wait declared in `cleanup` runs in the cleanup phase, not before it. That is
+what lets an obligation outlive something it must not be carried out under —
+an injected fault window, or a target that is still settling.
+
 ## Faults
 
 Fault steps inject bounded failures into Faultora's own outbound requests. The
@@ -797,6 +801,8 @@ params:
 Faultora fails validation or plan compilation instead of silently ignoring:
 
 - retry policies on cleanup steps;
+- destructive operations, unless the run is started with
+  `--allow-destructive`;
 - `retry`, `expectError`, `outputAs`, `inputs`, and `operationId` on a
   grouping step instead of on its children;
 - repeat groups whose iteration count is only known at runtime;

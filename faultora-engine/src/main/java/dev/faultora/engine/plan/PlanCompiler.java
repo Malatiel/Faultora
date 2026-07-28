@@ -157,7 +157,7 @@ public class PlanCompiler {
                 PlanNode.OperationNode operationNode = compileOperation(
                         step, phase, operationIndex, targetPolicy,
                         resolveDependencies(step.dependsOn(), childToGroup),
-                        generatedInputs, diagnostics);
+                        generatedInputs, List.of(stepId), diagnostics);
                 if (operationNode == null) {
                     continue;
                 }
@@ -189,7 +189,7 @@ public class PlanCompiler {
 
                 List<PlanNode.OperationNode> children = compileGroupChildren(
                         step, phase, "Parallel", operationIndex, targetPolicy,
-                        generatedInputs, diagnostics);
+                        generatedInputs, 1, diagnostics);
                 if (children == null) {
                     continue;
                 }
@@ -229,7 +229,7 @@ public class PlanCompiler {
                 nodes.add(new PlanNode.WaitNode(
                         nodeId, waitMs,
                         resolveDependencies(step.dependsOn(), childToGroup),
-                        SafetyClassification.READ_ONLY
+                        SafetyClassification.READ_ONLY, "cleanup".equals(phase)
                 ));
             } else {
                 diagnostics.add(PlanDiagnostic.error(phase, stepId,
@@ -275,7 +275,7 @@ public class PlanCompiler {
 
         List<PlanNode.OperationNode> children = compileGroupChildren(
                 step, phase, "Repeat", operationIndex, targetPolicy,
-                generatedInputs, diagnostics);
+                generatedInputs, iterations, diagnostics);
         if (children == null) {
             return null;
         }
@@ -348,7 +348,7 @@ public class PlanCompiler {
 
         List<PlanNode.OperationNode> children = compileGroupChildren(
                 step, phase, "Eventually", operationIndex, targetPolicy,
-                generatedInputs, diagnostics);
+                generatedInputs, 1, diagnostics);
         if (children == null) {
             return null;
         }
@@ -386,6 +386,7 @@ public class PlanCompiler {
             Map<String, OperationDefinition> operationIndex,
             TargetPolicy targetPolicy,
             GeneratedInputCompiler generatedInputs,
+            int iterations,
             List<PlanDiagnostic> diagnostics
     ) {
         List<ScenarioStep> childSteps = step.steps() == null ? List.of() : step.steps();
@@ -399,7 +400,7 @@ public class PlanCompiler {
         for (ScenarioStep child : childSteps) {
             PlanNode.OperationNode childNode = compileOperation(
                     child, phase, operationIndex, targetPolicy, List.of(),
-                    generatedInputs, diagnostics);
+                    generatedInputs, iterationNodeIds(child.id(), iterations), diagnostics);
             if (childNode == null) {
                 valid = false;
                 continue;
@@ -407,6 +408,21 @@ public class PlanCompiler {
             children.add(childNode);
         }
         return valid ? children : null;
+    }
+
+    /**
+     * Node IDs one step executes under. A repeat child runs once per
+     * iteration, each under its own ID and therefore its own seed.
+     */
+    private static List<String> iterationNodeIds(String stepId, int iterations) {
+        if (iterations <= 1) {
+            return List.of(stepId);
+        }
+        List<String> ids = new ArrayList<>(iterations);
+        for (int index = 0; index < iterations; index++) {
+            ids.add(RepeatIterations.name(stepId, index));
+        }
+        return ids;
     }
 
     private static SafetyClassification groupSafety(List<PlanNode.OperationNode> children) {
@@ -434,6 +450,7 @@ public class PlanCompiler {
             TargetPolicy targetPolicy,
             List<NodeId> deps,
             GeneratedInputCompiler generatedInputs,
+            List<String> generationNodeIds,
             List<PlanDiagnostic> diagnostics
     ) {
         String stepId = step.id();
@@ -503,7 +520,8 @@ public class PlanCompiler {
 
         PlanNode.GenerationRequest generation = null;
         if (step.generate() != null) {
-            generation = generatedInputs.compile(step, operation, phase, diagnostics);
+            generation = generatedInputs.compile(
+                    step, operation, phase, generationNodeIds, diagnostics);
             if (generation == null) {
                 return null;
             }

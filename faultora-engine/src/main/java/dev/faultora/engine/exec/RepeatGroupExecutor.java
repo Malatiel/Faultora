@@ -3,6 +3,7 @@ package dev.faultora.engine.exec;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.faultora.engine.evidence.NodeEvidence;
 import dev.faultora.engine.plan.PlanNode;
+import dev.faultora.engine.plan.RepeatIterations;
 import dev.faultora.engine.run.RunResult;
 import dev.faultora.model.catalog.NormalizedError;
 import dev.faultora.model.identifier.NodeId;
@@ -21,9 +22,6 @@ import java.util.Map;
  * child ID always points at the most recent one.
  */
 public final class RepeatGroupExecutor {
-
-    /** Separator between a repeat child's step ID and its iteration index. */
-    public static final String ITERATION_SEPARATOR = ":";
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -70,7 +68,7 @@ public final class RepeatGroupExecutor {
 
             for (PlanNode.OperationNode child : group.children()) {
                 PlanNode.OperationNode iterationChild =
-                        child.withNodeId(iterationNodeId(child.nodeId(), index));
+                        child.withNodeId(RepeatIterations.nodeId(child.nodeId(), index));
                 RunResult.NodeResult childResult = nodeExecutor.execute(
                         iterationChild, context, iterationContext);
                 childResults.put(iterationChild.nodeId(), childResult);
@@ -101,11 +99,6 @@ public final class RepeatGroupExecutor {
         return new GroupOutcome(new RunResult.NodeResult(
                 group.nodeId(), "repeat", RunResult.Status.FAILED,
                 -1, durationMs, List.of(), failure), childResults);
-    }
-
-    /** Node ID of one child in one iteration, e.g. {@code create-payment:2}. */
-    public static NodeId iterationNodeId(NodeId childId, int index) {
-        return new NodeId(childId.value() + ITERATION_SEPARATOR + index);
     }
 
     private com.fasterxml.jackson.databind.node.ObjectNode iterationBinding(

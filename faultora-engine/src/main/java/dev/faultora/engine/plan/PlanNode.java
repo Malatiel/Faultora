@@ -176,12 +176,20 @@ public sealed interface PlanNode permits
             NodeId nodeId,
             long waitMs,
             List<NodeId> dependencies,
-            SafetyClassification safety
+            SafetyClassification safety,
+            boolean cleanup
     ) implements PlanNode {
         public WaitNode {
             if (waitMs < 1) {
                 throw new IllegalArgumentException("wait node requires a positive duration");
             }
+        }
+
+        /** Convenience constructor for a wait outside the cleanup phase. */
+        public WaitNode(
+                NodeId nodeId, long waitMs,
+                List<NodeId> dependencies, SafetyClassification safety) {
+            this(nodeId, waitMs, dependencies, safety, false);
         }
     }
 

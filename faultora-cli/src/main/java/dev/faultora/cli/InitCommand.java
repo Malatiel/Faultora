@@ -50,7 +50,7 @@ public class InitCommand implements Command {
         try {
             // Read and import OpenAPI
             String content = Files.readString(openApiPath, StandardCharsets.UTF_8);
-            SourceImporter importer = ExtensionRegistry.importerFor("openapi");
+            SourceImporter importer = ExtensionRegistry.importerFor("openapi", null);
             if (importer == null) {
                 System.err.println("No importer for OpenAPI documents is installed");
                 return FaultoraCli.EXIT_RUNNER_FAILURE;

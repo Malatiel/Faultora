@@ -5,6 +5,7 @@ import dev.faultora.faults.local.LocalFaultProvider;
 import dev.faultora.faults.toxiproxy.ToxiproxyFaultProvider;
 import dev.faultora.model.catalog.SafetyClassification;
 import dev.faultora.model.security.EvidencePolicy;
+import dev.faultora.model.security.ExtensionPolicy;
 import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.spi.contract.FaultProvider;
 import dev.faultora.spi.context.ConnectorContext;
@@ -55,14 +56,38 @@ final class RunPolicies {
         return providers;
     }
 
-    /** Execution policy, allowing exactly the fault types the providers offer. */
-    static TargetPolicy targetPolicy(Map<String, FaultProvider> faultProviders) {
+    /**
+     * Extension policy: built-ins always, anything else only when the operator
+     * named it. Resource limits and isolation belong to the out-of-process
+     * plugin protocol and are not enforced here.
+     */
+    static ExtensionPolicy extensionPolicy(TestOptions options) {
+        return new ExtensionPolicy(
+                Set.copyOf(options.allowedExtensions()), false, 0, Set.of(), Set.of());
+    }
+
+    /**
+     * Execution policy: the fault types the providers offer, and the operation
+     * classes the operator permits.
+     * <p>
+     * Destructive operations are excluded unless asked for. A scenario that
+     * deletes what its setup created is ordinary and supported — but deleting
+     * is not something a run should be able to do because an operation
+     * happened to be described in the catalog.
+     */
+    static TargetPolicy targetPolicy(
+            TestOptions options, Map<String, FaultProvider> faultProviders) {
         Set<String> allowedFaultTypes = new LinkedHashSet<>();
         faultProviders.values().forEach(provider ->
                 allowedFaultTypes.addAll(provider.capabilities()));
+
+        Set<SafetyClassification> allowedOperations = new LinkedHashSet<>(
+                Set.of(SafetyClassification.READ_ONLY, SafetyClassification.MUTATING));
+        if (options.allowDestructive()) {
+            allowedOperations.add(SafetyClassification.DESTRUCTIVE);
+        }
         return new TargetPolicy(
-                Set.of(),
-                Set.of(SafetyClassification.READ_ONLY, SafetyClassification.MUTATING),
+                Set.of(), allowedOperations,
                 MAX_REQUESTS, MAX_CONCURRENCY, MAX_DURATION_MS, MAX_PAYLOAD_BYTES,
                 allowedFaultTypes, Set.of());
     }

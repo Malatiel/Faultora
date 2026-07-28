@@ -20,6 +20,35 @@ All notable changes to Faultora are documented in this file.
   OpenAPI document, and the example `Payment` schema declares which of its
   fields are required.
 
+- Reference scenarios for the two recovery cases M2-05 asks for: a target that
+  restarts mid-run, which the scenario survives by retrying, and a setup that
+  half-succeeds, whose cleanup still disposes of what was created.
+- `--allow-destructive` permits operations the description classifies as
+  destructive. Architecture principle 7 has always said such operations
+  require explicit policy; until now there was no way to give it, so a cleanup
+  that deletes what its setup created could not run at all.
+- `--allow-extension <class>` names a non-built-in extension a run may use.
+
+### Fixed
+
+- A `wait` step declared in `cleanup` ran in the main phase instead of the
+  cleanup one, because compilation treated it the same in every section. A
+  wait that exists to outlive an injected fault therefore expired the fault
+  before the step it was meant to interfere with, quietly turning a failing
+  scenario into a passing one.
+- Generated requests prefer an example declared on the media type, where most
+  OpenAPI documents put it, instead of only one written inside the schema.
+  Keywords beside a `$ref` now refine what it points at rather than being
+  dropped, which is how the example reaches a shared component schema without
+  altering it.
+- The compile-time feasibility check derives its seeds exactly as the run
+  does, and covers every iteration a repeat child will run under. A schema
+  with alternatives could otherwise pass compilation on one branch and fail
+  mid-run on another.
+- `ExtensionPolicy.allowedExtensions` is enforced when extensions are
+  discovered: an implementation outside the project's own package is refused
+  and named unless the run allows it.
+
 ### Changed
 
 - `AssertionContext` carries the resolved schema an assertion checks against.

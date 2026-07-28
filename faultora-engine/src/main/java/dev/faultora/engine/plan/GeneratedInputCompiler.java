@@ -48,6 +48,7 @@ final class GeneratedInputCompiler {
             ScenarioStep step,
             dev.faultora.model.catalog.OperationDefinition operation,
             String phase,
+            List<String> nodeIds,
             List<PlanDiagnostic> diagnostics
     ) {
         ScenarioStep.Generate generate = step.generate();
@@ -86,15 +87,22 @@ final class GeneratedInputCompiler {
                                 + schemaId.value()));
                 return null;
             }
-            try {
-                // Proving the schema can be satisfied is the point: the value
-                // produced here is discarded, and the run generates its own.
-                generator.generate(schema, seed, spec);
-            } catch (SchemaException unsatisfiable) {
-                diagnostics.add(PlanDiagnostic.error(phase, stepId,
-                        "Cannot generate '" + field + "' from schema "
-                                + schemaId.value() + ": " + unsatisfiable.getMessage()));
-                return null;
+            // The check derives its seeds exactly as the run will, and covers
+            // every node the step executes under. A schema with alternatives
+            // can otherwise pass compilation on one branch and fail at run
+            // time on another.
+            for (String nodeId : nodeIds) {
+                try {
+                    // Proving the schema can be satisfied is the point: the
+                    // value produced here is discarded, and the run generates
+                    // its own.
+                    generator.generate(schema, Seeds.derive(seed, nodeId, field), spec);
+                } catch (SchemaException unsatisfiable) {
+                    diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                            "Cannot generate '" + field + "' from schema "
+                                    + schemaId.value() + ": " + unsatisfiable.getMessage()));
+                    return null;
+                }
             }
         }
         return new PlanNode.GenerationRequest(fields, strategy, preferExamples);

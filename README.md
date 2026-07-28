@@ -145,6 +145,9 @@ java -jar faultora-cli/target/faultora-0.5.2.jar \
 
 Private, loopback, and link-local destinations are blocked by default. Use
 `--allow-private` only for an explicitly trusted local test environment.
+Operations the description classifies as destructive are withheld in the same
+way: a cleanup that deletes what its setup created is ordinary and supported,
+but it takes `--allow-destructive` to permit it.
 
 ### Targets
 

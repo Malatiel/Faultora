@@ -1,0 +1,36 @@
+apiVersion: faultora.dev/v1alpha1
+kind: Scenario
+
+metadata:
+  name: payment-target-restart
+  description: >-
+    The target restarts while the scenario is running. The request in flight
+    fails, and the step retries until the service is listening again, so the
+    run reports the recovery rather than the outage.
+  labels:
+    team: payments
+    suite: reliability
+
+timeout: 1m
+
+execute:
+  - id: create-after-restart
+    type: operation
+    operationId: create-payment
+    retry:
+      maxAttempts: 8
+      backoffMs: 200
+      backoffMultiplier: 2
+      maxBackoffMs: 1000
+    inputs:
+      body:
+        amount: 5500
+        currency: EUR
+
+assertions:
+  - id: recovered
+    assertionType: status
+    targetStep: create-after-restart
+    params:
+      expected: 201
+    message: The payment is created once the target is listening again

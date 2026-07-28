@@ -5,6 +5,7 @@ import dev.faultora.model.catalog.OperationDefinition;
 import dev.faultora.model.catalog.SafetyClassification;
 import dev.faultora.model.catalog.TargetDefinition;
 import dev.faultora.model.identifier.CatalogVersion;
+import dev.faultora.model.security.ExtensionPolicy;
 import dev.faultora.model.identifier.OperationId;
 import dev.faultora.model.identifier.ProtocolId;
 import dev.faultora.model.identifier.TargetId;
@@ -39,14 +40,17 @@ final class CatalogLoader {
     private CatalogLoader() {
     }
 
-    static ApiCatalog load(TestOptions options, ScenarioDocument scenario) throws IOException {
+    static ApiCatalog load(
+            TestOptions options, ScenarioDocument scenario, ExtensionPolicy extensionPolicy)
+            throws IOException {
         return options.openApiPath() != null
-                ? importCatalog(options.openApiPath())
+                ? importCatalog(options.openApiPath(), extensionPolicy)
                 : deriveFromScenario(scenario, options.targetUrl());
     }
 
-    private static ApiCatalog importCatalog(Path openApiPath) throws IOException {
-        SourceImporter importer = ExtensionRegistry.importerFor("openapi");
+    private static ApiCatalog importCatalog(Path openApiPath, ExtensionPolicy extensionPolicy)
+            throws IOException {
+        SourceImporter importer = ExtensionRegistry.importerFor("openapi", extensionPolicy);
         if (importer == null) {
             throw new CliException(
                     "No importer for OpenAPI documents is installed",

@@ -1,4 +1,4 @@
-package dev.faultora.engine.exec;
+package dev.faultora.engine.plan;
 
 /**
  * Derives per-purpose seeds from the run seed.

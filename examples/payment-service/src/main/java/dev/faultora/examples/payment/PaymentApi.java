@@ -64,7 +64,18 @@ public class PaymentApi {
     }
 
     public void start() throws IOException {
-        server = HttpServer.create(new InetSocketAddress(0), 0);
+        start(0);
+    }
+
+    /**
+     * Start on a chosen port, or any free one when given 0.
+     * <p>
+     * Binding the same port again is what lets a scenario observe the target
+     * going away and coming back at the address it was reached at — a restart,
+     * rather than a different service.
+     */
+    public void start(int requestedPort) throws IOException {
+        server = HttpServer.create(new InetSocketAddress(requestedPort), 0);
         port = server.getAddress().getPort();
 
         server.createContext("/payments", new PaymentsHandler());
@@ -78,10 +89,37 @@ public class PaymentApi {
     public void stop() {
         if (server != null) {
             server.stop(0);
+            server = null;
         }
         if (executor != null) {
             executor.shutdownNow();
+            executor = null;
         }
+    }
+
+    /**
+     * Stop and come back on the same port after a pause, in the background.
+     * <p>
+     * Payments live in memory, so a restart loses them: that is the point.
+     * A scenario that survives one is proving its own resilience, not the
+     * service's persistence.
+     */
+    public void restartAfter(long downtimeMs) {
+        int boundPort = port;
+        stop();
+        Thread revival = new Thread(() -> {
+            try {
+                Thread.sleep(downtimeMs);
+                start(boundPort);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            } catch (IOException unavailable) {
+                throw new IllegalStateException(
+                        "Example API could not rebind port " + boundPort, unavailable);
+            }
+        }, "payment-api-restart");
+        revival.setDaemon(true);
+        revival.start();
     }
 
     public int port() {

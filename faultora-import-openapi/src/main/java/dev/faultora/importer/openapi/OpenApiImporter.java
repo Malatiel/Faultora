@@ -1,6 +1,7 @@
 package dev.faultora.importer.openapi;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.faultora.model.catalog.*;
 import dev.faultora.model.identifier.*;
@@ -440,19 +441,51 @@ public class OpenApiImporter implements SourceImporter {
         if (content == null) return null;
 
         JsonNode json = content.get("application/json");
-        if (json != null) {
-            return resolveSchema(
-                    json.get("schema"), schemas, operationId + ".body", sourcePath);
+        if (json == null) {
+            // Fall back to the first declared content type.
+            Iterator<JsonNode> it = content.elements();
+            json = it.hasNext() ? it.next() : null;
         }
-
-        // Fall back to the first declared content type.
-        Iterator<JsonNode> it = content.elements();
-        if (it.hasNext()) {
-            return resolveSchema(
-                    it.next().get("schema"), schemas, operationId + ".body", sourcePath);
+        if (json == null) {
+            return null;
         }
+        return resolveSchema(
+                withMediaTypeExample(json), schemas, operationId + ".body", sourcePath);
+    }
 
-        return null;
+    /**
+     * The schema of a media type, carrying its example.
+     * <p>
+     * OpenAPI lets an example sit beside the schema rather than inside it, and
+     * most documents put it there. Attaching it to the schema node — as a
+     * keyword beside a {@code $ref} when the schema is a reference — is what
+     * lets a generated request prefer the example the authors actually wrote,
+     * without altering the shared component the reference points at.
+     */
+    private JsonNode withMediaTypeExample(JsonNode mediaType) {
+        JsonNode schema = mediaType.get("schema");
+        if (schema == null || !schema.isObject() || schema.hasNonNull("example")) {
+            return schema;
+        }
+        JsonNode example = mediaType.get("example");
+        if (example == null) {
+            // examples: {name: {value: ...}} — the first declared one.
+            JsonNode examples = mediaType.get("examples");
+            if (examples != null && examples.isObject()) {
+                for (JsonNode named : examples) {
+                    if (named != null && named.hasNonNull("value")) {
+                        example = named.get("value");
+                        break;
+                    }
+                }
+            }
+        }
+        if (example == null) {
+            return schema;
+        }
+        ObjectNode carrying = schema.deepCopy();
+        carrying.set("example", example);
+        return carrying;
     }
 
     /**

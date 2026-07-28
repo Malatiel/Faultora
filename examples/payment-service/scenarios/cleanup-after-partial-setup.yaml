@@ -1,0 +1,58 @@
+apiVersion: faultora.dev/v1alpha1
+kind: Scenario
+
+metadata:
+  name: payment-cleanup-after-partial-setup
+  description: >-
+    Setup half-succeeds: the first step creates a payment, the second fails
+    under an injected outage. The scenario fails, and the cleanup that
+    disposes of what setup created runs anyway — waiting out the fault window
+    first, since an obligation carried out under the same outage would fail
+    with it.
+  labels:
+    team: payments
+    suite: reliability
+
+timeout: 1m
+
+faults:
+  - id: outage
+    faultType: http-error
+    targetScope: "*"
+    duration: 300ms
+
+setup:
+  - id: create-first
+    type: operation
+    operationId: create-payment
+    outputAs: first
+    inputs:
+      body:
+        amount: 2200
+        currency: EUR
+
+  - id: create-second
+    type: operation
+    operationId: create-payment
+    dependsOn: [outage, create-first]
+    inputs:
+      body:
+        amount: 3300
+        currency: EUR
+
+execute:
+  - id: never-runs
+    type: operation
+    operationId: list-payments
+    dependsOn: [create-second]
+
+cleanup:
+  - id: wait-out-the-outage
+    type: wait
+    timeout: 800ms
+
+  - id: dispose-first
+    type: operation
+    operationId: delete-payment
+    inputs:
+      paymentId: "{{steps.first.body.id}}"

@@ -15,6 +15,7 @@ import dev.faultora.model.catalog.ApiCatalog;
 import dev.faultora.model.events.RunEvent;
 import dev.faultora.model.identifier.RunId;
 import dev.faultora.model.security.ContentDigest;
+import dev.faultora.model.security.ExtensionPolicy;
 import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.spec.expression.ExpressionContext;
 import dev.faultora.spec.model.InputDeclaration;
@@ -69,7 +70,8 @@ public class TestCommand implements Command {
             return FaultoraCli.EXIT_PASS;
         }
 
-        Map<String, ReportRenderer> renderers = ExtensionRegistry.renderers();
+        ExtensionPolicy extensionPolicy = RunPolicies.extensionPolicy(options);
+        Map<String, ReportRenderer> renderers = ExtensionRegistry.renderers(extensionPolicy);
         if (!renderers.keySet().containsAll(options.formats())) {
             System.err.println("Unknown format. Supported formats: "
                     + String.join(",", renderers.keySet()));
@@ -84,9 +86,9 @@ public class TestCommand implements Command {
                 return FaultoraCli.EXIT_INVALID_CONFIG;
             }
 
-            ApiCatalog catalog = CatalogLoader.load(options, scenario);
+            ApiCatalog catalog = CatalogLoader.load(options, scenario, extensionPolicy);
             Map<String, FaultProvider> faultProviders = RunPolicies.faultProviders(options);
-            TargetPolicy targetPolicy = RunPolicies.targetPolicy(faultProviders);
+            TargetPolicy targetPolicy = RunPolicies.targetPolicy(options, faultProviders);
             ConnectorContext connectorContext = RunPolicies.connectorContext(
                     options, targetPolicy, new EnvironmentSecretResolver());
 
@@ -116,7 +118,7 @@ public class TestCommand implements Command {
 
             RunResult result = run(
                     options, compilation, faultProviders, connectorContext,
-                    expressionContext, journalPath, scenario);
+                    expressionContext, journalPath, scenario, extensionPolicy);
 
             ReportWriter.writeAll(
                     options.formats(), renderers, loadEvents(journalPath), options.outputDir());
@@ -155,10 +157,11 @@ public class TestCommand implements Command {
             ConnectorContext connectorContext,
             ExpressionContext expressionContext,
             Path journalPath,
-            ScenarioDocument scenario
+            ScenarioDocument scenario,
+            ExtensionPolicy extensionPolicy
     ) throws IOException {
         Map<String, AssertionProvider> assertionProviders =
-                ExtensionRegistry.assertionProviders();
+                ExtensionRegistry.assertionProviders(extensionPolicy);
         LocalFaultProvider localFaults = (LocalFaultProvider) faultProviders.get("local");
 
         try (HttpConnector httpConnector = options.allowPrivate()
@@ -266,8 +269,10 @@ public class TestCommand implements Command {
         System.out.println("      --output <dir>         Output directory (default: faultora-results)");
         System.out.println("      --seed <n>             Random seed (default: current time)");
         System.out.println("      --allow-private        Allow connections to private/local networks");
+        System.out.println("      --allow-destructive    Allow operations classified as destructive");
         System.out.println("      --auth-secret-id <id>  Secret handle ID for Authorization header (resolved from env)");
         System.out.println("      --toxiproxy-url <url>  Toxiproxy admin endpoint; enables network-* fault types");
+        System.out.println("      --allow-extension <class>  Permit a non-built-in extension (repeatable)");
         System.out.println("  -i, --input <key=value>    Value for a declared scenario input (repeatable)");
         System.out.println("  -h, --help                 Show this help");
         System.out.println();

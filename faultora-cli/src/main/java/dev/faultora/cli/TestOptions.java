@@ -24,9 +24,11 @@ import java.util.Map;
  * @param outputDir     directory receiving the journal and reports
  * @param seed          run seed; identical seeds reproduce generated values
  * @param allowPrivate  whether private and loopback destinations are allowed
+ * @param allowDestructive whether destructive operations may be invoked
  * @param authSecretId  secret handle supplying the bearer token, or null
  * @param toxiproxyUrl  Toxiproxy admin endpoint enabling network faults, or null
  * @param inputs        values for declared scenario inputs
+ * @param allowedExtensions classes of non-built-in extensions this run permits
  * @param helpRequested whether the user asked for help instead of a run
  */
 record TestOptions(
@@ -38,9 +40,11 @@ record TestOptions(
         Path outputDir,
         long seed,
         boolean allowPrivate,
+        boolean allowDestructive,
         String authSecretId,
         String toxiproxyUrl,
         Map<String, Object> inputs,
+        List<String> allowedExtensions,
         boolean helpRequested
 ) {
     static final String DEFAULT_TARGET_URL = "http://localhost:8080";
@@ -59,9 +63,11 @@ record TestOptions(
         Path outputDir = Path.of("faultora-results");
         long seed = System.currentTimeMillis();
         boolean allowPrivate = false;
+        boolean allowDestructive = false;
         String authSecretId = null;
         String toxiproxyUrl = null;
         Map<String, Object> inputs = new LinkedHashMap<>();
+        List<String> allowedExtensions = new ArrayList<>();
 
         Iterator<String> it = args.iterator();
         while (it.hasNext()) {
@@ -82,8 +88,11 @@ record TestOptions(
                 case "--output" -> outputDir = Path.of(requireNext(it, "--output"));
                 case "--seed" -> seed = parseSeed(requireNext(it, "--seed"));
                 case "--allow-private" -> allowPrivate = true;
+                case "--allow-destructive" -> allowDestructive = true;
                 case "--auth-secret-id" -> authSecretId = requireNext(it, "--auth-secret-id");
                 case "--toxiproxy-url" -> toxiproxyUrl = requireNext(it, "--toxiproxy-url");
+                case "--allow-extension" ->
+                        allowedExtensions.add(requireNext(it, "--allow-extension"));
                 case "--input", "-i" -> {
                     String pair = requireNext(it, "--input");
                     int separator = pair.indexOf('=');
@@ -113,8 +122,8 @@ record TestOptions(
 
         return new TestOptions(
                 scenarioPath, openApiPath, targetUrl, Map.copyOf(targetUrls), formats,
-                outputDir, seed, allowPrivate, authSecretId, toxiproxyUrl,
-                Map.copyOf(inputs), false);
+                outputDir, seed, allowPrivate, allowDestructive, authSecretId, toxiproxyUrl,
+                Map.copyOf(inputs), List.copyOf(allowedExtensions), false);
     }
 
     /**
@@ -135,7 +144,7 @@ record TestOptions(
     private static TestOptions help() {
         return new TestOptions(
                 null, null, DEFAULT_TARGET_URL, Map.of(), List.of(), Path.of("."),
-                0, false, null, null, Map.of(), true);
+                0, false, false, null, null, Map.of(), List.of(), true);
     }
 
     private static List<String> parseFormats(String value) {

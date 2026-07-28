@@ -51,13 +51,25 @@ public final class SchemaCatalog {
      */
     public JsonNode dereference(JsonNode schema, String path) {
         JsonNode current = schema;
+        ObjectNode refinements = null;
         for (int depth = 0; depth < MAX_REFERENCE_DEPTH; depth++) {
             if (current == null || !current.isObject()) {
                 return current;
             }
             JsonNode ref = current.get("$ref");
             if (ref == null || !ref.isTextual()) {
-                return current;
+                return refinements == null ? current : refine(current, refinements);
+            }
+            // Keywords written beside a $ref refine what it points at — that
+            // is how an example declared on a media type reaches a shared
+            // component schema without altering the component itself.
+            for (var field : current.properties()) {
+                if (!"$ref".equals(field.getKey())) {
+                    if (refinements == null) {
+                        refinements = MAPPER.createObjectNode();
+                    }
+                    refinements.set(field.getKey(), field.getValue());
+                }
             }
             String reference = ref.asText();
             JsonNode target = schemasById.get(nameOf(reference));
@@ -68,6 +80,12 @@ public final class SchemaCatalog {
         }
         throw new SchemaException(path,
                 "reference chain deeper than " + MAX_REFERENCE_DEPTH + " hops");
+    }
+
+    private JsonNode refine(JsonNode target, ObjectNode refinements) {
+        ObjectNode refined = target.deepCopy();
+        refinements.properties().forEach(field -> refined.set(field.getKey(), field.getValue()));
+        return refined;
     }
 
     /**
