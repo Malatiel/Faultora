@@ -68,8 +68,35 @@ ADR already states.
 - **`ExtensionPolicy.allowedExtensions` enforced at discovery** — ADR-004
   records that it is not, and SEC-08 stays unmet until it is.
 
+**Every declared limit is enforced, or deleted.** A review found
+`TargetPolicy.maxDurationMs` used nowhere: the CLI announces a five-minute
+wall-clock budget, and a scenario writing `timeout: 1h` simply exceeds it. The
+defect is one field; the problem is that nobody had checked which declared
+limits are applied at all. Each field of `TargetPolicy`, `EvidencePolicy`, and
+`ExtensionPolicy` is audited here and either enforced with a test that fails
+when it is not, or removed. A limit that constrains nothing is worse than an
+absent one, because it answers a reviewer's question falsely.
+
+**Guarantees that do not currently hold.** Each contradicts an accepted ADR:
+
+- numbers with exclusive bounds are generated at the excluded value, because
+  only the integer path normalises them — ADR-013 promises a value the contract
+  accepts, and the corpus test missed it by using integers;
+- an exception thrown inside a parallel, repeat, or eventually group escapes
+  the run loop, so cleanup does not run and no terminal event is journalled —
+  the failure class fixed for the scenario deadline in 0.4.0, left half closed;
+- a node whose dependency failed vanishes from the report instead of being
+  recorded as skipped, so a reader cannot tell it from a step never written.
+
+**Cancellation becomes a real path.** The cancellation flag exists and nothing
+sets it: an interrupted run leaks whatever it injected. A signal handler that
+sets it, waits for cleanup, and lets the run report its own termination is
+worth more than the leak it prevents — the runner in 0.9 and the controller in
+2.0 both cancel runs, and both need that path to work.
+
 Gate: no statement in `README.md`, `docs/`, or an accepted ADR describes
-behaviour the code does not have.
+behaviour the code does not have, **and every guarantee an ADR states has a
+test that fails when it is violated**.
 
 ### 0.7 — Events
 
@@ -80,6 +107,22 @@ behaviour the code does not have.
 - Event assertions: eventually appears, count, uniqueness, correlation
   continuity, ordered and unordered sequences (M3-04, event half).
 - Disposable Kafka in the test suite; the default build stays offline.
+
+Carried over from the 0.5 review, none of it blocking a stated guarantee:
+
+- scenario-supplied strings that reach a management API are escaped and made
+  unique. A Toxiproxy proxy name goes into a URL path unencoded, and toxic
+  names come from a per-JVM counter, so a leaked name collides with the next
+  run. The general question — what a scenario may put into a control plane —
+  is one the controller inherits in 2.0;
+- `FaultSession.start` registers a fault before scheduling its watchdog; a
+  rejected schedule during a concurrent close leaves it injected. Unlikely,
+  and precisely the guarantee the class exists for;
+- the security document states that the destination allowlist skips
+  private-range classification, which is deliberate and unreachable from the
+  CLI today, and the scenario reference warns that retrying a non-idempotent
+  operation can duplicate its effect — the hazard this tool exists to find,
+  and worth naming where scenarios are written.
 
 Gate: a scenario publishes a command, observes the resulting event, and proves
 that duplicate delivery produces one business effect.
@@ -124,7 +167,38 @@ Negotiation is what lets 2.0 add a second protocol version beside the first
 instead of breaking every runner already deployed. A mismatch must produce a
 named refusal, never undefined behaviour.
 
-### 0.10 — Distributed execution
+### 1.0 — Freeze and productization
+
+- **`faultora.dev/v1` frozen**, with migration tooling and a compatibility
+  matrix (M6-01). The internal step model becomes a sealed hierarchy here: it
+  is the one moment when reshaping the parsed document costs nothing extra.
+- **Semantics nobody has decided are decided before they are frozen.** A freeze
+  inherits whatever the code happens to do, including what was never a choice:
+  a lone `{{expr}}` resolving to null while the same expression interpolated
+  yields an empty string; any parenthesis routing an expression to JMESPath; an
+  assertion named `jsonpath` that evaluates JMESPath and documents a `matches`
+  check it does not implement; `equals` distinguishing 5 from 5.0. Each is
+  small, and each becomes permanent on the day `v1` is declared.
+- Out-of-process extension protocol, manifests, capability validation, SDK,
+  reference extension, process isolation and resource limits (M6-02).
+- Supply chain: multi-architecture images, signed artifacts, SBOM, SLSA
+  provenance, verifiable offline bundle, Helm chart, upgrade and rollback
+  documentation (M6-03).
+- Operational readiness: OpenTelemetry traces, metrics, structured logs, health
+  contracts, backup and retention guides, diagnostic bundles, performance
+  baselines (M6-04). Evidence is held in memory for a whole run, so the
+  baselines have to state the scale at which that stops being true.
+- Security qualification: final threat-model review, boundary tests, extension
+  isolation tests, policy bypass tests, artifact sanitization, offline
+  qualification (M6-05).
+- Experience: guided initialization, examples by failure class, actionable
+  diagnostics, searchable HTML timeline, CI examples, self-hosting and plugin
+  authoring documentation (M6-06).
+
+Gate: the roadmap's 1.0 exit gate, plus the compatibility tests that make
+"fixes only" enforceable rather than aspirational.
+
+### 2.0 — Distributed execution
 
 - Controller API and metadata: projects, environments, policies, catalogs,
   scenarios, runs, tasks, artifacts; identity integration and audit events
@@ -141,30 +215,27 @@ named refusal, never undefined behaviour.
 Gate: the M5 exit gate — adding workers adds capacity without adding controller
 traffic, no single worker failure loses a result or a cleanup obligation.
 
-### 1.0 — Freeze and productization
+## 4. Standing gates
 
-- **`faultora.dev/v1` frozen**, with migration tooling and a compatibility
-  matrix (M6-01). The internal step model becomes a sealed hierarchy here: it
-  is the one moment when reshaping the parsed document costs nothing extra.
-- Out-of-process extension protocol, manifests, capability validation, SDK,
-  reference extension, process isolation and resource limits (M6-02).
-- Supply chain: multi-architecture images, signed artifacts, SBOM, SLSA
-  provenance, verifiable offline bundle, Helm chart, upgrade and rollback
-  documentation (M6-03).
-- Operational readiness: OpenTelemetry traces, metrics, structured logs, health
-  contracts, backup and retention guides, diagnostic bundles, performance
-  baselines (M6-04).
-- Security qualification: final threat-model review, boundary tests, extension
-  isolation tests, policy bypass tests, artifact sanitization, offline
-  qualification (M6-05).
-- Experience: guided initialization, examples by failure class, actionable
-  diagnostics, searchable HTML timeline, CI examples, self-hosting and plugin
-  authoring documentation (M6-06).
+Two rules apply to every release above. They are here because the same thing
+happened three times, not because they sound prudent.
 
-Gate: the roadmap's 1.0 exit gate, plus the compatibility tests that make
-"fixes only" enforceable rather than aspirational.
+**A guarantee without a failing test is a wish.** Every defect found reviewing
+0.5 contradicted a sentence in an accepted ADR — generated values satisfy their
+schema, faults always roll back, a scenario cannot widen the operator's
+bounds. The sentences were written honestly and the code drifted quietly.
+Before a release is cut, every guarantee an ADR states must have a test that
+fails when it is violated; a guarantee that cannot be tested should not be
+stated.
 
-## 4. After 1.0
+**A capability is not done until it has run end to end.** The unit suite stayed
+green while a `$ref` inside an asserted schema had nothing to resolve it, a
+`wait` in cleanup ran in the main phase, and destructive operations could not
+be invoked at all. Each surfaced on the first real run against a real service.
+Whatever the suite says, a new capability is exercised through the packaged
+artifact against a running target before it is called complete.
+
+## 5. After 1.0
 
 The 1.x line takes defect fixes, security updates, dependency bumps, and
 documentation. Everything in §16 of the roadmap — visual scenario builder,
@@ -178,7 +249,7 @@ Shrinking deserves a note: 0.5.0 records the seed that reproduces a generated
 failure, which is what makes a failure investigable. Reducing it to a minimal
 counterexample is a separate capability and stays where the roadmap put it.
 
-## 5. Why the freeze falls after the runner
+## 6. Why the freeze falls after the runner
 
 0.7 and 0.8 together are comparable in size to everything built between 0.2 and
 0.5. M5 is comparable again on its own: a controller, a scheduler with leases,
