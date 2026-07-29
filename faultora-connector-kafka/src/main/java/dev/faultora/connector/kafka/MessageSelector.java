@@ -8,8 +8,8 @@ import java.util.Map;
 /**
  * Which of the messages in the observation window this step is about.
  * <p>
- * An offset floor bounds how far back an observation reaches, but it does not
- * make the observation deterministic: a repeat block that publishes and
+ * The floor bounds how far back an observation reaches, but it does not make
+ * the observation deterministic: a repeat block that publishes and
  * observes on every iteration would see its earlier iterations again, and
  * "exactly one event" would be unwritable. Determinism comes from
  * <em>selection</em> — a step says which messages are its own, usually by the
@@ -78,7 +78,7 @@ record MessageSelector(String key, Map<String, String> headers, Map<String, Stri
 
     /** Whether this selector narrows anything at all. */
     boolean selectsEverything() {
-        return key == null && headers.isEmpty() && payload.isEmpty();
+        return EVERYTHING.equals(this);
     }
 
     /**

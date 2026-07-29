@@ -2,6 +2,24 @@
 
 All notable changes to Faultora are documented in this file.
 
+## 0.7.1 — 2026-07-29
+
+### Fixed
+
+- A global `--target <url>` rebinds only the targets that speak its protocol.
+  With an OpenAPI and an AsyncAPI description in one run, a single `--target`
+  naming the API used to rebind the broker as well, so event operations were
+  sent at a web server and the failure surfaced as an unintelligible complaint
+  about a bootstrap list. Naming a target explicitly still redirects it
+  whatever it speaks.
+
+### Documentation
+
+- ADR-014 said the evidence budget bounds what a channel can make a *run* hold.
+  It bounds one observation; a polling block holds one window per poll, which
+  is the same accumulation a polled HTTP step has and a number the performance
+  baselines of M6-04 owe a scale for.
+
 ## 0.7.0 — 2026-07-29
 
 The events release. A scenario can now publish a command, observe the events it

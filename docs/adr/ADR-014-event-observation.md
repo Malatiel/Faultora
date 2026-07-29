@@ -45,8 +45,8 @@ mistake this record exists to avoid.
 - **Bounds are three, and each answers a different failure.** The floor bounds
   how far back an observation reaches. A wait, capped by the run's request
   timeout, bounds how long it stays open. A message count and a byte budget for
-  stored payloads bound how much a busy channel can make a run hold. A
-  scenario can tighten any of them and widen none.
+  stored payloads bound what one observation can make a run hold. A scenario can
+  tighten any of them and widen none.
 - **Repeatability comes from selection, not from position.** A step declares
   which messages it is about — by key, by header, or by a payload field,
   usually a correlation value the step itself published — and the assertions
@@ -110,6 +110,11 @@ mistake this record exists to avoid.
   message written just before the run on the same channel can be selected by a
   scenario that does not narrow its window. Naming a correlation value the run
   itself produced removes the possibility.
+- The evidence budget is per observation, not per run. A polling block that
+  observes twenty times can hold twenty windows' worth of payloads, because each
+  poll's evidence belongs to its own node. That is the same accumulation any
+  polled HTTP step has, and it is what the performance baselines of M6-04 have
+  to state a scale for.
 - Selection is exact-match only. A scenario needing a range or a predicate
   observes more broadly and asserts on what it observed.
 - The payload a selector reads is the message as it arrived, not as the

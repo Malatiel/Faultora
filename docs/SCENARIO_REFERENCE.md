@@ -1,6 +1,6 @@
 # Scenario reference
 
-This page documents the scenario format implemented by Faultora 0.7.0. The
+This page documents the scenario format implemented by Faultora 0.7.1. The
 format is versioned independently from the application:
 
 ```yaml
@@ -10,7 +10,7 @@ kind: Scenario
 
 Faultora rejects unsupported versions, missing required fields, duplicate step
 IDs, unknown references, dependency cycles, and execution features that are not
-available in 0.7.0.
+available in 0.7.1.
 
 ## Complete example
 
@@ -74,7 +74,7 @@ cleanup:
 Validate a document before running it:
 
 ```bash
-java -jar faultora-0.7.0.jar validate --scenario scenario.yaml
+java -jar faultora-0.7.1.jar validate --scenario scenario.yaml
 ```
 
 ## Top-level fields
@@ -648,7 +648,7 @@ Every assertion has this common shape:
 | `params` | yes | Parameters documented for the selected assertion type. |
 | `targetStep` | no | Operation evidence to inspect; defaults to the last `execute` step. A grouping step holds no evidence of its own, so name one of its children. |
 | `dependsOn` | no | Additional dependencies that must pass first. |
-| `message` | no | Reserved; 0.7.0 reports the assertion provider's evaluated message. |
+| `message` | no | Reserved; 0.7.1 reports the assertion provider's evaluated message. |
 | `metadata` | no | Arbitrary assertion metadata. |
 
 An assertion that cannot be evaluated is treated as a failed node rather than

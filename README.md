@@ -8,10 +8,10 @@ across HTTP and Kafka, checks technical and business invariants, and produces
 console, JSON, HTML, and JUnit reports. Execution stays inside your
 infrastructure and does not require a hosted control plane or telemetry.
 
-Version 0.7.0 is a runnable technical preview. It targets local
+Version 0.7.1 is a runnable technical preview. It targets local
 development and CI use on Java 21.
 
-## What 0.7.0 includes
+## What 0.7.1 includes
 
 Scenario execution:
 
@@ -65,10 +65,10 @@ It never touches the target system, its infrastructure, or other traffic, so
 no extra privileges are needed. Network faults require a Toxiproxy you already
 operate on the traffic path.
 
-Kafka, distributed workers, Kubernetes orchestration, and the web interface
-are not part of this release. Scenarios that request unsupported execution
-features are rejected during validation or plan compilation rather than being
-silently accepted.
+Database observations, distributed workers, Kubernetes orchestration, and the
+web interface are not part of this release. Scenarios that request unsupported
+execution features are rejected during validation or plan compilation rather
+than being silently accepted.
 
 ## Requirements
 
@@ -80,7 +80,7 @@ silently accepted.
 Download the release JAR and its checksums:
 
 ```bash
-FAULTORA_VERSION=0.7.0
+FAULTORA_VERSION=0.7.1
 RELEASE_URL="https://github.com/Malatiel/Faultora/releases/download/v${FAULTORA_VERSION}"
 
 curl --fail --location --retry 3 \
@@ -108,7 +108,7 @@ Every release also includes a CycloneDX SBOM and the Apache 2.0 license.
 The executable artifact is written to:
 
 ```text
-faultora-cli/target/faultora-0.7.0.jar
+faultora-cli/target/faultora-0.7.1.jar
 ```
 
 The regular CI build can run without repository secrets. Configure the
@@ -121,9 +121,9 @@ missing.
 Check the executable and validate the example scenario:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.7.0.jar --version
+java -jar faultora-cli/target/faultora-0.7.1.jar --version
 
-java -jar faultora-cli/target/faultora-0.7.0.jar \
+java -jar faultora-cli/target/faultora-0.7.1.jar \
   validate \
   --scenario examples/payment-service/scenarios/passing.yaml
 ```
@@ -131,7 +131,7 @@ java -jar faultora-cli/target/faultora-0.7.0.jar \
 Generate a starter scenario from an OpenAPI document:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.7.0.jar \
+java -jar faultora-cli/target/faultora-0.7.1.jar \
   init \
   --from-openapi examples/payment-service/openapi.yaml \
   --output ./generated
@@ -140,7 +140,7 @@ java -jar faultora-cli/target/faultora-0.7.0.jar \
 Run a scenario against an API:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.7.0.jar \
+java -jar faultora-cli/target/faultora-0.7.1.jar \
   test \
   --scenario examples/payment-service/scenarios/passing.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -162,12 +162,19 @@ imported description. `--target` decides where that target actually lives for
 this run:
 
 ```bash
-# every catalog target answers at one URL
+# every catalog target that speaks this URL's protocol answers here
 --target https://staging.example.com
 
 # one catalog target is bound separately, the rest follow the plain --target
 --target https://staging.example.com --target ledger=http://localhost:7777
+
+# a run spanning two protocols binds each of them
+--target https://staging.example.com --target broker=kafka://localhost:9092
 ```
+
+A plain `--target` rebinds only the targets whose protocol its scheme names, so
+an HTTP URL cannot silently redirect a broker. Naming a target explicitly
+redirects it whatever it speaks.
 
 An operation whose target is neither declared in the catalog nor bound to a
 URL fails with `TARGET_NOT_FOUND` instead of being sent somewhere arbitrary.
@@ -185,7 +192,7 @@ race window, then asserts the business invariant that exactly one payment
 exists:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.7.0.jar \
+java -jar faultora-cli/target/faultora-0.7.1.jar \
   test \
   --scenario examples/payment-service/scenarios/fault-concurrent-duplicate.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -294,7 +301,7 @@ An AsyncAPI 3.0 description brings Kafka channels into the same catalog as the
 HTTP operations, and `--openapi` and `--asyncapi` can be given together:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.7.0.jar \
+java -jar faultora-cli/target/faultora-0.7.1.jar \
   test \
   --scenario examples/payment-worker/scenarios/duplicate-delivery.yaml \
   --asyncapi examples/payment-worker/asyncapi.yaml \
@@ -445,7 +452,7 @@ handle is mapped to an environment variable with the `FAULTORA_SECRET_` prefix:
 ```bash
 export FAULTORA_SECRET_PAYMENTS_API='replace-with-a-real-token'
 
-java -jar faultora-cli/target/faultora-0.7.0.jar \
+java -jar faultora-cli/target/faultora-0.7.1.jar \
   test \
   --scenario scenario.yaml \
   --openapi openapi.yaml \

@@ -19,6 +19,7 @@ class TargetResolverTest {
 
     private static final TargetId PAYMENTS = new TargetId("payments");
     private static final TargetId LEDGER = new TargetId("ledger");
+    private static final TargetId BROKER = new TargetId("broker");
 
     @Test
     void usesTheCatalogDefinitionWhenNoRedirectIsConfigured() {
@@ -58,6 +59,40 @@ class TargetResolverTest {
     }
 
     @Test
+    void aGlobalRedirectLeavesTargetsOfAnotherProtocolAlone() {
+        // A run that spans HTTP and a broker gets one --target for the API. If
+        // that rebound the broker too, event operations would be sent at a web
+        // server and the failure would surface as a complaint about a bootstrap
+        // list rather than about target resolution.
+        ConnectorContext context = context(Map.of(
+                TargetResolver.BASE_URL, "http://localhost:9999"));
+
+        assertThat(TargetResolver.resolve(PAYMENTS, mixedCatalog(), context).baseUrl())
+                .isEqualTo("http://localhost:9999");
+        assertThat(TargetResolver.resolve(BROKER, mixedCatalog(), context).baseUrl())
+                .isEqualTo("kafka://broker.example.com:9092");
+    }
+
+    @Test
+    void namingATargetRedirectsItWhateverItSpeaks() {
+        ConnectorContext context = context(Map.of(
+                TargetResolver.BASE_URL, "http://localhost:9999",
+                TargetResolver.BASE_URL_PREFIX + "broker", "kafka://localhost:19092"));
+
+        assertThat(TargetResolver.resolve(BROKER, mixedCatalog(), context).baseUrl())
+                .isEqualTo("kafka://localhost:19092");
+    }
+
+    @Test
+    void aSecuredSchemeIsTheSameProtocolAsAnUnsecuredOne() {
+        ConnectorContext context = context(Map.of(
+                TargetResolver.BASE_URL, "https://staging.example.com"));
+
+        assertThat(TargetResolver.resolve(PAYMENTS, mixedCatalog(), context).baseUrl())
+                .isEqualTo("https://staging.example.com");
+    }
+
+    @Test
     void anUndeclaredTargetResolvesOnlyThroughAnExplicitRedirect() {
         TargetId unknown = new TargetId("warehouse");
 
@@ -78,6 +113,21 @@ class TargetResolverTest {
                         new TargetDefinition(
                                 LEDGER, "Ledger", "https://ledger.example.com",
                                 List.of(new ProtocolId("http")), List.of(), Map.of())),
+                List.of(), Map.of(), Map.of(), List.of());
+    }
+
+    /** A catalog imported from two descriptions: an API and a broker. */
+    private ApiCatalog mixedCatalog() {
+        return new ApiCatalog(
+                new CatalogVersion("v1alpha1-mixed"),
+                List.of(
+                        new TargetDefinition(
+                                PAYMENTS, "Payments", "https://payments.example.com",
+                                List.of(new ProtocolId("http")),
+                                List.of(new AuthSchemeId("bearer")), Map.of()),
+                        new TargetDefinition(
+                                BROKER, "Broker", "kafka://broker.example.com:9092",
+                                List.of(new ProtocolId("kafka")), List.of(), Map.of())),
                 List.of(), Map.of(), Map.of(), List.of());
     }
 

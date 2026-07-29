@@ -158,7 +158,12 @@ public final class PaymentWorker implements AutoCloseable {
         producer.flush();
     }
 
-    /** How many distinct payments this worker has settled. */
+    /**
+     * How many distinct payments this worker has settled.
+     * <p>
+     * The broken variant keeps no such record — settling twice is exactly what
+     * it does — so it reports zero however much work it did.
+     */
     public int settledCount() {
         return settled.size();
     }
