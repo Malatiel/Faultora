@@ -22,6 +22,7 @@ import java.util.Map;
         @JsonSubTypes.Type(value = RunEvent.NodeStarted.class, name = "NODE_STARTED"),
         @JsonSubTypes.Type(value = RunEvent.NodeCompleted.class, name = "NODE_COMPLETED"),
         @JsonSubTypes.Type(value = RunEvent.NodeFailed.class, name = "NODE_FAILED"),
+        @JsonSubTypes.Type(value = RunEvent.NodeSkipped.class, name = "NODE_SKIPPED"),
         @JsonSubTypes.Type(value = RunEvent.OperationRetried.class, name = "OPERATION_RETRIED"),
         @JsonSubTypes.Type(value = RunEvent.ConditionPolled.class, name = "CONDITION_POLLED"),
         @JsonSubTypes.Type(value = RunEvent.InputsGenerated.class, name = "INPUTS_GENERATED"),
@@ -121,6 +122,24 @@ public sealed interface RunEvent {
     ) implements RunEvent {
         public NodeFailed {
             eventType = "NODE_FAILED";
+        }
+    }
+
+    /**
+     * A plan node did not run because something it depends on did not pass.
+     * <p>
+     * Recorded rather than left out: a reader of the report cannot otherwise
+     * tell a step that was skipped from one that was never written.
+     */
+    record NodeSkipped(
+            String eventType,
+            long timestamp,
+            RunId runId,
+            NodeId nodeId,
+            String reason
+    ) implements RunEvent {
+        public NodeSkipped {
+            eventType = "NODE_SKIPPED";
         }
     }
 

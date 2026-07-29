@@ -31,6 +31,26 @@ All notable changes to Faultora are documented in this file.
 
 ### Fixed
 
+- `TargetPolicy.maxDurationMs` bounds the run. It was declared and applied
+  nowhere: the CLI announced a five-minute budget while a scenario naming a
+  longer deadline simply exceeded it. A scenario without a deadline now
+  inherits the policy's, and one asking for longer is refused rather than
+  silently shortened.
+- Numbers with an excluded bound are generated at a value the schema accepts.
+  Only the integer path normalised exclusivity, so a rate declared above 0.5
+  was sent as exactly 0.5 — and the project's own validator rejected it.
+- An exception thrown inside a parallel, repeat, or eventually group fails
+  that group instead of escaping the run loop. It previously took the terminal
+  event and the whole cleanup phase with it.
+- A node whose dependency did not pass is recorded as `SKIPPED`, with the
+  reason, instead of disappearing from the report. JUnit output carries it as
+  a skipped test case, where CI already knows the shape.
+- JUnit timings are formatted independently of the platform locale. On a
+  machine with a comma decimal separator the report was `time="0,026"`, which
+  a CI parser rejects.
+- `Ctrl+C` cancels the run instead of killing it: injected faults are rolled
+  back, cleanup obligations are carried out, and the journal gets its terminal
+  event. A signal that cannot be caught is still outside anyone's reach.
 - A `wait` step declared in `cleanup` ran in the main phase instead of the
   cleanup one, because compilation treated it the same in every section. A
   wait that exists to outlive an injected fault therefore expired the fault

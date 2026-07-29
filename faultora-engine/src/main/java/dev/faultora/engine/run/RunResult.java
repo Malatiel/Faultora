@@ -34,6 +34,8 @@ public record RunResult(
         PASSED,
         FAILED,
         ERROR,
+        /** The node never ran because something it depends on did not pass. */
+        SKIPPED,
         CANCELLED
     }
 

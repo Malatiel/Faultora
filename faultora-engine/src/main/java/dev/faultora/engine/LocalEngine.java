@@ -6,6 +6,7 @@ import dev.faultora.engine.exec.GroupOutcome;
 import dev.faultora.engine.exec.JournalWriter;
 import dev.faultora.engine.exec.NodeContext;
 import dev.faultora.engine.exec.NodeExecutor;
+import dev.faultora.engine.exec.NodeResults;
 import dev.faultora.engine.exec.OperationInvoker;
 import dev.faultora.engine.exec.ParallelGroupExecutor;
 import dev.faultora.engine.exec.RepeatGroupExecutor;
@@ -133,7 +134,14 @@ public class LocalEngine {
                     deadlineExceeded = true;
                     break;
                 }
-                if (!dependenciesSatisfied(node, nodeResults)) {
+                NodeId unmet = unmetDependency(node, nodeResults);
+                if (unmet != null) {
+                    String reason = "depends on " + unmet.value()
+                            + ", which did not pass";
+                    writer.nodeSkipped(node.nodeId(), reason);
+                    nodeResults.put(node.nodeId(), new RunResult.NodeResult(
+                            node.nodeId(), NodeResults.typeOf(node), RunResult.Status.SKIPPED,
+                            -1, 0, List.of(), null));
                     continue;
                 }
 
@@ -165,11 +173,14 @@ public class LocalEngine {
             Map<NodeId, NodeEvidence> evidence
     ) {
         ExpressionContext context = currentContext;
+        final ExpressionContext entryContext = currentContext;
         RunResult.NodeResult result;
 
         switch (node) {
             case PlanNode.ParallelNode parallel -> {
-                GroupOutcome outcome = parallelGroups.execute(parallel, nodeContext, context);
+                GroupOutcome outcome = guarded(
+                        parallel, nodeContext, () ->
+                                parallelGroups.execute(parallel, nodeContext, entryContext));
                 result = outcome.group();
                 nodeResults.putAll(outcome.children());
                 // Children are bound in declaration order once the whole group
@@ -177,14 +188,18 @@ public class LocalEngine {
                 context = bindChildren(parallel.children(), outcome, evidence, context);
             }
             case PlanNode.RepeatNode repeat -> {
-                GroupOutcome outcome = repeatGroups.execute(repeat, nodeContext, context);
+                GroupOutcome outcome = guarded(
+                        repeat, nodeContext, () ->
+                                repeatGroups.execute(repeat, nodeContext, entryContext));
                 result = outcome.group();
                 nodeResults.putAll(outcome.children());
                 // The last completed iteration is what later steps observe.
                 context = bindChildren(repeat.children(), outcome, evidence, context);
             }
             case PlanNode.EventuallyNode eventually -> {
-                GroupOutcome outcome = eventuallyGroups.execute(eventually, nodeContext, context);
+                GroupOutcome outcome = guarded(
+                        eventually, nodeContext, () ->
+                                eventuallyGroups.execute(eventually, nodeContext, entryContext));
                 result = outcome.group();
                 nodeResults.putAll(outcome.children());
                 context = bindChildren(
@@ -198,6 +213,29 @@ public class LocalEngine {
 
         nodeResults.put(node.nodeId(), result);
         return context;
+    }
+
+    /**
+     * Run a group, turning an unexpected failure into a failed group.
+     * <p>
+     * A single node is already guarded by its executor; a group was not, so an
+     * exception from a provider or a malformed parameter escaped the run loop
+     * and took the terminal event and the cleanup phase with it. Whatever goes
+     * wrong inside a group, the run still reports its own outcome.
+     */
+    private GroupOutcome guarded(
+            PlanNode group, NodeContext context, java.util.function.Supplier<GroupOutcome> body) {
+        try {
+            return body.get();
+        } catch (RuntimeException unexpected) {
+            NormalizedError error = new NormalizedError(
+                    NormalizedError.ErrorCategory.INTERNAL, "GROUP_EXECUTION_ERROR",
+                    "Group execution failed: " + unexpected, false, Map.of());
+            context.journal().nodeFailed(group.nodeId(), error, 0);
+            return new GroupOutcome(new RunResult.NodeResult(
+                    group.nodeId(), NodeResults.typeOf(group), RunResult.Status.FAILED,
+                    -1, 0, List.of(), error), Map.of());
+        }
     }
 
     private ExpressionContext bindChildren(
@@ -270,7 +308,8 @@ public class LocalEngine {
                     tally.failedAssertions(), totalDuration);
         } else {
             long failedNodes = nodeResults.values().stream()
-                    .filter(result -> result.status() != RunResult.Status.PASSED)
+                    .filter(result -> result.status() == RunResult.Status.FAILED
+                            || result.status() == RunResult.Status.ERROR)
                     .count();
             String detail = "Run " + status.name().toLowerCase(Locale.ROOT)
                     + ": " + failedNodes + " failed nodes, "
@@ -314,15 +353,16 @@ public class LocalEngine {
                 || (node instanceof PlanNode.WaitNode wait && wait.cleanup());
     }
 
-    private boolean dependenciesSatisfied(
+    /** The first dependency that did not pass, or null when all did. */
+    private NodeId unmetDependency(
             PlanNode node, Map<NodeId, RunResult.NodeResult> results) {
         for (NodeId dependency : node.dependencies()) {
             RunResult.NodeResult result = results.get(dependency);
             if (result == null || result.status() != RunResult.Status.PASSED) {
-                return false;
+                return dependency;
             }
         }
-        return true;
+        return null;
     }
 
     /**

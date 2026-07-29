@@ -37,6 +37,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -53,6 +55,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *                      [--seed &lt;n&gt;]
  */
 public class TestCommand implements Command {
+
+    /** How long an interrupted run is given to roll back and report. */
+    private static final long SHUTDOWN_GRACE_SECONDS = 20;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -131,7 +136,8 @@ public class TestCommand implements Command {
             return switch (result.status()) {
                 case PASSED -> FaultoraCli.EXIT_PASS;
                 case FAILED -> FaultoraCli.EXIT_TEST_FAILURE;
-                case ERROR, CANCELLED -> FaultoraCli.EXIT_RUNNER_FAILURE;
+                // SKIPPED is a node outcome; a run reporting it has a defect.
+                case ERROR, CANCELLED, SKIPPED -> FaultoraCli.EXIT_RUNNER_FAILURE;
             };
 
         } catch (CliException e) {
@@ -178,9 +184,56 @@ public class TestCommand implements Command {
                 System.out.println("Seed: " + options.seed());
                 System.out.println();
 
-                return engine.execute(
-                        compilation.plan(), journal, expressionContext,
-                        connectorContext, new AtomicBoolean(false));
+                return executeCancellably(
+                        engine, compilation, journal, expressionContext, connectorContext);
+            }
+        }
+    }
+
+    /**
+     * Execute the plan, letting an interrupted process end its own run.
+     * <p>
+     * Without this, Ctrl+C kills the JVM mid-run: injected faults are never
+     * rolled back, cleanup obligations are dropped, and the journal has no
+     * terminal event. The handler asks the run to stop and waits for it, so a
+     * cancelled run still rolls back what it injected and reports why it
+     * ended. A signal that cannot be caught remains outside anyone's reach.
+     */
+    private RunResult executeCancellably(
+            LocalEngine engine,
+            PlanCompilationResult compilation,
+            RunJournal journal,
+            ExpressionContext expressionContext,
+            ConnectorContext connectorContext
+    ) {
+        AtomicBoolean cancellation = new AtomicBoolean(false);
+        CountDownLatch finished = new CountDownLatch(1);
+        Thread interruption = new Thread(() -> {
+            System.err.println("Interrupted: cancelling the run and rolling back faults");
+            cancellation.set(true);
+            try {
+                if (!finished.await(SHUTDOWN_GRACE_SECONDS, TimeUnit.SECONDS)) {
+                    System.err.println("Run did not stop within "
+                            + SHUTDOWN_GRACE_SECONDS + "s; faults may remain active");
+                }
+            } catch (InterruptedException stopWaiting) {
+                Thread.currentThread().interrupt();
+            }
+        }, "faultora-interrupt");
+
+        Runtime.getRuntime().addShutdownHook(interruption);
+        try {
+            return engine.execute(
+                    compilation.plan(), journal, expressionContext,
+                    connectorContext, cancellation);
+        } finally {
+            finished.countDown();
+            // The hook has done its job; leaving it registered would pile up
+            // across the runs of a single process.
+            try {
+                Runtime.getRuntime().removeShutdownHook(interruption);
+            } catch (IllegalStateException alreadyShuttingDown) {
+                // Shutdown is in progress and the hook is running: nothing to remove.
             }
         }
     }

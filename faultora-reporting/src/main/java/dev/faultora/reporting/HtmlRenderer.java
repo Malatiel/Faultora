@@ -56,7 +56,8 @@ public class HtmlRenderer implements ReportRenderer {
             output.write("<tr>");
             output.write("<td>" + escapeHtml(node.name()) + "</td>");
             output.write(String.format("<td><span class=\"badge %s\">%s</span></td>",
-                    node.passed() ? "pass" : "fail", node.status()));
+                    node.passed() ? "pass" : (node.skipped() ? "skip" : "fail"),
+                    node.status()));
             output.write("<td>" + (node.statusCode() >= 0 ? node.statusCode() : "—") + "</td>");
             output.write("<td>" + node.durationMs() + "ms</td>");
             output.write("<td>");
@@ -71,6 +72,9 @@ public class HtmlRenderer implements ReportRenderer {
             if (node.generated() != null) {
                 output.write("<span class=\"muted\">generated "
                         + escapeHtml(node.generated()) + "</span> ");
+            }
+            if (node.detail() != null) {
+                output.write(escapeHtml(node.detail()));
             }
             if (node.error() != null) {
                 output.write(escapeHtml(node.error().message()));
@@ -142,6 +146,7 @@ public class HtmlRenderer implements ReportRenderer {
                      font-weight: 600; }
             .badge.pass { background: #d4edda; color: #155724; }
             .badge.fail { background: #f8d7da; color: #721c24; }
+            .badge.skip { background: #e2e3e5; color: #41464b; }
             .metadata table { width: 100%; border-collapse: collapse; margin-bottom: 1rem; }
             .metadata th { text-align: left; padding: 0.4rem; color: #555; width: 180px; }
             .metadata td { padding: 0.4rem; }

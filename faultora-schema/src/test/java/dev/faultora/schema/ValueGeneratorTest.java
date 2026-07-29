@@ -318,12 +318,19 @@ class ValueGeneratorTest {
                    "amount":{"type":"integer","minimum":100,"maximum":200,"example":5},
                    "note":{"type":"string","minLength":3,"example":"ok"}}}
                 """,
-                // Both spellings of an exclusive bound.
+                // Both spellings of an exclusive bound, on both numeric types.
                 """
                 {"type":"object","required":["ratio","score"],
                  "properties":{
                    "ratio":{"type":"integer","minimum":10,"exclusiveMinimum":true,"maximum":20},
                    "score":{"type":"integer","exclusiveMinimum":0,"exclusiveMaximum":5}}}
+                """,
+                """
+                {"type":"object","required":["rate","share"],
+                 "properties":{
+                   "rate":{"type":"number","minimum":0.5,"exclusiveMinimum":true,"maximum":9.0},
+                   "share":{"type":"number","exclusiveMinimum":0.0,"exclusiveMaximum":1.0},
+                   "fee":{"type":"number","minimum":0.001,"maximum":0.004}}}
                 """);
 
         SchemaValidator validator = new SchemaValidator(emptyCatalog);

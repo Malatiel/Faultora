@@ -33,6 +33,9 @@ public class ConsoleRenderer implements ReportRenderer {
         for (RunSummary.Node node : summary.nodes()) {
             output.write(String.format("  [%s] %s (%dms)%s\n",
                     node.status(), node.name(), node.durationMs(), attemptSuffix(node)));
+            if (node.detail() != null) {
+                output.write("         Skipped: " + node.detail() + "\n");
+            }
             if (node.error() != null) {
                 output.write("         Error: " + node.error().message() + "\n");
             }

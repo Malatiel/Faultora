@@ -79,6 +79,7 @@ public class PlanCompiler {
 
         long scenarioTimeoutMs = parseTimeout(
                 scenario.timeout(), "scenario", "", "timeout", diagnostics);
+        scenarioTimeoutMs = boundedByPolicy(scenarioTimeoutMs, targetPolicy, diagnostics);
 
         if (targetPolicy != null) {
             // Retrying nodes count once per allowed attempt, so retries cannot
@@ -684,6 +685,32 @@ public class PlanCompiler {
                     SafetyClassification.READ_ONLY, schema
             ));
         }
+    }
+
+    /**
+     * The run's deadline, bounded by the policy's wall-clock budget.
+     * <p>
+     * A scenario declaring no deadline inherits the operator's; one declaring
+     * a longer deadline is refused rather than quietly shortened. Silently
+     * capping would let a scenario read as if it had an hour while the run
+     * stopped after five minutes, and the author would debug the wrong thing.
+     */
+    private long boundedByPolicy(
+            long scenarioTimeoutMs, TargetPolicy targetPolicy,
+            List<PlanDiagnostic> diagnostics) {
+        if (targetPolicy == null || targetPolicy.maxDurationMs() <= 0) {
+            return scenarioTimeoutMs;
+        }
+        if (scenarioTimeoutMs <= 0) {
+            return targetPolicy.maxDurationMs();
+        }
+        if (scenarioTimeoutMs > targetPolicy.maxDurationMs()) {
+            diagnostics.add(PlanDiagnostic.error("scenario", "",
+                    "Scenario timeout of " + scenarioTimeoutMs
+                            + "ms exceeds the execution policy's budget of "
+                            + targetPolicy.maxDurationMs() + "ms"));
+        }
+        return scenarioTimeoutMs;
     }
 
     /**

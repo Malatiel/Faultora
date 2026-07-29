@@ -1036,6 +1036,41 @@ class PlanCompilerTest {
                 List.of(), List.of(assertion), List.of());
     }
 
+    @Test
+    void compileRefusesAScenarioDeadlineBeyondThePolicyBudget() {
+        ScenarioDocument scenario = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("long", "long", Map.of(), Map.of()),
+                Map.of(), List.of(),
+                List.of(new ScenarioStep("step-1", "operation", "create-payment",
+                        Map.of(), null, List.of(), null, null, Map.of())),
+                List.of(), List.of(), List.of(), "60m");
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        // A scenario cannot widen the operator's bounds, and being told so
+        // beats being silently shortened to five minutes.
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.errors()).extracting(PlanDiagnostic::message)
+                .anyMatch(message -> message.contains("exceeds the execution policy's budget"));
+    }
+
+    @Test
+    void aScenarioWithoutADeadlineInheritsThePolicyBudget() {
+        ScenarioDocument scenario = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("default", "default", Map.of(), Map.of()),
+                Map.of(), List.of(),
+                List.of(new ScenarioStep("step-1", "operation", "create-payment",
+                        Map.of(), null, List.of(), null, null, Map.of())),
+                List.of(), List.of(), List.of());
+
+        PlanCompilationResult result = compile(scenario, policy);
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.plan().scenarioTimeoutMs()).isEqualTo(policy.maxDurationMs());
+    }
+
     private PlanCompilationResult compile(ScenarioDocument scenario, TargetPolicy targetPolicy) {
         return compiler.compile(
                 scenario, catalog, targetPolicy,

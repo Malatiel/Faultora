@@ -397,16 +397,27 @@ class LocalEngineTest {
         LocalEngine engine = new LocalEngine(
                 Map.of("http", new FailingConnector()), Map.of());
 
-        try (RunJournal journal = new RunJournal(
-                tempDir.resolve("failed-dependency.ndjson"), true)) {
-            RunResult result = engine.execute(
+        Path journalPath = tempDir.resolve("failed-dependency.ndjson");
+        RunResult result;
+        try (RunJournal journal = new RunJournal(journalPath, true)) {
+            result = engine.execute(
                     plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
-
-            assertThat(result.status()).isEqualTo(RunResult.Status.FAILED);
-            assertThat(result.nodeResults()).containsKey(new NodeId("first"));
-            assertThat(result.nodeResults()).doesNotContainKey(new NodeId("second"));
-            assertThat(result.error().code()).isEqualTo("RUN_FAILED");
         }
+
+        assertThat(result.status()).isEqualTo(RunResult.Status.FAILED);
+        assertThat(result.nodeResults()).containsKey(new NodeId("first"));
+        assertThat(result.error().code()).isEqualTo("RUN_FAILED");
+
+        // The step that never ran is reported as skipped rather than left out:
+        // a reader cannot otherwise tell it from a step nobody wrote.
+        RunResult.NodeResult skipped = result.nodeResults().get(new NodeId("second"));
+        assertThat(skipped).isNotNull();
+        assertThat(skipped.status()).isEqualTo(RunResult.Status.SKIPPED);
+        assertThat(Files.readString(journalPath))
+                .contains("NODE_SKIPPED")
+                .contains("depends on first");
+        // A skipped node is not a failed one.
+        assertThat(result.error().message()).contains("1 failed nodes");
     }
 
     @Test
@@ -1357,6 +1368,53 @@ class LocalEngineTest {
         assertThat(body.get("currency")).isEqualTo("EUR");
         assertThat(body).doesNotContainKey("amount");
         assertThat(Files.readString(journalPath)).contains("required property 'amount' omitted");
+    }
+
+    @Test
+    void anExceptionInsideAGroupFailsTheGroupRatherThanTheRun() throws Exception {
+        ExecutionPlan plan = ExecutionPlan.builder()
+                .runId(new RunId("run-group-throws"))
+                .scenario(buildScenario())
+                .catalog(catalog)
+                .targetPolicy(policy)
+                .seed(7L)
+                .scenarioDigest("sha256:abc")
+                .catalogDigest("sha256:def")
+                .addNode(new PlanNode.EventuallyNode(
+                        new NodeId("settled"),
+                        new PlanNode.OperationNode(
+                                new NodeId("poll"), new OperationId("get-payment"),
+                                findOp("get-payment"), Map.of(), null, List.of(),
+                                SafetyClassification.READ_ONLY, 0, 0),
+                        List.of(new PlanNode.Condition("status", Map.of(), null)),
+                        200, 50, 2, List.of(), SafetyClassification.READ_ONLY))
+                .addNode(new PlanNode.CleanupNode(
+                        new NodeId("cleanup-step"), new OperationId("cleanup-op"),
+                        Map.of(), List.of(), SafetyClassification.READ_ONLY, 0, 0))
+                .build();
+
+        // The provider throws on the missing "expected" parameter.
+        LocalEngine engine = new LocalEngine(
+                Map.of("http", new SuccessConnector()),
+                Map.of("status", new StatusAssertionProvider()));
+
+        Path journalPath = tempDir.resolve("group-throws.ndjson");
+        RunResult result;
+        try (RunJournal journal = new RunJournal(journalPath, true)) {
+            result = engine.execute(
+                    plan, journal, exprContext, connectorContext, new AtomicBoolean(false));
+        }
+
+        // The group fails; the run still reports its own outcome and still
+        // carries out its cleanup obligations.
+        assertThat(result.status()).isEqualTo(RunResult.Status.FAILED);
+        assertThat(result.nodeResults().get(new NodeId("settled")).status())
+                .isEqualTo(RunResult.Status.FAILED);
+        assertThat(result.nodeResults().get(new NodeId("cleanup-step")).status())
+                .isEqualTo(RunResult.Status.PASSED);
+        assertThat(Files.readString(journalPath))
+                .contains("GROUP_EXECUTION_ERROR")
+                .contains("RUN_FAILED");
     }
 
     private ExecutionPlan planWithGeneratedBody(long seed, GenerationStrategy strategy) {

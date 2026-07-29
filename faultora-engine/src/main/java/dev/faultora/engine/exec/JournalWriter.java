@@ -66,6 +66,11 @@ public final class JournalWriter {
         append(new RunEvent.NodeFailed("NODE_FAILED", now(), runId, nodeId, error, durationMs));
     }
 
+    /** A node that never ran, and what it was waiting for. */
+    public void nodeSkipped(NodeId nodeId, String reason) {
+        append(new RunEvent.NodeSkipped("NODE_SKIPPED", now(), runId, nodeId, reason));
+    }
+
     public void assertionEvaluated(
             NodeId nodeId, String assertionType, String outcome, String message) {
         append(new RunEvent.AssertionEvaluated(

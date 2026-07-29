@@ -74,6 +74,13 @@ public final class RunSummary {
                     nodes.add(node);
                     byId.put(node.name(), node);
                 }
+                case RunEvent.NodeSkipped nodeSkipped -> {
+                    Node node = new Node(
+                            nodeSkipped.nodeId().value(), "SKIPPED", 0, -1, null);
+                    node.detail = nodeSkipped.reason();
+                    nodes.add(node);
+                    byId.put(node.name(), node);
+                }
                 case RunEvent.NodeFailed nodeFailed -> {
                     Node node = new Node(
                             nodeFailed.nodeId().value(), "FAILED",
@@ -191,6 +198,7 @@ public final class RunSummary {
         private final int statusCode;
         private final NormalizedError error;
         private String status;
+        private String detail;
         private Integer retries;
         private Integer polls;
         private String generated;
@@ -226,6 +234,16 @@ public final class RunSummary {
 
         public boolean passed() {
             return "PASSED".equals(status);
+        }
+
+        /** Whether the node never ran because a dependency did not pass. */
+        public boolean skipped() {
+            return "SKIPPED".equals(status);
+        }
+
+        /** Why a node was skipped, or null when it ran. */
+        public String detail() {
+            return detail;
         }
 
         public long durationMs() {

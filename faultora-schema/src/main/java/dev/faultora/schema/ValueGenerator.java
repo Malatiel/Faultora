@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -313,19 +314,47 @@ public final class ValueGenerator {
             throw new SchemaException(path,
                     "maximum " + maximum + " is below minimum " + minimum);
         }
-        double value = spec.strategy() == GenerationStrategy.BOUNDARY
-                ? minimum
-                : minimum + random.nextDouble() * (maximum - minimum);
 
-        // Rounding must never leave the accepted range: a rate declared
-        // between 0.001 and 0.004 rounds to 0.00 at two decimals, which the
-        // schema rejects. The scale follows the width of the range instead.
-        BigDecimal rounded = BigDecimal.valueOf(value)
-                .setScale(scaleFor(minimum, maximum), java.math.RoundingMode.HALF_UP);
-        if (rounded.doubleValue() < minimum || rounded.doubleValue() > maximum) {
-            return BigDecimal.valueOf(minimum);
+        // Rounding must never leave the accepted range, and an excluded bound
+        // is not in it: a rate declared above 0.5 cannot be sent as 0.5, and
+        // one declared between 0.001 and 0.004 cannot be sent as 0.00.
+        int scale = scaleFor(minimum, maximum);
+        BigDecimal step = BigDecimal.ONE.movePointLeft(scale);
+        BigDecimal lower = BigDecimal.valueOf(minimum).setScale(scale, RoundingMode.CEILING);
+        BigDecimal upper = BigDecimal.valueOf(maximum).setScale(scale, RoundingMode.FLOOR);
+        if (isExcluded(schema, "minimum", "exclusiveMinimum")) {
+            lower = lower.add(step);
         }
-        return rounded;
+        if (isExcluded(schema, "maximum", "exclusiveMaximum")) {
+            upper = upper.subtract(step);
+        }
+        if (lower.compareTo(upper) > 0) {
+            throw new SchemaException(path,
+                    "no value with " + scale + " decimal places lies between "
+                            + minimum + " and " + maximum);
+        }
+        if (spec.strategy() == GenerationStrategy.BOUNDARY) {
+            return lower;
+        }
+        BigDecimal span = upper.subtract(lower);
+        BigDecimal value = lower.add(
+                span.multiply(BigDecimal.valueOf(random.nextDouble()))
+                        .setScale(scale, RoundingMode.HALF_UP));
+        return value.compareTo(upper) > 0 ? upper : value;
+    }
+
+    /** Whether a bound is excluded, in either spelling. */
+    private boolean isExcluded(JsonNode schema, String inclusiveField, String exclusiveField) {
+        JsonNode exclusive = schema.get(exclusiveField);
+        if (exclusive == null || exclusive.isNull()) {
+            return false;
+        }
+        if (exclusive.isBoolean()) {
+            return exclusive.asBoolean() && schema.hasNonNull(inclusiveField);
+        }
+        // A numeric exclusive bound is the bound itself when no inclusive one
+        // was declared, and is already reflected in the value read above.
+        return !schema.hasNonNull(inclusiveField);
     }
 
     /**
