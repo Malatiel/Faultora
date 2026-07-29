@@ -6,7 +6,7 @@
 
     <groupId>dev.faultora</groupId>
     <artifactId>faultora-parent</artifactId>
-    <version>0.5.2</version>
+    <version>0.6.0</version>
     <packaging>pom</packaging>
 
     <name>Faultora</name>

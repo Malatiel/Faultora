@@ -2,7 +2,11 @@
 
 All notable changes to Faultora are documented in this file.
 
-## Unreleased — 0.6 debt release, in progress
+## 0.6.0 — 2026-07-29
+
+The debt release: everything the documentation already claimed is now true.
+No capability here is new to the roadmap — each one was owed by a milestone,
+an ADR, or an architecture principle that had been stated and not built.
 
 ### Added
 

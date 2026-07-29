@@ -8,10 +8,10 @@ invariants, and produces console, JSON, HTML, and JUnit reports. Execution stays
 inside your infrastructure and does not require a hosted control plane or
 telemetry.
 
-Version 0.5.2 is a runnable technical preview. It targets local
+Version 0.6.0 is a runnable technical preview. It targets local
 development and CI use on Java 21.
 
-## What 0.5.2 includes
+## What 0.6.0 includes
 
 Scenario execution:
 
@@ -30,8 +30,9 @@ Scenario execution:
 - retry policies with exponential backoff and deterministic seed-derived
   jitter;
 - sequential operation and wait steps with explicit dependencies;
-- per-step, per-group, and scenario-wide deadlines;
-- status, header, JSONPath, and duration assertions;
+- per-step, per-group, and scenario-wide deadlines, bounded by the
+  execution policy's wall-clock budget;
+- status, header, response-schema, JSONPath, and duration assertions;
 - console, JSON, HTML, and JUnit reports.
 
 Fault injection:
@@ -74,7 +75,7 @@ silently accepted.
 Download the release JAR and its checksums:
 
 ```bash
-FAULTORA_VERSION=0.5.2
+FAULTORA_VERSION=0.6.0
 RELEASE_URL="https://github.com/Malatiel/Faultora/releases/download/v${FAULTORA_VERSION}"
 
 curl --fail --location --retry 3 \
@@ -102,7 +103,7 @@ Every release also includes a CycloneDX SBOM and the Apache 2.0 license.
 The executable artifact is written to:
 
 ```text
-faultora-cli/target/faultora-0.5.2.jar
+faultora-cli/target/faultora-0.6.0.jar
 ```
 
 The regular CI build can run without repository secrets. Configure the
@@ -115,9 +116,9 @@ missing.
 Check the executable and validate the example scenario:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.5.2.jar --version
+java -jar faultora-cli/target/faultora-0.6.0.jar --version
 
-java -jar faultora-cli/target/faultora-0.5.2.jar \
+java -jar faultora-cli/target/faultora-0.6.0.jar \
   validate \
   --scenario examples/payment-service/scenarios/passing.yaml
 ```
@@ -125,7 +126,7 @@ java -jar faultora-cli/target/faultora-0.5.2.jar \
 Generate a starter scenario from an OpenAPI document:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.5.2.jar \
+java -jar faultora-cli/target/faultora-0.6.0.jar \
   init \
   --from-openapi examples/payment-service/openapi.yaml \
   --output ./generated
@@ -134,7 +135,7 @@ java -jar faultora-cli/target/faultora-0.5.2.jar \
 Run a scenario against an API:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.5.2.jar \
+java -jar faultora-cli/target/faultora-0.6.0.jar \
   test \
   --scenario examples/payment-service/scenarios/passing.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -179,7 +180,7 @@ race window, then asserts the business invariant that exactly one payment
 exists:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.5.2.jar \
+java -jar faultora-cli/target/faultora-0.6.0.jar \
   test \
   --scenario examples/payment-service/scenarios/fault-concurrent-duplicate.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -319,14 +320,16 @@ reports in one run:
 ```text
 === Faultora Run Report ===
 --- Nodes ---
-  [PASSED] create-payment (31ms)
-  [PASSED] create-status (1ms)
+  [PASSED] create-payment (48ms)
+  [PASSED] create-status (2ms)
          Assertion: PASS — Status 201 matches expected 201
-  [PASSED] response-has-id (1ms)
+  [PASSED] response-has-id (23ms)
          Assertion: PASS — Path 'id' exists: true
+  [PASSED] response-matches-its-contract (1ms)
+         Assertion: PASS — Response matches its declared schema
   [PASSED] list-payments (2ms)
 
-Result: PASSED — 4 nodes, 2 passed assertions, 0 failed assertions (35ms)
+Result: PASSED — 5 nodes, 3 passed assertions, 0 failed assertions (98ms)
 ```
 
 ![Faultora HTML report](docs/assets/html-report.png)
@@ -359,7 +362,7 @@ handle is mapped to an environment variable with the `FAULTORA_SECRET_` prefix:
 ```bash
 export FAULTORA_SECRET_PAYMENTS_API='replace-with-a-real-token'
 
-java -jar faultora-cli/target/faultora-0.5.2.jar \
+java -jar faultora-cli/target/faultora-0.6.0.jar \
   test \
   --scenario scenario.yaml \
   --openapi openapi.yaml \

@@ -196,9 +196,10 @@ The compiled plan is a directed acyclic graph of typed nodes:
 - `WaitNode`
 - `FaultStartNode`
 - `FaultStopNode`
-- `ObservationNode`
 - `AssertionNode`
 - `CleanupNode`
+- `ObservationNode` — planned with the observation connectors of M3; every
+  other kind above exists today
 
 Every node declares a stable node ID, its dependencies, and a safety
 classification. The rest belongs to the node kinds that can honour it:

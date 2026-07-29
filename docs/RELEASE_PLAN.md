@@ -24,13 +24,13 @@ Three consequences worth stating plainly:
   runners to execute exactly that. A team that invests in a scenario suite
   before 1.0 keeps it afterwards.
 
-## 2. Where 0.5.2 stands
+## 2. Where 0.6.0 stands
 
 | Milestone | State |
 |---|---|
 | M0 — Foundation | complete |
-| M1 — HTTP vertical slice | complete except response-schema assertions |
-| M2 — Reliability engine | complete except two reference scenarios |
+| M1 — HTTP vertical slice | complete |
+| M2 — Reliability engine | complete |
 | M3 — Event-driven and cross-component | not started |
 | M4 — Private-network runner | not started |
 | M5 — Distributed execution | not started |
@@ -38,8 +38,9 @@ Three consequences worth stating plainly:
 
 Shipped and working: OpenAPI import, HTTP connector with SSRF and evidence
 policy, scenario language with sequential, parallel, repeat, and eventually
-blocks, retries, deadlines, in-process and Toxiproxy faults, request generation
-from schemas, four report formats, and a reproducible run journal.
+blocks, retries, deadlines bounded by the execution policy, in-process and
+Toxiproxy faults, request generation from schemas, assertions including the
+response schema, four report formats, and a reproducible run journal.
 
 ## 3. Releases
 
