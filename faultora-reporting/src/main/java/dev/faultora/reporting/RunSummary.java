@@ -53,6 +53,7 @@ public final class RunSummary {
         Map<String, Integer> retries = new HashMap<>();
         Map<String, Integer> polls = new HashMap<>();
         Map<String, String> generated = new HashMap<>();
+        Map<String, String> messaging = new HashMap<>();
 
         for (RunEvent event : events) {
             switch (event) {
@@ -65,6 +66,12 @@ public final class RunSummary {
                         polls.merge(polled.nodeId().value(), 1, Integer::sum);
                 case RunEvent.InputsGenerated inputs -> generated.merge(
                         inputs.nodeId().value(), describe(inputs),
+                        (existing, added) -> existing + ", " + added);
+                case RunEvent.MessagePublished published -> messaging.merge(
+                        published.nodeId().value(), describe(published),
+                        (existing, added) -> existing + ", " + added);
+                case RunEvent.MessagesObserved observed -> messaging.merge(
+                        observed.nodeId().value(), describe(observed),
                         (existing, added) -> existing + ", " + added);
                 case RunEvent.NodeCompleted nodeCompleted -> {
                     Node node = new Node(
@@ -111,6 +118,7 @@ public final class RunSummary {
             node.retries = retries.get(node.name());
             node.polls = polls.get(node.name());
             node.generated = generated.get(node.name());
+            node.messaging = messaging.get(node.name());
         }
 
         return new RunSummary(
@@ -121,6 +129,23 @@ public final class RunSummary {
     private static String describe(RunEvent.InputsGenerated inputs) {
         String label = inputs.field() + " (" + inputs.strategy() + ")";
         return inputs.violation() == null ? label : label + ": " + inputs.violation();
+    }
+
+    /** How a published message is described in a report. */
+    private static String describe(RunEvent.MessagePublished published) {
+        return "published to " + published.channel()
+                + " at " + published.partition() + ":" + published.offset();
+    }
+
+    /**
+     * How an observation is described in a report. Both counts are shown: a
+     * window that contained far more than it matched is the sign of a busy
+     * channel, and one that matched everything it saw may be missing a
+     * selector.
+     */
+    private static String describe(RunEvent.MessagesObserved observed) {
+        return "observed " + observed.matched() + " of " + observed.observed()
+                + " on " + observed.channel();
     }
 
     public boolean passed() {
@@ -202,6 +227,7 @@ public final class RunSummary {
         private Integer retries;
         private Integer polls;
         private String generated;
+        private String messaging;
 
         private Node(String name, String status, long durationMs,
                      int statusCode, NormalizedError error) {
@@ -280,6 +306,11 @@ public final class RunSummary {
          */
         public String generated() {
             return generated;
+        }
+
+        /** What this node did on a channel, or null when it touched none. */
+        public String messaging() {
+            return messaging;
         }
 
         /** Messages of the assertions that did not pass. */

@@ -299,6 +299,36 @@ hosting organization.
 - Support organization-provided trust stores and private certificate
   authorities without disabling certificate validation.
 
+### 9.1 What the destination policy decides today
+
+The HTTP connector's destination policy is the enforcement point for SEC-02 in
+local mode. Three of its rules are easy to misread, so they are stated here
+rather than left to be inferred from the code.
+
+**An allowlist replaces private-range classification; it does not add to it.**
+When a policy names allowed hosts, a host on that list is resolved and
+connected to without being classified, and every host off it is refused. This
+is deliberate: an operator who allowlists `payments.internal` means that host,
+and reserved-range refusal would make the allowlist unusable in exactly the
+private networks Faultora is built to run in. The rule holds only because the
+list itself is operator-supplied and never scenario-supplied. Today the CLI
+exposes no flag that populates it, so every local run takes the classification
+path or `--allow-private`, which drops classification wholesale and is meant
+for a target you control.
+
+**Refusal is by resolved address, and the resolved address is what gets
+connected to.** A host is refused when any address it resolves to is private,
+loopback, link-local, or otherwise reserved. The addresses that passed
+classification are then pinned for the connection, so a name that resolves
+again — to something else — cannot be reached on the second answer. Redirects
+are re-checked against the same policy, and a change of origin strips
+credentials.
+
+**Classification cannot be assumed uniform across protocols.** It is a property
+of each connector, not of the engine, because each client resolves its own
+destinations. Where a connector cannot pin what it resolved, that gap is stated
+with the connector rather than papered over here.
+
 ## 10. Data protection
 
 ### 10.1 In transit

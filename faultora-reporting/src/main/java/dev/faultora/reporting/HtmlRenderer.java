@@ -69,6 +69,10 @@ public class HtmlRenderer implements ReportRenderer {
                 output.write("<span class=\"muted\">" + node.polls() + " poll"
                         + (node.polls() == 1 ? "" : "s") + "</span> ");
             }
+            if (node.messaging() != null) {
+                output.write("<span class=\"muted\">"
+                        + escapeHtml(node.messaging()) + "</span> ");
+            }
             if (node.generated() != null) {
                 output.write("<span class=\"muted\">generated "
                         + escapeHtml(node.generated()) + "</span> ");

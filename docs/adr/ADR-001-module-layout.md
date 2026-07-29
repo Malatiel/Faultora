@@ -37,6 +37,26 @@ interfaces.
 - **Single module**: Violates the architecture's dependency direction rules.
   Separate modules make the dependency graph explicit and enforceable.
 
+## Amendment (0.7.0)
+
+The rule that a capability used by more than one consumer gets its own module
+was applied three times when events arrived, each time because a second
+consumer appeared rather than because a module was wanted:
+
+- **`faultora-net`** holds the destination policy. A bootstrap server is as
+  reachable a destination as a base URL, and a second copy of the private-range
+  rule would be a second thing to keep correct.
+- **`faultora-import-common`** holds document reading and reference resolution.
+  OpenAPI and AsyncAPI are different vocabularies over the same substrate.
+- **`faultora-connector-kafka`** and **`faultora-import-asyncapi`** are the
+  event protocol itself, kept out of the CLI's other paths: a run whose catalog
+  has no Kafka target never constructs a broker client.
+
+Two capabilities were placed in `faultora-spi` rather than in modules of their
+own, because they are part of what an extension author implements against
+rather than something implemented beside them: applying an evidence policy to
+captured content, and the protocol-neutral shape of an observed message.
+
 ## Consequences
 
 - Each module has a clear responsibility and explicit dependencies.

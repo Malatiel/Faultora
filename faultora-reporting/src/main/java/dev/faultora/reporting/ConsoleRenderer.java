@@ -86,6 +86,9 @@ public class ConsoleRenderer implements ReportRenderer {
         if (node.polls() != null) {
             notes.add(node.polls() + " poll" + (node.polls() == 1 ? "" : "s"));
         }
+        if (node.messaging() != null) {
+            notes.add(node.messaging());
+        }
         if (node.generated() != null) {
             notes.add("generated " + node.generated());
         }

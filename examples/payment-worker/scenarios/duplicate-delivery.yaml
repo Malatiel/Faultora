@@ -1,0 +1,108 @@
+apiVersion: faultora.dev/v1alpha1
+kind: Scenario
+
+metadata:
+  name: duplicate-delivery-one-effect
+  description: >-
+    Kafka delivers at least once, so a command can arrive twice — because a
+    producer retried, because a consumer group rebalanced, or because a test
+    sent it twice on purpose. This scenario does the last of those and proves
+    that the payment is still settled exactly once.
+
+    The payment id is derived from the run seed, so the same seed replays the
+    same exchange and a fresh seed cannot collide with an earlier run's events.
+  labels:
+    team: payments
+    suite: reliability
+
+timeout: 2m
+
+execute:
+  - id: send-command
+    type: operation
+    operationId: settlePayment
+    inputs:
+      key: "pay-{{run.seed}}"
+      headers:
+        correlation-id: "pay-{{run.seed}}"
+      body:
+        paymentId: "pay-{{run.seed}}"
+        amount: 2500
+        currency: EUR
+
+  # The same command again. Nothing about it is different: this is what a
+  # redelivery looks like from the consumer's side.
+  - id: send-command-again
+    type: operation
+    operationId: settlePayment
+    dependsOn: [send-command]
+    inputs:
+      key: "pay-{{run.seed}}"
+      headers:
+        correlation-id: "pay-{{run.seed}}"
+      body:
+        paymentId: "pay-{{run.seed}}"
+        amount: 2500
+        currency: EUR
+
+  # Wait for the workflow to reach the channel at all. This only establishes
+  # that something happened; how much happened is asserted afterwards.
+  - id: settlement-appears
+    type: eventually
+    timeout: 30s
+    interval: 500ms
+    dependsOn: [send-command-again]
+    steps:
+      - id: poll-events
+        type: operation
+        operationId: paymentSettled
+        inputs:
+          match:
+            payload:
+              paymentId: "pay-{{run.seed}}"
+          waitMs: 1000
+          maxMessages: 5
+    until:
+      - assertionType: event-count
+        params:
+          min: 1
+        message: the settlement event eventually appears
+
+  # A second observation reads the same window again from the run's floor, so
+  # a duplicate that arrived late is still counted. Asserting on the poll that
+  # first saw one event would pass before a second could arrive.
+  - id: read-settlements
+    type: operation
+    operationId: paymentSettled
+    dependsOn: [settlement-appears]
+    inputs:
+      match:
+        payload:
+          paymentId: "pay-{{run.seed}}"
+      waitMs: 2000
+      maxMessages: 10
+
+assertions:
+  - id: one-effect-per-command
+    assertionType: event-count
+    targetStep: read-settlements
+    params:
+      equals: 1
+    message: A command delivered twice settles the payment exactly once
+
+  - id: no-payment-settled-twice
+    assertionType: event-unique
+    targetStep: read-settlements
+    params:
+      by: payload:paymentId
+    message: No two events report the same payment
+
+  # The observation above selected on the business identifier in the payload.
+  # This checks that the transport header agrees with it, which is what makes
+  # the event traceable back to the command that caused it.
+  - id: correlation-survives-the-hop
+    assertionType: event-correlation
+    targetStep: read-settlements
+    params:
+      by: header:correlation-id
+    message: Every settlement event carries the correlation of its command

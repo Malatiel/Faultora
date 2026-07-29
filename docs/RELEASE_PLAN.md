@@ -24,23 +24,24 @@ Three consequences worth stating plainly:
   runners to execute exactly that. A team that invests in a scenario suite
   before 1.0 keeps it afterwards.
 
-## 2. Where 0.6.0 stands
+## 2. Where 0.7.0 stands
 
 | Milestone | State |
 |---|---|
 | M0 — Foundation | complete |
 | M1 — HTTP vertical slice | complete |
 | M2 — Reliability engine | complete |
-| M3 — Event-driven and cross-component | not started |
+| M3 — Event-driven and cross-component | M3-01, M3-02 and the event half of M3-04 complete |
 | M4 — Private-network runner | not started |
 | M5 — Distributed execution | not started |
 | M6 — 1.0 hardening | not started |
 
-Shipped and working: OpenAPI import, HTTP connector with SSRF and evidence
-policy, scenario language with sequential, parallel, repeat, and eventually
-blocks, retries, deadlines bounded by the execution policy, in-process and
-Toxiproxy faults, request generation from schemas, assertions including the
-response schema, four report formats, and a reproducible run journal.
+Shipped and working: OpenAPI and AsyncAPI import into one catalog, HTTP and
+Kafka connectors under one destination policy, scenario language with
+sequential, parallel, repeat, and eventually blocks, retries, deadlines bounded
+by the execution policy, in-process and Toxiproxy faults, request generation
+from schemas, assertions including the response schema and four event
+assertions, four report formats, and a reproducible run journal.
 
 ## 3. Releases
 
@@ -109,24 +110,56 @@ test that fails when it is violated**.
   continuity, ordered and unordered sequences (M3-04, event half).
 - Disposable Kafka in the test suite; the default build stays offline.
 
-Carried over from the 0.5 review, none of it blocking a stated guarantee:
+Carried over from the 0.5 review, all of it done:
 
 - scenario-supplied strings that reach a management API are escaped and made
-  unique. A Toxiproxy proxy name goes into a URL path unencoded, and toxic
-  names come from a per-JVM counter, so a leaked name collides with the next
-  run. The general question — what a scenario may put into a control plane —
-  is one the controller inherits in 2.0;
-- `FaultSession.start` registers a fault before scheduling its watchdog; a
-  rejected schedule during a concurrent close leaves it injected. Unlikely,
-  and precisely the guarantee the class exists for;
-- the security document states that the destination allowlist skips
-  private-range classification, which is deliberate and unreachable from the
-  CLI today, and the scenario reference warns that retrying a non-idempotent
-  operation can duplicate its effect — the hazard this tool exists to find,
-  and worth naming where scenarios are written.
+  unique. A Toxiproxy proxy name is percent-encoded into its path segment, so a
+  name containing a separator addresses the proxy that bears it and never a
+  different admin resource; toxic names carry a per-run token, so a toxic
+  leaked by an earlier run cannot collide with this one's. The general question
+  — what a scenario may put into a control plane — is one the controller
+  inherits in 2.0;
+- `FaultSession` marks itself closed before its end-of-run sweep, and a fault
+  injected in that window is rolled back by whichever of the two sees the
+  other. Unlikely, and precisely the guarantee the class exists for;
+- the security document now states what the destination policy actually
+  decides, including that an allowlist replaces private-range classification
+  rather than adding to it, and that classification is per connector — Kafka
+  refuses the same addresses but cannot pin what it resolved, because its
+  client resolves for itself. The scenario reference names the retry hazard
+  where scenarios are written.
 
 Gate: a scenario publishes a command, observes the resulting event, and proves
-that duplicate delivery produces one business effect.
+that duplicate delivery produces one business effect. **Met**, through the
+packaged CLI against a disposable Kafka, and the same scenario fails against a
+consumer that is deliberately not idempotent — a reliability test that has
+never failed proves nothing.
+
+What 0.7 turned up that the plan did not anticipate:
+
+- **The first observation window design was wrong, and only a real broker said
+  so.** An offset floor taken when the run first touched a channel sits above
+  the event, because the application under test writes it before the run first
+  reads. Every unit test with in-memory clients passed. The floor is now a
+  time — the run's start — resolved through broker timestamps. ADR-014 records
+  the rejected design rather than hiding it, because the next protocol will
+  face the same question.
+- **Assertion parameters are literal, not templates.** Step inputs resolve
+  `{{...}}`; assertion `params` do not. A scenario selects its messages in the
+  step and asserts on what was selected. Whether to make them templates is a
+  semantics decision, and 1.0 is where semantics nobody has decided get decided
+  — added to that list, along with the fact that dotted paths cannot index into
+  a list, which is why the first observed message is bound separately.
+- **The executable artifact is now 25 MB.** Kafka's client brings compression
+  codecs, and zstd ships native binaries for every platform it supports.
+  Dropping them would make a compressed topic unreadable, which is not a trade
+  worth making silently. It is a real number for M6-03's offline bundle and
+  multi-architecture images, and it belongs in the size baseline rather than in
+  a surprise.
+- **The evidence policy had never been applied outside an HTTP response.** A
+  connector whose evidence is a set of messages has to apply it itself, and a
+  second implementation of one policy is how policies drift. It moved into the
+  SPI, and the engine's own evidence now goes through the same code.
 
 ### 0.8 — Cross-component invariants
 
@@ -178,8 +211,11 @@ named refusal, never undefined behaviour.
   a lone `{{expr}}` resolving to null while the same expression interpolated
   yields an empty string; any parenthesis routing an expression to JMESPath; an
   assertion named `jsonpath` that evaluates JMESPath and documents a `matches`
-  check it does not implement; `equals` distinguishing 5 from 5.0. Each is
-  small, and each becomes permanent on the day `v1` is declared.
+  check it does not implement; `equals` distinguishing 5 from 5.0; assertion
+  `params` being literal while step `inputs` are templates; a dotted path being
+  unable to index a list, which is why the first observed message is bound
+  beside the list rather than reached into. Each is small, and each becomes
+  permanent on the day `v1` is declared.
 - Out-of-process extension protocol, manifests, capability validation, SDK,
   reference extension, process isolation and resource limits (M6-02).
 - Supply chain: multi-architecture images, signed artifacts, SBOM, SLSA

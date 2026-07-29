@@ -19,6 +19,9 @@ public class PlanCompiler {
     /** Assertion type that checks a response against its declared schema. */
     private static final String SCHEMA_ASSERTION = "schema";
 
+    /** Input by which a step says how long it watches a channel. */
+    private static final String OBSERVATION_WAIT = "waitMs";
+
     /**
      * Compile a scenario against a catalog.
      *
@@ -530,6 +533,10 @@ public class PlanCompiler {
 
         Map<String, Object> inputExpressions = step.inputs() != null ?
                 new LinkedHashMap<>(step.inputs()) : Map.of();
+        if (!observationFitsTheBudget(
+                inputExpressions, targetPolicy, phase, stepId, diagnostics)) {
+            return null;
+        }
 
         return new PlanNode.OperationNode(
                 new NodeId(stepId), new OperationId(opId), operation,
@@ -695,6 +702,42 @@ public class PlanCompiler {
      * capping would let a scenario read as if it had an hour while the run
      * stopped after five minutes, and the author would debug the wrong thing.
      */
+    /**
+     * Refuse a step that asks to watch a channel for longer than the whole run
+     * is allowed to last.
+     * <p>
+     * A connector caps its own waiting at the run's request timeout, so such a
+     * step cannot actually overrun — but it would quietly wait for a fraction
+     * of what its author wrote, and a scenario whose stated wait is fiction is
+     * worse than one that fails to compile. Only a literal is checked: a wait
+     * computed from an expression is not known until the step runs, and the
+     * connector's cap is what holds there.
+     *
+     * @return false when the step must not be compiled
+     */
+    private boolean observationFitsTheBudget(
+            Map<String, Object> inputs,
+            TargetPolicy targetPolicy,
+            String phase,
+            String stepId,
+            List<PlanDiagnostic> diagnostics
+    ) {
+        if (targetPolicy == null || targetPolicy.maxDurationMs() <= 0) {
+            return true;
+        }
+        if (!(inputs.get(OBSERVATION_WAIT) instanceof Number declared)) {
+            return true;
+        }
+        if (declared.longValue() <= targetPolicy.maxDurationMs()) {
+            return true;
+        }
+        diagnostics.add(PlanDiagnostic.error(phase, stepId,
+                "waitMs of " + declared.longValue()
+                        + "ms exceeds the execution policy's budget of "
+                        + targetPolicy.maxDurationMs() + "ms for the whole run"));
+        return false;
+    }
+
     private long boundedByPolicy(
             long scenarioTimeoutMs, TargetPolicy targetPolicy,
             List<PlanDiagnostic> diagnostics) {

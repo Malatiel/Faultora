@@ -7,6 +7,7 @@ import dev.faultora.model.identifier.NodeId;
 import dev.faultora.model.identifier.OperationId;
 import dev.faultora.model.identifier.RunId;
 import dev.faultora.model.security.ContentDigest;
+import dev.faultora.spi.evidence.MessageEvidence;
 import dev.faultora.spi.result.ActiveFault;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -118,6 +119,21 @@ public final class JournalWriter {
         append(new RunEvent.EvidenceCaptured(
                 "EVIDENCE_CAPTURED", now(), runId, nodeId, "http-response",
                 ContentDigest.sha256Uri(body), body.length));
+    }
+
+    /** Where a published message landed on the broker. */
+    public void messagePublished(NodeId nodeId, MessageEvidence message) {
+        append(new RunEvent.MessagePublished(
+                "MESSAGE_PUBLISHED", now(), runId, nodeId, message.topic(),
+                message.partition(), message.offset(), message.key(), message.digest()));
+    }
+
+    /** What an observation window contained, and how much of it the step claimed. */
+    public void messagesObserved(
+            NodeId nodeId, String channel, long observed, int matched, long waitedMs) {
+        append(new RunEvent.MessagesObserved(
+                "MESSAGES_OBSERVED", now(), runId, nodeId,
+                channel, observed, matched, waitedMs));
     }
 
     public void cleanupStarted(int pendingObligations) {

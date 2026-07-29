@@ -3,6 +3,7 @@ package dev.faultora.cli;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.faultora.connector.http.DestinationPolicy;
 import dev.faultora.connector.http.HttpConnector;
+import dev.faultora.connector.kafka.KafkaConnector;
 import dev.faultora.engine.LocalEngine;
 import dev.faultora.engine.journal.RunJournal;
 import dev.faultora.engine.plan.PlanCompilationResult;
@@ -17,6 +18,7 @@ import dev.faultora.model.identifier.RunId;
 import dev.faultora.model.security.ContentDigest;
 import dev.faultora.model.security.ExtensionPolicy;
 import dev.faultora.model.security.TargetPolicy;
+import dev.faultora.net.HostPolicy;
 import dev.faultora.spec.expression.ExpressionContext;
 import dev.faultora.spec.model.InputDeclaration;
 import dev.faultora.spec.model.ScenarioDocument;
@@ -172,11 +174,17 @@ public class TestCommand implements Command {
 
         try (HttpConnector httpConnector = options.allowPrivate()
                 ? new HttpConnector(DestinationPolicy.permissive())
-                : new HttpConnector()) {
+                : new HttpConnector();
+             KafkaConnector kafkaConnector = kafkaConnectorFor(compilation, options)) {
             Connector faultAwareConnector =
                     new FaultInjectingConnector(httpConnector, localFaults);
+            Map<String, Connector> connectors = new LinkedHashMap<>();
+            connectors.put("http", faultAwareConnector);
+            if (kafkaConnector != null) {
+                connectors.put(KafkaConnector.PROTOCOL, kafkaConnector);
+            }
             LocalEngine engine = new LocalEngine(
-                    Map.of("http", faultAwareConnector), assertionProviders, faultProviders);
+                    connectors, assertionProviders, faultProviders);
 
             try (RunJournal journal = new RunJournal(journalPath, true)) {
                 System.out.println("Running scenario: " + scenario.metadata().name());
@@ -188,6 +196,26 @@ public class TestCommand implements Command {
                         engine, compilation, journal, expressionContext, connectorContext);
             }
         }
+    }
+
+    /**
+     * A Kafka connector when the run needs one, and null when it does not.
+     * <p>
+     * Opening a broker client for an HTTP-only run would make every such run
+     * pay for a connection it never uses — and fail when there is no broker to
+     * connect to. The catalog already says whether any target speaks Kafka,
+     * which is the same question.
+     */
+    private KafkaConnector kafkaConnectorFor(
+            PlanCompilationResult compilation, TestOptions options) {
+        boolean needed = compilation.plan().catalog().targets().stream()
+                .flatMap(target -> target.protocols().stream())
+                .anyMatch(protocol -> KafkaConnector.PROTOCOL.equals(protocol.value()));
+        if (!needed) {
+            return null;
+        }
+        return new KafkaConnector(options.allowPrivate()
+                ? HostPolicy.permissive() : HostPolicy.defaultPolicy());
     }
 
     /**
@@ -315,6 +343,7 @@ public class TestCommand implements Command {
         System.out.println("Options:");
         System.out.println("  -s, --scenario <path>      Scenario YAML file (required)");
         System.out.println("  -o, --openapi <path>       OpenAPI document for catalog");
+        System.out.println("  -a, --asyncapi <path>      AsyncAPI 3.0 document for catalog");
         System.out.println("  -t, --target <url>         Base URL for every catalog target");
         System.out.println("                             (default: " + TestOptions.DEFAULT_TARGET_URL + ")");
         System.out.println("  -t, --target <id>=<url>    Base URL for one catalog target (repeatable)");

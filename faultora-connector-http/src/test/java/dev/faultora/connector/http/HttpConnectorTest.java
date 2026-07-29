@@ -3,6 +3,7 @@ package dev.faultora.connector.http;
 import dev.faultora.model.catalog.*;
 import dev.faultora.model.identifier.*;
 import dev.faultora.model.security.EvidencePolicy;
+import dev.faultora.net.DestinationPolicyViolation;
 import dev.faultora.spi.context.ConnectorContext;
 import dev.faultora.spi.result.OperationResult;
 import org.junit.jupiter.api.AfterEach;

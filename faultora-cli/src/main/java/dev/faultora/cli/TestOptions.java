@@ -16,8 +16,9 @@ import java.util.Map;
  * validated value object, and every default is visible in one place.
  *
  * @param scenarioPath  scenario document to run
- * @param openApiPath   OpenAPI document to import, or null to derive a catalog
- *                      from the scenario
+ * @param openApiPath   OpenAPI document to import, or null
+ * @param asyncApiPath  AsyncAPI document to import, or null; with neither
+ *                      document a catalog is derived from the scenario
  * @param targetUrl     base URL every catalog target is bound to
  * @param targetUrls    per-target base URLs, keyed by catalog target ID
  * @param formats       report formats to render
@@ -34,6 +35,7 @@ import java.util.Map;
 record TestOptions(
         Path scenarioPath,
         Path openApiPath,
+        Path asyncApiPath,
         String targetUrl,
         Map<String, String> targetUrls,
         List<String> formats,
@@ -57,6 +59,7 @@ record TestOptions(
     static TestOptions parse(List<String> args) {
         Path scenarioPath = null;
         Path openApiPath = null;
+        Path asyncApiPath = null;
         String targetUrl = DEFAULT_TARGET_URL;
         Map<String, String> targetUrls = new LinkedHashMap<>();
         List<String> formats = List.of("console");
@@ -75,6 +78,7 @@ record TestOptions(
             switch (arg) {
                 case "--scenario", "-s" -> scenarioPath = Path.of(requireNext(it, "--scenario"));
                 case "--openapi", "-o" -> openApiPath = Path.of(requireNext(it, "--openapi"));
+                case "--asyncapi", "-a" -> asyncApiPath = Path.of(requireNext(it, "--asyncapi"));
                 case "--target", "-t" -> {
                     String value = requireNext(it, "--target");
                     String targetId = targetIdOf(value);
@@ -121,7 +125,7 @@ record TestOptions(
         }
 
         return new TestOptions(
-                scenarioPath, openApiPath, targetUrl, Map.copyOf(targetUrls), formats,
+                scenarioPath, openApiPath, asyncApiPath, targetUrl, Map.copyOf(targetUrls), formats,
                 outputDir, seed, allowPrivate, allowDestructive, authSecretId, toxiproxyUrl,
                 Map.copyOf(inputs), List.copyOf(allowedExtensions), false);
     }
@@ -143,7 +147,7 @@ record TestOptions(
 
     private static TestOptions help() {
         return new TestOptions(
-                null, null, DEFAULT_TARGET_URL, Map.of(), List.of(), Path.of("."),
+                null, null, null, DEFAULT_TARGET_URL, Map.of(), List.of(), Path.of("."),
                 0, false, false, null, null, Map.of(), List.of(), true);
     }
 

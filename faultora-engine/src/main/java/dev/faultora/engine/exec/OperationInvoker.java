@@ -117,6 +117,12 @@ public final class OperationInvoker {
         evidence.body(result.body(), contentType);
         evidence.durationMs(result.durationMs());
         evidence.error(result.error());
+        // Whatever the protocol contributed beyond a response: broker offsets,
+        // observed messages, anything a later protocol adds. The engine does
+        // not interpret it; assertions and later steps do.
+        if (result.protocolEvidence() != null) {
+            result.protocolEvidence().forEach(evidence::protocolEvidence);
+        }
     }
 
     /**

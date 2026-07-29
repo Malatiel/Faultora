@@ -26,6 +26,8 @@ import java.util.Map;
         @JsonSubTypes.Type(value = RunEvent.OperationRetried.class, name = "OPERATION_RETRIED"),
         @JsonSubTypes.Type(value = RunEvent.ConditionPolled.class, name = "CONDITION_POLLED"),
         @JsonSubTypes.Type(value = RunEvent.InputsGenerated.class, name = "INPUTS_GENERATED"),
+        @JsonSubTypes.Type(value = RunEvent.MessagePublished.class, name = "MESSAGE_PUBLISHED"),
+        @JsonSubTypes.Type(value = RunEvent.MessagesObserved.class, name = "MESSAGES_OBSERVED"),
         @JsonSubTypes.Type(value = RunEvent.FaultInjected.class, name = "FAULT_INJECTED"),
         @JsonSubTypes.Type(value = RunEvent.FaultRolledBack.class, name = "FAULT_ROLLED_BACK"),
         @JsonSubTypes.Type(value = RunEvent.AssertionEvaluated.class, name = "ASSERTION_EVALUATED"),
@@ -188,6 +190,63 @@ public sealed interface RunEvent {
     ) implements RunEvent {
         public InputsGenerated {
             eventType = "INPUTS_GENERATED";
+        }
+    }
+
+    /**
+     * A message was published to a channel, and acknowledged.
+     * <p>
+     * The coordinates are what makes a run investigable afterwards: they say
+     * exactly which record on the broker this step wrote, without the journal
+     * holding the payload the evidence policy governs.
+     *
+     * @param channel   topic or channel written to
+     * @param partition partition the broker chose, -1 when unknown
+     * @param offset    position the record was written at, -1 when unknown
+     * @param key       message key, null when it had none
+     * @param digest    digest of the payload that was sent
+     */
+    record MessagePublished(
+            String eventType,
+            long timestamp,
+            RunId runId,
+            NodeId nodeId,
+            String channel,
+            int partition,
+            long offset,
+            String key,
+            String digest
+    ) implements RunEvent {
+        public MessagePublished {
+            eventType = "MESSAGE_PUBLISHED";
+        }
+    }
+
+    /**
+     * An observation window closed, and this is what it saw.
+     * <p>
+     * {@code observed} counts everything the window contained and
+     * {@code matched} counts what the step's selector picked out of it. The two
+     * differing is the normal case on a shared channel, and their being equal
+     * on a busy channel is the sign of a scenario that forgot to select.
+     *
+     * @param channel  topic or channel read from
+     * @param observed messages the window contained
+     * @param matched  messages the step's selector accepted
+     * @param waitedMs how long the window was open for
+     */
+    record MessagesObserved(
+            String eventType,
+            long timestamp,
+            RunId runId,
+            NodeId nodeId,
+            String channel,
+            long observed,
+            int matched,
+            long waitedMs
+    ) implements RunEvent {
+        public MessagesObserved {
+            eventType = "MESSAGES_OBSERVED";
         }
     }
 

@@ -3,3 +3,7 @@ dev.faultora.assertions.core.HeaderAssertionProvider
 dev.faultora.assertions.core.JsonPathAssertionProvider
 dev.faultora.assertions.core.DurationAssertionProvider
 dev.faultora.assertions.core.SchemaAssertionProvider
+dev.faultora.assertions.core.EventCountAssertionProvider
+dev.faultora.assertions.core.EventUniqueAssertionProvider
+dev.faultora.assertions.core.EventCorrelationAssertionProvider
+dev.faultora.assertions.core.EventSequenceAssertionProvider

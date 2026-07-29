@@ -20,7 +20,7 @@ core execution model.
 
 - Import HTTP operations and schemas from OpenAPI.
 - Import workflows from Arazzo when available.
-- Import event-driven contracts from AsyncAPI in a later release.
+- Import event-driven contracts from AsyncAPI.
 - Accept manually described operations when no specification exists.
 - Execute protocol operations through replaceable connectors.
 - Compose sequential, parallel, repeated, and eventually consistent flows.
@@ -87,8 +87,10 @@ flowchart LR
     CLI --> C["Scenario compiler"]
     C --> E["Local execution engine"]
     E --> H["HTTP connector"]
+    E --> K["Kafka connector"]
     E --> F["Fault provider"]
     H --> S["Target system"]
+    K --> B["Broker"]
     F --> S
     E --> A["Assertion engine"]
     A --> R["Report renderers"]
@@ -198,8 +200,10 @@ The compiled plan is a directed acyclic graph of typed nodes:
 - `FaultStopNode`
 - `AssertionNode`
 - `CleanupNode`
-- `ObservationNode` — planned with the observation connectors of M3; every
-  other kind above exists today
+- `ObservationNode` — planned with the database observation connector of M3-03;
+  every other kind above exists today. Event observation needed no node of its
+  own: it is an operation, and its evidence is a set of messages rather than a
+  response
 
 Every node declares a stable node ID, its dependencies, and a safety
 classification. The rest belongs to the node kinds that can honour it:
@@ -277,7 +281,7 @@ public interface SourceImporter {
 }
 ```
 
-Initial implementation: OpenAPI. Later implementations: Arazzo, AsyncAPI,
+Implemented: OpenAPI and AsyncAPI. Later implementations: Arazzo,
 Protobuf, Postman collections, and a manual operation format.
 
 ### 7.2 Connector
@@ -300,7 +304,7 @@ public interface Connector {
 }
 ```
 
-Initial implementation: HTTP. Later implementations: gRPC, Kafka, AMQP,
+Implemented: HTTP and Kafka. Later implementations: gRPC, AMQP,
 WebSocket, GraphQL, and JDBC observation.
 
 ### 7.3 Fault provider
@@ -472,9 +476,13 @@ faultora/
 ├── faultora-spi
 ├── faultora-spec
 ├── faultora-schema
+├── faultora-net
 ├── faultora-engine
+├── faultora-import-common
 ├── faultora-import-openapi
+├── faultora-import-asyncapi
 ├── faultora-connector-http
+├── faultora-connector-kafka
 ├── faultora-faults-local
 ├── faultora-faults-toxiproxy
 ├── faultora-assertions-core
@@ -482,7 +490,8 @@ faultora/
 ├── faultora-cli
 ├── faultora-testkit
 ├── examples/
-│   └── payment-service
+│   ├── payment-service
+│   └── payment-worker
 ├── integration-tests
 └── docs
 ```

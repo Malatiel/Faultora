@@ -15,3 +15,5 @@
 | [ADR-011](ADR-011-bounded-control-flow.md) | Repeat and eventually blocks with compile-time bounds | Accepted |
 | [ADR-012](ADR-012-target-resolution.md) | Catalog-based target resolution with operator redirects | Accepted |
 | [ADR-013](ADR-013-request-generation.md) | Request generation from catalog schemas | Accepted |
+| [ADR-014](ADR-014-event-observation.md) | Bounded, repeatable observation of event channels | Accepted |
+| [ADR-015](ADR-015-asyncapi-direction.md) | The direction of an imported AsyncAPI operation | Accepted |

@@ -7,7 +7,7 @@
     <parent>
         <groupId>dev.faultora</groupId>
         <artifactId>faultora-parent</artifactId>
-        <version>0.6.0</version>
+        <version>0.7.0</version>
     </parent>
 
     <artifactId>faultora-connector-http</artifactId>
@@ -22,6 +22,10 @@
         <dependency>
             <groupId>dev.faultora</groupId>
             <artifactId>faultora-spi</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.faultora</groupId>
+            <artifactId>faultora-net</artifactId>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>

@@ -13,9 +13,11 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -26,10 +28,16 @@ import java.util.concurrent.atomic.AtomicLong;
  * <p>
  * The fault step's {@code targetScope} names the Toxiproxy proxy to poison;
  * a concrete proxy name is required — network faults never apply to {@code *}.
- * Toxics are created with unique {@code faultora-} names, so a leaked toxic
- * (e.g. after a JVM crash, which the in-process watchdog cannot survive) is
- * identifiable and removable with {@code toxiproxy-cli}. The admin endpoint is
- * operator-supplied configuration, not scenario input.
+ * That name is scenario input reaching a management API, so it is
+ * percent-encoded into the request path: a name containing a slash addresses
+ * the proxy that bears it, and can never reach a different admin resource.
+ * <p>
+ * Toxics are created with names unique to this provider instance, which is one
+ * per run, so a toxic leaked by a previous run (e.g. after a JVM crash, which
+ * the in-process watchdog cannot survive) can never collide with the names this
+ * run creates. The run token in the name is what makes a leak identifiable and
+ * removable with {@code toxiproxy-cli}. The admin endpoint is operator-supplied
+ * configuration, not scenario input.
  */
 public final class ToxiproxyFaultProvider implements FaultProvider {
 
@@ -54,9 +62,12 @@ public final class ToxiproxyFaultProvider implements FaultProvider {
     private final HttpClient client;
     private final ConcurrentMap<String, ActiveToxic> activeToxics = new ConcurrentHashMap<>();
     private final AtomicLong sequence = new AtomicLong();
+    /** Distinguishes this run's toxics from any a previous run left behind. */
+    private final String runToken;
 
     public ToxiproxyFaultProvider(URI adminBaseUrl) {
         this.adminBaseUrl = adminBaseUrl;
+        this.runToken = UUID.randomUUID().toString().substring(0, 8);
         this.client = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
                 .build();
@@ -79,7 +90,8 @@ public final class ToxiproxyFaultProvider implements FaultProvider {
         }
         Map<String, Object> safeParams = params == null ? Map.of() : Map.copyOf(params);
 
-        String toxicName = "faultora-" + faultType + "-" + sequence.incrementAndGet();
+        String toxicName =
+                "faultora-" + faultType + "-" + runToken + "-" + sequence.incrementAndGet();
         ObjectNode toxic = MAPPER.createObjectNode();
         toxic.put("name", toxicName);
         toxic.put("stream", direction(safeParams));
@@ -129,8 +141,8 @@ public final class ToxiproxyFaultProvider implements FaultProvider {
         if (toxic == null) {
             return;
         }
-        URI uri = adminBaseUrl.resolve(
-                "/proxies/" + toxic.proxyName() + "/toxics/" + toxic.toxicName());
+        URI uri = adminBaseUrl.resolve("/proxies/" + encodeSegment(toxic.proxyName())
+                + "/toxics/" + encodeSegment(toxic.toxicName()));
         try {
             HttpResponse<String> response = client.send(
                     HttpRequest.newBuilder(uri)
@@ -160,7 +172,7 @@ public final class ToxiproxyFaultProvider implements FaultProvider {
     }
 
     private void postToxic(String proxyName, ObjectNode toxic) {
-        URI uri = adminBaseUrl.resolve("/proxies/" + proxyName + "/toxics");
+        URI uri = adminBaseUrl.resolve("/proxies/" + encodeSegment(proxyName) + "/toxics");
         try {
             HttpResponse<String> response = client.send(
                     HttpRequest.newBuilder(uri)
@@ -186,6 +198,37 @@ public final class ToxiproxyFaultProvider implements FaultProvider {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Interrupted while creating toxic", e);
         }
+    }
+
+    /**
+     * One path segment of an admin URL, with everything outside the unreserved
+     * set percent-encoded.
+     * <p>
+     * The proxy name comes from the scenario. Interpolated raw, a name
+     * containing {@code /}, {@code ?} or {@code #} would address a different
+     * admin resource than the one it names — or make the URL unparseable.
+     * Encoded, it addresses exactly the proxy the scenario asked for, whatever
+     * characters that proxy's name happens to contain.
+     */
+    static String encodeSegment(String segment) {
+        StringBuilder encoded = new StringBuilder(segment.length());
+        for (byte b : segment.getBytes(StandardCharsets.UTF_8)) {
+            int octet = b & 0xFF;
+            if (isUnreserved(octet)) {
+                encoded.append((char) octet);
+            } else {
+                encoded.append('%').append(String.format("%02X", octet));
+            }
+        }
+        return encoded.toString();
+    }
+
+    /** RFC 3986 unreserved characters, which never need escaping. */
+    private static boolean isUnreserved(int octet) {
+        return (octet >= 'a' && octet <= 'z')
+                || (octet >= 'A' && octet <= 'Z')
+                || (octet >= '0' && octet <= '9')
+                || octet == '-' || octet == '.' || octet == '_' || octet == '~';
     }
 
     private static String direction(Map<String, Object> params) {

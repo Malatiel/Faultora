@@ -2,20 +2,20 @@
 
 **Break it here. Trust it everywhere.**
 
-Faultora is a self-hosted reliability testing CLI for HTTP APIs. It imports
-OpenAPI descriptions, runs repeatable scenarios, checks technical and business
-invariants, and produces console, JSON, HTML, and JUnit reports. Execution stays
-inside your infrastructure and does not require a hosted control plane or
-telemetry.
+Faultora is a self-hosted reliability testing CLI for HTTP APIs and event-driven
+systems. It imports OpenAPI and AsyncAPI descriptions, runs repeatable scenarios
+across HTTP and Kafka, checks technical and business invariants, and produces
+console, JSON, HTML, and JUnit reports. Execution stays inside your
+infrastructure and does not require a hosted control plane or telemetry.
 
-Version 0.6.0 is a runnable technical preview. It targets local
+Version 0.7.0 is a runnable technical preview. It targets local
 development and CI use on Java 21.
 
-## What 0.6.0 includes
+## What 0.7.0 includes
 
 Scenario execution:
 
-- OpenAPI 3.x import and operation discovery;
+- OpenAPI 3.x and AsyncAPI 3.0 import, together in one run;
 - versioned YAML scenarios with runtime inputs (`--input key=value`);
 - HTTP GET, POST, PUT, PATCH, DELETE, HEAD, and OPTIONS operations;
 - step output binding: later steps reference earlier responses through
@@ -32,7 +32,12 @@ Scenario execution:
 - sequential operation and wait steps with explicit dependencies;
 - per-step, per-group, and scenario-wide deadlines, bounded by the
   execution policy's wall-clock budget;
+- Kafka operations: publish a command, observe the events it caused, within a
+  window bounded below by the run's own start and above by a wait the execution
+  policy caps;
 - status, header, response-schema, JSONPath, and duration assertions;
+- event assertions: count, uniqueness, correlation continuity, and ordered or
+  unordered sequences;
 - console, JSON, HTML, and JUnit reports.
 
 Fault injection:
@@ -75,7 +80,7 @@ silently accepted.
 Download the release JAR and its checksums:
 
 ```bash
-FAULTORA_VERSION=0.6.0
+FAULTORA_VERSION=0.7.0
 RELEASE_URL="https://github.com/Malatiel/Faultora/releases/download/v${FAULTORA_VERSION}"
 
 curl --fail --location --retry 3 \
@@ -103,7 +108,7 @@ Every release also includes a CycloneDX SBOM and the Apache 2.0 license.
 The executable artifact is written to:
 
 ```text
-faultora-cli/target/faultora-0.6.0.jar
+faultora-cli/target/faultora-0.7.0.jar
 ```
 
 The regular CI build can run without repository secrets. Configure the
@@ -116,9 +121,9 @@ missing.
 Check the executable and validate the example scenario:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.6.0.jar --version
+java -jar faultora-cli/target/faultora-0.7.0.jar --version
 
-java -jar faultora-cli/target/faultora-0.6.0.jar \
+java -jar faultora-cli/target/faultora-0.7.0.jar \
   validate \
   --scenario examples/payment-service/scenarios/passing.yaml
 ```
@@ -126,7 +131,7 @@ java -jar faultora-cli/target/faultora-0.6.0.jar \
 Generate a starter scenario from an OpenAPI document:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.6.0.jar \
+java -jar faultora-cli/target/faultora-0.7.0.jar \
   init \
   --from-openapi examples/payment-service/openapi.yaml \
   --output ./generated
@@ -135,7 +140,7 @@ java -jar faultora-cli/target/faultora-0.6.0.jar \
 Run a scenario against an API:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.6.0.jar \
+java -jar faultora-cli/target/faultora-0.7.0.jar \
   test \
   --scenario examples/payment-service/scenarios/passing.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -180,7 +185,7 @@ race window, then asserts the business invariant that exactly one payment
 exists:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.6.0.jar \
+java -jar faultora-cli/target/faultora-0.7.0.jar \
   test \
   --scenario examples/payment-service/scenarios/fault-concurrent-duplicate.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -283,6 +288,84 @@ Reference scenarios live in
 [`examples/payment-service/scenarios`](examples/payment-service/scenarios)
 as `eventually-settlement.yaml` and `repeat-batch.yaml`.
 
+## Events
+
+An AsyncAPI 3.0 description brings Kafka channels into the same catalog as the
+HTTP operations, and `--openapi` and `--asyncapi` can be given together:
+
+```bash
+java -jar faultora-cli/target/faultora-0.7.0.jar \
+  test \
+  --scenario examples/payment-worker/scenarios/duplicate-delivery.yaml \
+  --asyncapi examples/payment-worker/asyncapi.yaml \
+  --target broker=kafka://localhost:9092 \
+  --allow-private
+```
+
+An event operation is an ordinary `operation` step; there is no separate step
+type, so retries, deadlines, `eventually`, and generated payloads all work on
+it unchanged. AsyncAPI states each operation's direction from the *application's*
+point of view, and the importer inverts it: a channel the application receives
+on is one your scenario publishes to.
+
+```yaml
+- id: send-command
+  type: operation
+  operationId: settlePayment
+  inputs:
+    key: "pay-{{run.seed}}"
+    headers:
+      correlation-id: "pay-{{run.seed}}"
+    body:
+      paymentId: "pay-{{run.seed}}"
+      amount: 2500
+
+- id: read-settlements
+  type: operation
+  operationId: paymentSettled
+  inputs:
+    match:
+      payload:
+        paymentId: "pay-{{run.seed}}"
+    waitMs: 2000
+```
+
+An observation never reports history from before the run started, and which
+messages a step is *about* is decided by its `match` clause rather than by
+position — so two runs, or two iterations of a repeat block, each see their own
+messages. Faultora assigns partitions directly and commits no offsets, so a run
+creates no consumer group on your broker and leaves nothing behind.
+
+Published twice on purpose, the reference scenario proves the target settles
+once:
+
+```text
+--- Nodes ---
+  [PASSED] send-command (57ms) — published to payment-commands at 0:0
+  [PASSED] send-command-again (23ms) — published to payment-commands at 0:1
+  [PASSED] settlement-appears (1065ms) — 1 poll
+         Assertion: PASS — Observed 1 message
+  [PASSED] read-settlements (2067ms) — observed 1 of 1 on payment-events
+  [PASSED] one-effect-per-command (1ms)
+         Assertion: PASS — Observed 1 message
+  [PASSED] no-payment-settled-twice (4ms)
+         Assertion: PASS — 1 message with distinct payload:paymentId
+  [PASSED] correlation-survives-the-hop (3ms)
+         Assertion: PASS — 1 message carries header:correlation-id 'pay-77001'
+```
+
+Against a consumer that is not idempotent, the same scenario says so:
+
+```text
+  [FAILED] no-payment-settled-twice (2ms)
+         Assertion: FAIL — Two messages carry the same payload:paymentId
+                    'pay-77002': offsets 0 and 1
+```
+
+The worker both variants run against lives in
+[`examples/payment-worker`](examples/payment-worker), with its AsyncAPI
+description and the scenario above.
+
 ## Generated requests
 
 A step can build its body from the schema the API description declares, and
@@ -362,7 +445,7 @@ handle is mapped to an environment variable with the `FAULTORA_SECRET_` prefix:
 ```bash
 export FAULTORA_SECRET_PAYMENTS_API='replace-with-a-real-token'
 
-java -jar faultora-cli/target/faultora-0.6.0.jar \
+java -jar faultora-cli/target/faultora-0.7.0.jar \
   test \
   --scenario scenario.yaml \
   --openapi openapi.yaml \

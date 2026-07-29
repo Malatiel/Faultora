@@ -31,6 +31,22 @@ be deterministic and replayable.
 - **JSON Array**: Not appendable without rewriting the file. NDJSON supports
   streaming writes.
 
+## Amendment (0.7.0)
+
+Two event types were added for message channels: `MESSAGE_PUBLISHED` records
+where a published message landed, and `MESSAGES_OBSERVED` records what an
+observation window contained and how much of it the step's selector claimed.
+
+Both follow the rule already stated above: the journal carries coordinates and
+digests, never payloads. A message payload is governed by the evidence policy
+and stays in memory, where the report decides whether to show it — a journal
+that held payloads would be a file on disk holding whatever the policy said not
+to keep.
+
+Both are emitted from the node lifecycle by reading protocol-neutral message
+evidence, so a second event protocol journals through the same path without the
+engine learning anything about it.
+
 ## Consequences
 
 - Events can be written incrementally during execution without buffering.

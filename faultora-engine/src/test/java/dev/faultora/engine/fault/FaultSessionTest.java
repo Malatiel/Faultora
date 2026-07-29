@@ -13,6 +13,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class FaultSessionTest {
 
@@ -108,6 +109,60 @@ class FaultSessionTest {
         }
 
         assertThat(statuses).containsExactly("fault-stop-rollback-failed");
+    }
+
+    @Test
+    void aFaultInjectedAsTheRunEndsIsRolledBackRatherThanLeftBehind() {
+        // The exact interleaving: the run ends — cancelled, or past its
+        // deadline — after the provider has injected but before the session
+        // knows about it. Driving close() from inside inject() reproduces it
+        // deterministically instead of hoping a thread lands in the window.
+        CountingProvider provider = new CountingProvider();
+        List<String> statuses = new CopyOnWriteArrayList<>();
+        FaultSession session = new FaultSession((fault, status) -> statuses.add(status));
+
+        FaultProvider closesTheSessionMidInjection = new FaultProvider() {
+            @Override
+            public Set<String> capabilities() {
+                return provider.capabilities();
+            }
+
+            @Override
+            public ActiveFault inject(
+                    String faultType, Map<String, Object> params, FaultContext context) {
+                ActiveFault fault = provider.inject(faultType, params, context);
+                session.close();
+                return fault;
+            }
+
+            @Override
+            public void rollback(ActiveFault fault, FaultContext context) {
+                provider.rollback(fault, context);
+            }
+        };
+
+        assertThatThrownBy(() -> session.start(closesTheSessionMidInjection,
+                new NodeId("inject"), "stub-fault", "*", Map.of(), 60_000))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("rolled back");
+
+        // What the class exists to guarantee: nothing injected stays injected.
+        assertThat(provider.rollbacks.get()).isEqualTo(1);
+        assertThat(session.pendingCount()).isZero();
+        assertThat(statuses).containsExactly(FaultSession.REASON_RUN_END);
+    }
+
+    @Test
+    void aClosedSessionRefusesToInjectAtAll() {
+        CountingProvider provider = new CountingProvider();
+        FaultSession session = new FaultSession((fault, status) -> { });
+        session.close();
+
+        assertThatThrownBy(() -> session.start(
+                provider, new NodeId("inject"), "stub-fault", "*", Map.of(), 60_000))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("no further fault");
+        assertThat(provider.injections.get()).isZero();
     }
 
     @Test

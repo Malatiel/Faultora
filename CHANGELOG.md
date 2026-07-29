@@ -2,6 +2,100 @@
 
 All notable changes to Faultora are documented in this file.
 
+## 0.7.0 — 2026-07-29
+
+The events release. A scenario can now publish a command, observe the events it
+caused, and prove a claim that spans two protocols — which is the first time
+this tool says anything about a distributed system rather than about one
+request.
+
+### Added
+
+- **AsyncAPI 3.0 import** (M3-01). Servers, channels, operations, messages,
+  schemas, correlation locations, and Kafka bindings become catalog entries.
+  AsyncAPI states an operation's direction from the *application's* point of
+  view, so the importer inverts it: a channel the application receives on is
+  one a run publishes to, and that operation is the mutating one. Getting this
+  backwards would classify a write as a read and let it past the execution
+  policy unasked — ADR-015 records the rule and why it is enforced in exactly
+  one place. AsyncAPI 2.x is refused by name rather than read under 3.0's rule,
+  which would reverse every operation in the document.
+- **Kafka connector** (M3-02). Publish and observe are ordinary `operation`
+  steps, so retries, deadlines, dependencies, `eventually`, and generated
+  payloads work on them unchanged and the scenario contract gains no new step
+  type. A publish waits for the broker's acknowledgement. An observation is
+  bounded below by the run's own start, above by a wait the run's request
+  timeout caps, and in volume by a message count and an evidence budget.
+- **Observations are repeatable by selection.** A step declares which messages
+  it is about — by key, header, or payload field — and its assertions run over
+  those. Two iterations of a repeat block read the same window and each see
+  only their own messages. ADR-014 has the full reasoning, including the design
+  that was built first and was wrong.
+- **A run leaves nothing on the broker.** Partitions are assigned directly and
+  no offset is ever committed, so no consumer group is created and an
+  interrupted run has nothing to clean up.
+- **Four event assertions** (M3-04, event half): `event-count`,
+  `event-unique`, `event-correlation`, and `event-sequence`. "The event
+  eventually appears" is `event-count min: 1` inside an `eventually` block —
+  the polling already existed, and an appearance is a count that stops being
+  zero.
+- **`--asyncapi`, and `--openapi` alongside it.** A run compiles against the
+  union of its descriptions. A name claimed by two documents is an error rather
+  than whichever was loaded second.
+- **`MESSAGE_PUBLISHED` and `MESSAGES_OBSERVED` journal events**, carrying
+  coordinates and digests. An observation records both what its window
+  contained and how much of it the step's selector claimed, so a scenario
+  missing a selector on a busy channel is visible in the report.
+- **`examples/payment-worker`**: a Kafka consumer that settles a payment once
+  however many times the command arrives, and a variant that does not. The
+  published scenario passes against the first and fails against the second — a
+  reliability test that has never failed proves nothing.
+- The Kafka connector is constructed only when the catalog has a Kafka target,
+  so an HTTP-only run opens no broker client.
+
+### Changed
+
+- Applying an evidence policy moved into the SPI, so a connector whose evidence
+  is not an HTTP response applies the same rules to it. Message payloads obey
+  `captureBodies`, `maxBodyBytes`, and `redactPaths`; message headers obey
+  `captureHeaders` and the denylist, because a token in a message header is as
+  much a secret as one in an HTTP header. A selector still reads the message as
+  it arrived: a policy that withholds payloads must not change which messages a
+  scenario sees.
+- The destination policy moved into `faultora-net` and now decides for every
+  connector. Kafka bootstrap hosts face the same private-range refusal HTTP
+  does. What Kafka cannot do is pin the addresses it verified, because its
+  client resolves its own brokers — `docs/SECURITY.md` states the asymmetry
+  rather than implying parity.
+- A step's protocol evidence is published to later steps under
+  `steps.<name>.protocol`, namespaced so a protocol adding a `status` of its
+  own cannot displace the response one.
+- Toxiproxy proxy names are percent-encoded into the admin path, so a
+  scenario-supplied name containing a separator addresses the proxy that bears
+  it and never a different admin resource. Toxic names carry a per-run token,
+  so a toxic leaked by an earlier run cannot collide with this one's.
+
+### Fixed
+
+- `FaultSession` marks itself closed before its end-of-run sweep. A fault
+  injected while a run was ending could previously be registered after the
+  sweep had passed and stay injected; now whichever of the two sees the other
+  rolls it back, and `start` refuses rather than returning a fault it cannot
+  stand behind.
+- A literal `waitMs` longer than the whole run's budget fails plan compilation
+  instead of being silently shortened at run time.
+
+### Documentation
+
+- `docs/SECURITY.md` states what the destination policy actually decides,
+  including that an allowlist replaces private-range classification rather than
+  adding to it, and that classification is a property of each connector.
+- `docs/SCENARIO_REFERENCE.md` documents event operations, the four event
+  assertions, and the hazard of retrying an operation that is not idempotent —
+  which this tool exists to find rather than to prevent.
+- ADR-014 (event observation) and ADR-015 (AsyncAPI direction) are new;
+  ADR-001 and ADR-005 are amended for the new modules and event types.
+
 ## 0.6.0 — 2026-07-29
 
 The debt release: everything the documentation already claimed is now true.

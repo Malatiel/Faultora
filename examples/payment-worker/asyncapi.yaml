@@ -1,0 +1,99 @@
+asyncapi: 3.0.0
+
+info:
+  title: Payment Worker
+  version: "1.0.0"
+  description: >-
+    The event side of the example payment system. The worker receives settle
+    commands and sends a settlement event for each payment it settles — once
+    per payment, however many times the command arrives.
+
+    Note the direction of each operation: `action` is stated from this
+    application's point of view, so `receive` is the channel a test publishes
+    to and `send` is the channel a test observes.
+
+servers:
+  broker:
+    host: localhost:9092
+    protocol: kafka
+    description: The broker the worker and the test share
+
+channels:
+  paymentCommands:
+    address: payment-commands
+    description: Commands asking for a payment to be settled
+    messages:
+      settlePayment:
+        $ref: '#/components/messages/SettlePayment'
+
+  paymentEvents:
+    address: payment-events
+    description: Events reporting what the worker settled
+    messages:
+      paymentSettled:
+        $ref: '#/components/messages/PaymentSettled'
+
+operations:
+  settlePayment:
+    action: receive
+    summary: The worker receives a settle command, so a test publishes one
+    channel:
+      $ref: '#/channels/paymentCommands'
+    messages:
+      - $ref: '#/channels/paymentCommands/messages/settlePayment'
+
+  paymentSettled:
+    action: send
+    summary: The worker sends a settlement event, so a test observes one
+    channel:
+      $ref: '#/channels/paymentEvents'
+    messages:
+      - $ref: '#/channels/paymentEvents/messages/paymentSettled'
+
+components:
+  messages:
+    SettlePayment:
+      name: SettlePayment
+      title: Settle a payment
+      correlationId:
+        location: $message.header#/correlation-id
+      payload:
+        $ref: '#/components/schemas/SettleCommand'
+
+    PaymentSettled:
+      name: PaymentSettled
+      title: A payment was settled
+      correlationId:
+        location: $message.header#/correlation-id
+      payload:
+        $ref: '#/components/schemas/SettledEvent'
+
+  schemas:
+    SettleCommand:
+      type: object
+      required: [paymentId, amount]
+      properties:
+        paymentId:
+          type: string
+          description: Business identifier; settling it twice must be one effect
+          minLength: 1
+          maxLength: 64
+        amount:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+        currency:
+          type: string
+          enum: [EUR, USD, GBP]
+
+    SettledEvent:
+      type: object
+      required: [paymentId, status]
+      properties:
+        paymentId:
+          type: string
+        status:
+          type: string
+          enum: [settled]
+        amount:
+          type: integer

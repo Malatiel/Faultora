@@ -6,7 +6,7 @@
 
     <groupId>dev.faultora</groupId>
     <artifactId>faultora-parent</artifactId>
-    <version>0.6.0</version>
+    <version>0.7.0</version>
     <packaging>pom</packaging>
 
     <name>Faultora</name>
@@ -42,6 +42,8 @@
         <junit.version>5.10.3</junit.version>
         <assertj.version>3.26.3</assertj.version>
         <jmespath.version>0.5.1</jmespath.version>
+        <kafka-clients.version>3.9.1</kafka-clients.version>
+        <testcontainers.version>1.20.6</testcontainers.version>
         <httpclient5.version>5.6.1</httpclient5.version>
         <httpcore5.version>5.4.3</httpcore5.version>
 
@@ -63,9 +65,13 @@
         <module>faultora-spi</module>
         <module>faultora-spec</module>
         <module>faultora-schema</module>
+        <module>faultora-net</module>
         <module>faultora-engine</module>
+        <module>faultora-import-common</module>
         <module>faultora-import-openapi</module>
+        <module>faultora-import-asyncapi</module>
         <module>faultora-connector-http</module>
+        <module>faultora-connector-kafka</module>
         <module>faultora-faults-local</module>
         <module>faultora-faults-toxiproxy</module>
         <module>faultora-assertions-core</module>
@@ -73,6 +79,7 @@
         <module>faultora-cli</module>
         <module>faultora-testkit</module>
         <module>examples/payment-service</module>
+        <module>examples/payment-worker</module>
         <module>integration-tests</module>
     </modules>
 
@@ -101,12 +108,32 @@
             </dependency>
             <dependency>
                 <groupId>dev.faultora</groupId>
+                <artifactId>faultora-net</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.faultora</groupId>
+                <artifactId>faultora-connector-kafka</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.faultora</groupId>
                 <artifactId>faultora-engine</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
                 <groupId>dev.faultora</groupId>
+                <artifactId>faultora-import-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.faultora</groupId>
                 <artifactId>faultora-import-openapi</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.faultora</groupId>
+                <artifactId>faultora-import-asyncapi</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
@@ -196,6 +223,21 @@
                 <groupId>io.burt</groupId>
                 <artifactId>jmespath-core</artifactId>
                 <version>${jmespath.version}</version>
+            </dependency>
+
+            <!-- Kafka clients (event publish and observation) -->
+            <dependency>
+                <groupId>org.apache.kafka</groupId>
+                <artifactId>kafka-clients</artifactId>
+                <version>${kafka-clients.version}</version>
+            </dependency>
+
+            <!-- Disposable infrastructure for the event end-to-end suite -->
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>kafka</artifactId>
+                <version>${testcontainers.version}</version>
+                <scope>test</scope>
             </dependency>
 
             <!-- Apache HttpClient 5 (DNS-resolving transport for SSRF pinning) -->

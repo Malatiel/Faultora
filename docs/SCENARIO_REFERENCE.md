@@ -1,6 +1,6 @@
 # Scenario reference
 
-This page documents the scenario format implemented by Faultora 0.6.0. The
+This page documents the scenario format implemented by Faultora 0.7.0. The
 format is versioned independently from the application:
 
 ```yaml
@@ -10,7 +10,7 @@ kind: Scenario
 
 Faultora rejects unsupported versions, missing required fields, duplicate step
 IDs, unknown references, dependency cycles, and execution features that are not
-available in 0.6.0.
+available in 0.7.0.
 
 ## Complete example
 
@@ -74,7 +74,7 @@ cleanup:
 Validate a document before running it:
 
 ```bash
-java -jar faultora-0.6.0.jar validate --scenario scenario.yaml
+java -jar faultora-0.7.0.jar validate --scenario scenario.yaml
 ```
 
 ## Top-level fields
@@ -211,6 +211,7 @@ The expression context contains:
 | `steps.<name>.status` | HTTP status of the step bound with `outputAs: <name>`. |
 | `steps.<name>.body` | Parsed JSON response body (present only when the evidence policy captures bodies). |
 | `steps.<name>.headers` | Response headers, filtered by the evidence policy. |
+| `steps.<name>.protocol` | What the protocol contributed: for events, `published` (topic, partition, offset), `messages`, and `message` — the first observed message, bound because expressions address objects rather than list positions. |
 | `repeat.index`, `repeat.item` | Current iteration inside a [repeat step](#repeat-steps). |
 | `run.seed`, `run.target` | Run metadata. |
 
@@ -496,6 +497,30 @@ Semantics:
   retry;
 - assertion evidence always comes from the final attempt.
 
+### Retrying an operation that is not idempotent
+
+A retry resends the same request — byte for byte, including any generated
+payload. When the operation is not idempotent, that is not a safety net: a
+timeout usually means the request arrived and the *answer* was lost, so the
+retry creates a second payment, a second order, a second charge.
+
+Faultora does not refuse this, because it is the subject matter rather than a
+mistake to be prevented. Retrying a non-idempotent operation under an injected
+fault is how you find out whether the target deduplicates — and a scenario that
+retries and then asserts one business effect is one of the more valuable ones
+you can write.
+
+What follows from that:
+
+- send an idempotency key when the operation supports one, and pin it in
+  `with:` rather than generating it per attempt, so every attempt carries the
+  same key;
+- when the operation has no such key, expect duplicates and assert on them,
+  rather than assuming the retry was free;
+- read the `OPERATION_RETRIED` events in a failing run before concluding the
+  target is broken: the duplicate may be the scenario's own doing, which is
+  exactly the finding.
+
 ## Wait steps
 
 Wait steps pause local execution without making a network request.
@@ -619,11 +644,11 @@ Every assertion has this common shape:
 | Field | Required | Description |
 |---|---:|---|
 | `id` | yes | Stable ID, unique across every scenario section. |
-| `assertionType` | yes | `status`, `header`, `schema`, `jsonpath`, or `duration`. |
+| `assertionType` | yes | `status`, `header`, `schema`, `jsonpath`, `duration`, `event-count`, `event-unique`, `event-correlation`, or `event-sequence`. |
 | `params` | yes | Parameters documented for the selected assertion type. |
 | `targetStep` | no | Operation evidence to inspect; defaults to the last `execute` step. A grouping step holds no evidence of its own, so name one of its children. |
 | `dependsOn` | no | Additional dependencies that must pass first. |
-| `message` | no | Reserved; 0.6.0 reports the assertion provider's evaluated message. |
+| `message` | no | Reserved; 0.7.0 reports the assertion provider's evaluated message. |
 | `metadata` | no | Arbitrary assertion metadata. |
 
 An assertion that cannot be evaluated is treated as a failed node rather than
@@ -795,6 +820,144 @@ params:
   min: 50
   max: 1000
 ```
+
+### `event-count`
+
+How many of the messages an observation selected there were. Needs at least one
+of `equals`, `min`, or `max`.
+
+```yaml
+assertionType: event-count
+params:
+  equals: 1
+```
+
+`min: 1` inside an [eventually block](#eventually-steps) is how "the event
+eventually appears" is written — the polling already exists, and an appearance
+is a count that stops being zero.
+
+A step that observed no messages *at all*, such as an HTTP step, makes this
+indeterminate rather than passing: zero-because-nothing-was-checked must never
+read as zero-as-expected.
+
+### `event-unique`
+
+That no two observed messages carry the same value. `by` names where the value
+lives: `key`, `header:<name>`, `payload:<dotted.path>`, or a bare dotted path,
+which means a payload field.
+
+```yaml
+assertionType: event-unique
+params:
+  by: payload:paymentId
+```
+
+This is the duplicate-delivery assertion. A broker that delivers at least once
+may deliver a command twice; a correct consumer still emits one event per
+payment.
+
+### `event-correlation`
+
+That every observed message belongs to the same exchange. With `equals`, every
+message must carry that value; without it, the messages must merely agree with
+each other — which is the form to use when the value was generated during the
+run.
+
+```yaml
+assertionType: event-correlation
+params:
+  by: header:correlation-id
+```
+
+Correlation is what makes a cross-component claim mean anything: an event that
+appears after a command is evidence of *that* command only if it carries the
+same correlation value.
+
+### `event-sequence`
+
+That the observed messages tell the expected story. Each entry of `of` is a set
+of locator/value pairs one message must satisfy, and one message answers for at
+most one entry.
+
+```yaml
+assertionType: event-sequence
+params:
+  ordered: true          # the default
+  of:
+    - { payload:status: accepted }
+    - { payload:status: settled }
+```
+
+Ordered means the matching messages appear in the observed order, not that they
+are adjacent: a workflow may emit events the scenario is not asserting about,
+and demanding adjacency would break the assertion every time the system does
+something additional and correct.
+
+## Event operations
+
+An operation whose catalog entry declares `protocol: kafka` publishes or
+observes messages. There is no separate step type: it is an ordinary
+`operation` step, so retries, deadlines, dependencies, `eventually`, and
+generated payloads all work on it unchanged.
+
+Publishing:
+
+```yaml
+- id: send-command
+  type: operation
+  operationId: settlePayment      # an operation the catalog says the run publishes
+  inputs:
+    key: "pay-{{run.seed}}"
+    headers:
+      correlation-id: "pay-{{run.seed}}"
+    body:
+      paymentId: "pay-{{run.seed}}"
+      amount: 2500
+```
+
+A publish waits for the broker's acknowledgement, so a scenario can tell an
+unacknowledged write from a target that never reacted.
+
+Observing:
+
+```yaml
+- id: read-settlements
+  type: operation
+  operationId: paymentSettled     # an operation the catalog says the run observes
+  inputs:
+    match:
+      payload:
+        paymentId: "pay-{{run.seed}}"
+    waitMs: 2000
+    maxMessages: 10
+```
+
+| Input | Required | Description |
+|---|---:|---|
+| `match` | no | Which messages this step is about: `key`, `headers`, and `payload` clauses, all of which must hold. Without it, every message in the window is selected. |
+| `waitMs` | no | How long the window stays open. Defaults to 5000 and is capped by the run's request timeout. |
+| `maxMessages` | no | How many matching messages are enough; reaching this ends the wait early. Defaults to 10. |
+| `from` | no | `beginning` reaches back past the run's own floor into the channel's history. |
+
+Three properties are worth knowing before writing one:
+
+- **An observation reads forward from when the run started**, resolved through
+  the broker's record timestamps, with two seconds of tolerance for the fact
+  that the timestamp was set by another machine's clock. History older than
+  that is never reported; `from: beginning` is the way to ask for it.
+- **Selection, not position, is what makes an observation repeatable.** Two
+  iterations of a repeat block read the same window; what makes each one see
+  only its own messages is the `match` clause, usually on a correlation value
+  the step itself published. On a shared channel, an observation without
+  `match` counts whatever else was happening.
+- **Observing twice is safe and often necessary.** Each observation re-reads
+  from the same floor, so a second one sees everything the first did, plus
+  whatever arrived since. Asserting "exactly one" on the poll that first saw
+  one event would pass before a second could arrive; asserting it on a later,
+  wider observation would not.
+
+Assertion `params` are literal: unlike step `inputs`, they are not expression
+templates. Select the messages in the step, and assert on what was selected.
 
 ## Unsupported execution features
 

@@ -42,7 +42,9 @@ class ToxiproxyFaultProviderTest {
         admin.createContext("/", exchange -> {
             String body = new String(
                     exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-            String path = exchange.getRequestURI().getPath();
+            // The raw path is what the admin API actually received: a decoded
+            // one would hide exactly the escaping this provider must do.
+            String path = exchange.getRequestURI().getRawPath();
             requests.add(new AdminRequest(exchange.getRequestMethod(), path, body));
 
             int status;
@@ -171,6 +173,35 @@ class ToxiproxyFaultProviderTest {
                 Map.of(), context("payments")))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThat(requests).isEmpty();
+    }
+
+    @Test
+    void aProxyNameCannotReachPastItsOwnPathSegment() {
+        // The scenario names the proxy; unencoded, these separators would make
+        // the admin API act on a resource the scenario never named.
+        assertThatThrownBy(() -> provider.inject("network-latency",
+                Map.of("latencyMs", 100), context("payments/../orders")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("no proxy named");
+
+        assertThat(requests).hasSize(1);
+        assertThat(requests.get(0).path())
+                .isEqualTo("/proxies/payments%2F..%2Forders/toxics");
+    }
+
+    @Test
+    void twoRunsNeverGiveTwoToxicsTheSameName() {
+        // A toxic leaked by an earlier run stays on the proxy. If the next run
+        // reused its names, deleting one would delete the other's fault.
+        ToxiproxyFaultProvider nextRun = new ToxiproxyFaultProvider(
+                URI.create("http://localhost:" + admin.getAddress().getPort()));
+
+        ActiveFault first = provider.inject("network-latency",
+                Map.of("latencyMs", 100), context("payments"));
+        ActiveFault second = nextRun.inject("network-latency",
+                Map.of("latencyMs", 100), context("payments"));
+
+        assertThat(first.handle()).isNotEqualTo(second.handle());
     }
 
     @Test

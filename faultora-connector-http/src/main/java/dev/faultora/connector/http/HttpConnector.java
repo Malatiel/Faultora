@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.faultora.model.catalog.*;
 import dev.faultora.model.identifier.ProtocolId;
 import dev.faultora.model.security.SecretHandle;
+import dev.faultora.net.DestinationPolicyViolation;
 import dev.faultora.spi.contract.Connector;
 import dev.faultora.spi.context.ConnectorContext;
 import dev.faultora.spi.result.OperationResult;

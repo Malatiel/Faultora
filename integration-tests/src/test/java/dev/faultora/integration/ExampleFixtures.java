@@ -17,6 +17,8 @@ final class ExampleFixtures {
             Path.of(System.getProperty("user.dir")).getParent();
     private static final Path EXAMPLE_ROOT =
             PROJECT_ROOT.resolve("examples").resolve("payment-service");
+    private static final Path WORKER_ROOT =
+            PROJECT_ROOT.resolve("examples").resolve("payment-worker");
 
     private ExampleFixtures() {
     }
@@ -29,6 +31,16 @@ final class ExampleFixtures {
     /** Absolute path of the example API's OpenAPI document. */
     static Path openApi() {
         return existing(EXAMPLE_ROOT.resolve("openapi.yaml"));
+    }
+
+    /** Absolute path of a scenario published with the example event worker. */
+    static Path workerScenario(String fileName) {
+        return existing(WORKER_ROOT.resolve("scenarios").resolve(fileName));
+    }
+
+    /** Absolute path of the example worker's AsyncAPI document. */
+    static Path asyncApi() {
+        return existing(WORKER_ROOT.resolve("asyncapi.yaml"));
     }
 
     private static Path existing(Path path) {

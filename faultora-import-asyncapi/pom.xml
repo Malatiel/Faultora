@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.faultora</groupId>
+        <artifactId>faultora-parent</artifactId>
+        <version>0.7.0</version>
+    </parent>
+
+    <artifactId>faultora-import-asyncapi</artifactId>
+    <name>Faultora :: Import :: AsyncAPI</name>
+    <description>Imports AsyncAPI 3.0 descriptions into the canonical catalog</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>dev.faultora</groupId>
+            <artifactId>faultora-model</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.faultora</groupId>
+            <artifactId>faultora-spi</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.faultora</groupId>
+            <artifactId>faultora-import-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+        </dependency>
+    </dependencies>
+</project>
