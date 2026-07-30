@@ -6,6 +6,7 @@ import dev.faultora.engine.run.RunResult;
 import dev.faultora.model.catalog.NormalizedError;
 import dev.faultora.model.identifier.NodeId;
 import dev.faultora.spec.expression.ExpressionContext;
+import dev.faultora.spec.expression.ExpressionEvaluator;
 import dev.faultora.spi.contract.AssertionProvider;
 import dev.faultora.spi.context.AssertionContext;
 import dev.faultora.spi.result.AssertionResult;
@@ -28,6 +29,7 @@ public final class EventuallyGroupExecutor {
 
     private final OperationInvoker invoker;
     private final InputResolver inputResolver = new InputResolver();
+    private final ExpressionEvaluator expressionEvaluator = new ExpressionEvaluator();
     private final Map<String, AssertionProvider> assertionProviders;
 
     public EventuallyGroupExecutor(
@@ -62,17 +64,22 @@ public final class EventuallyGroupExecutor {
 
         context.journal().nodeStarted(child.nodeId(), "operation", child.operationId());
 
-        // Every poll asks the identical question: inputs are resolved once.
+        // Every poll asks the identical question: inputs and the conditions'
+        // own parameters are resolved once, together. Resolving a condition per
+        // poll would give the block a second place where a poll's meaning could
+        // drift.
         Map<String, Object> inputs;
+        List<Map<String, Object>> conditionParams;
         try {
             inputs = inputResolver.resolve(child, context, expressionContext);
+            conditionParams = resolveConditionParams(group, expressionContext);
         } catch (RuntimeException unresolvable) {
             // Compilation proves generated values are satisfiable, but a
             // schema with alternatives can still surprise a run. Failing the
             // group keeps cleanup and the run's terminal event intact.
             return failed(context, groupId, child, new NormalizedError(
                     NormalizedError.ErrorCategory.VALIDATION, "INPUTS_UNRESOLVABLE",
-                    "Cannot resolve the polled step's inputs: " + unresolvable.getMessage(),
+                    "Cannot resolve what this block polls with: " + unresolvable.getMessage(),
                     false, Map.of()), System.currentTimeMillis() - groupStart);
         }
 
@@ -93,7 +100,7 @@ public final class EventuallyGroupExecutor {
             // this was the only execution path that skipped it.
             context.journal().evidenceOf(child.nodeId(), evidence);
 
-            conditionResults = evaluateConditions(group, evidence);
+            conditionResults = evaluateConditions(group, conditionParams, evidence);
             satisfied = !evidence.hasError() && conditionResults.stream()
                     .allMatch(condition -> condition.outcome() == AssertionResult.Outcome.PASS);
 
@@ -180,17 +187,39 @@ public final class EventuallyGroupExecutor {
         return null;
     }
 
+    /**
+     * The conditions' parameters, resolved as expressions like an assertion's.
+     * <p>
+     * A condition comparing against a value an earlier step produced is exactly
+     * what a polling block is usually for: wait until the record the API
+     * returned appears somewhere else.
+     */
+    private List<Map<String, Object>> resolveConditionParams(
+            PlanNode.EventuallyNode group, ExpressionContext expressionContext) {
+        List<Map<String, Object>> resolved = new ArrayList<>(group.conditions().size());
+        for (PlanNode.Condition condition : group.conditions()) {
+            resolved.add(expressionEvaluator.resolveInputs(
+                    condition.params(), expressionContext));
+        }
+        return resolved;
+    }
+
     private List<AssertionResult> evaluateConditions(
-            PlanNode.EventuallyNode group, NodeEvidence evidence) {
+            PlanNode.EventuallyNode group,
+            List<Map<String, Object>> conditionParams,
+            NodeEvidence evidence
+    ) {
         if (evidence.hasError()) {
             return List.of();
         }
         List<AssertionResult> results = new ArrayList<>();
-        for (PlanNode.Condition condition : group.conditions()) {
+        for (int index = 0; index < group.conditions().size(); index++) {
+            PlanNode.Condition condition = group.conditions().get(index);
+            Map<String, Object> params = conditionParams.get(index);
             AssertionProvider provider = assertionProviders.get(condition.assertionType());
             results.add(provider.evaluate(
-                    condition.assertionType(), condition.params(), evidence,
-                    new AssertionContext(group.nodeId().value(), condition.params())));
+                    condition.assertionType(), params, evidence,
+                    new AssertionContext(group.nodeId().value(), params)));
         }
         return results;
     }

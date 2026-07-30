@@ -24,7 +24,7 @@ Three consequences worth stating plainly:
   runners to execute exactly that. A team that invests in a scenario suite
   before 1.0 keeps it afterwards.
 
-## 2. Where 0.7.0 stands
+## 2. Where 0.7.2 stands
 
 | Milestone | State |
 |---|---|
@@ -165,6 +165,17 @@ What 0.7 turned up that the plan did not anticipate:
 
 This is the release where the product's central claim becomes true.
 
+**Done first, because everything else leans on it: assertion parameters are
+expressions** (ADR-016). "Compound invariants across HTTP, event, and database
+evidence" reads like a request for a compound assertion type. It is not: an
+invariant spanning components is a comparison between values two steps
+produced, and the only thing standing in the way was that `params` were the one
+place in the scenario language that did not resolve templates. Resolving them
+gives every assertion that exists — and every one added later — the reach a
+compound type would have had to reimplement. Deciding this before the JDBC
+connector arrives is what keeps 0.8's largest item from being designed under
+deadline.
+
 - JDBC observation connector: parameterized read-only observations, statement
   and connection deadlines, bounded rows, tabular evidence, mutation refused by
   both connector policy and database credentials (M3-03).
@@ -211,11 +222,12 @@ named refusal, never undefined behaviour.
   a lone `{{expr}}` resolving to null while the same expression interpolated
   yields an empty string; any parenthesis routing an expression to JMESPath; an
   assertion named `jsonpath` that evaluates JMESPath and documents a `matches`
-  check it does not implement; `equals` distinguishing 5 from 5.0; assertion
-  `params` being literal while step `inputs` are templates; a dotted path being
-  unable to index a list, which is why the first observed message is bound
+  check it does not implement; `equals` distinguishing 5 from 5.0; a dotted path
+  being unable to index a list, which is why the first observed message is bound
   beside the list rather than reached into. Each is small, and each becomes
-  permanent on the day `v1` is declared.
+  permanent on the day `v1` is declared. (Assertion `params` being literal while
+  step `inputs` are templates was on this list and is settled — see ADR-016 and
+  the 0.8 notes below.)
 - Out-of-process extension protocol, manifests, capability validation, SDK,
   reference extension, process isolation and resource limits (M6-02).
 - Supply chain: multi-architecture images, signed artifacts, SBOM, SLSA

@@ -1488,6 +1488,121 @@ class LocalEngineTest {
     /**
      * Connector that always returns HTTP 200.
      */
+    @Test
+    void anAssertionComparesAgainstAScenarioInput() {
+        // Parameters are expressions, so what an assertion expects can come
+        // from outside the scenario rather than being written twice.
+        ExpressionContext withInputs = ExpressionContext.builder()
+                .inputs(Map.of("expectedStatus", 200))
+                .build();
+        ExecutionPlan plan = ExecutionPlan.builder()
+                .runId(new RunId("run-params-input"))
+                .scenario(buildScenario())
+                .catalog(catalog)
+                .targetPolicy(policy)
+                .seed(42L)
+                .scenarioDigest("sha256:abc")
+                .catalogDigest("sha256:def")
+                .addNode(new PlanNode.OperationNode(
+                        new NodeId("create"), new OperationId("create-payment"),
+                        findOp("create-payment"), Map.of(), null, List.of(),
+                        SafetyClassification.MUTATING, 0, 0))
+                .addNode(new PlanNode.AssertionNode(
+                        new NodeId("expects-the-input"), "status",
+                        Map.of("expected", "{{inputs.expectedStatus}}"),
+                        new NodeId("create"), null, List.of(new NodeId("create")),
+                        SafetyClassification.READ_ONLY))
+                .build();
+
+        RunResult result = run(plan, withInputs, "params-input-journal.ndjson");
+
+        // The template kept its type: the provider read it as a number.
+        assertThat(result.nodeResults().get(new NodeId("expects-the-input")).status())
+                .isEqualTo(RunResult.Status.PASSED);
+    }
+
+    @Test
+    void anAssertionComparesOneStepAgainstAnother() {
+        // This is the cross-component invariant, expressed with what exists:
+        // the assertion on the second step compares against a value the first
+        // one produced. No compound assertion type is needed for it.
+        ExecutionPlan plan = ExecutionPlan.builder()
+                .runId(new RunId("run-params-compound"))
+                .scenario(buildScenario())
+                .catalog(catalog)
+                .targetPolicy(policy)
+                .seed(42L)
+                .scenarioDigest("sha256:abc")
+                .catalogDigest("sha256:def")
+                .addNode(new PlanNode.OperationNode(
+                        new NodeId("create"), new OperationId("create-payment"),
+                        findOp("create-payment"), Map.of(), "created", List.of(),
+                        SafetyClassification.MUTATING, 0, 0))
+                .addNode(new PlanNode.OperationNode(
+                        new NodeId("read-back"), new OperationId("get-payment"),
+                        findOp("get-payment"), Map.of(), null,
+                        List.of(new NodeId("create")),
+                        SafetyClassification.READ_ONLY, 0, 0))
+                .addNode(new PlanNode.AssertionNode(
+                        new NodeId("same-status-as-create"), "status",
+                        Map.of("expected", "{{steps.created.status}}"),
+                        new NodeId("read-back"), null,
+                        List.of(new NodeId("read-back"), new NodeId("create")),
+                        SafetyClassification.READ_ONLY))
+                .build();
+
+        RunResult result = run(plan, exprContext, "params-compound-journal.ndjson");
+
+        assertThat(result.nodeResults().get(new NodeId("same-status-as-create")).status())
+                .isEqualTo(RunResult.Status.PASSED);
+    }
+
+    @Test
+    void anAssertionReadingAnUnboundStepFailsRatherThanComparingAgainstNothing() {
+        // The compiler refuses this, but the engine must not pass if one ever
+        // reaches it: a comparison against nothing that reads as satisfied is
+        // the worst outcome a reliability tool has.
+        ExecutionPlan plan = ExecutionPlan.builder()
+                .runId(new RunId("run-params-unbound"))
+                .scenario(buildScenario())
+                .catalog(catalog)
+                .targetPolicy(policy)
+                .seed(42L)
+                .scenarioDigest("sha256:abc")
+                .catalogDigest("sha256:def")
+                .addNode(new PlanNode.OperationNode(
+                        new NodeId("create"), new OperationId("create-payment"),
+                        findOp("create-payment"), Map.of(), null, List.of(),
+                        SafetyClassification.MUTATING, 0, 0))
+                .addNode(new PlanNode.AssertionNode(
+                        new NodeId("expects-a-ghost"), "status",
+                        Map.of("expected", "{{steps.never-bound.status}}"),
+                        new NodeId("create"), null, List.of(new NodeId("create")),
+                        SafetyClassification.READ_ONLY))
+                .build();
+
+        RunResult result = run(plan, exprContext, "params-unbound-journal.ndjson");
+
+        RunResult.NodeResult assertion =
+                result.nodeResults().get(new NodeId("expects-a-ghost"));
+        assertThat(assertion.status()).isEqualTo(RunResult.Status.FAILED);
+        assertThat(assertion.error().message())
+                .contains("expected", "resolved to nothing");
+    }
+
+    /** Execute a plan with the stub connector and the status assertion. */
+    private RunResult run(ExecutionPlan plan, ExpressionContext context, String journalName) {
+        LocalEngine engine = new LocalEngine(
+                Map.of("http", new SuccessConnector()),
+                Map.of("status", new StatusAssertionProvider()));
+        try (RunJournal journal = new RunJournal(tempDir.resolve(journalName), true)) {
+            return engine.execute(
+                    plan, journal, context, connectorContext, new AtomicBoolean(false));
+        } catch (IOException unwritable) {
+            throw new AssertionError(unwritable);
+        }
+    }
+
     static class SuccessConnector implements Connector {
         @Override
         public ProtocolId protocol() { return new ProtocolId("http"); }

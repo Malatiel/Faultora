@@ -23,6 +23,18 @@ public class PlanCompiler {
     private static final String OBSERVATION_WAIT = "waitMs";
 
     /**
+     * A reference to a bound step's output inside a template.
+     * <p>
+     * Assertion parameters are expressions, so an assertion may compare against
+     * a value an earlier step produced. That makes the reference a real
+     * dependency, and the plan has to carry it: an assertion evaluated before
+     * the step it reads from would compare against nothing and pass.
+     */
+    private static final java.util.regex.Pattern STEP_REFERENCE =
+            java.util.regex.Pattern.compile(
+                    "\\{\\{[^}]*\\bsteps\\.([A-Za-z_][A-Za-z0-9_-]*)");
+
+    /**
      * Compile a scenario against a catalog.
      *
      * @param scenario        the parsed scenario document
@@ -678,6 +690,12 @@ public class PlanCompiler {
             Map<String, Object> params = step.params() != null ?
                     new LinkedHashMap<>(step.params()) : Map.of();
 
+            // What the parameters read from is what this assertion depends on.
+            if (!dependOnWhatParamsRead(
+                    params, nodes, childToGroup, step.id(), deps, diagnostics)) {
+                continue;
+            }
+
             Map<String, Object> schema = null;
             if (SCHEMA_ASSERTION.equals(step.assertionType())) {
                 schema = resolveResponseSchema(step, targetNode, catalog, nodes, diagnostics);
@@ -691,6 +709,80 @@ public class PlanCompiler {
                     targetNode, step.message(), deps,
                     SafetyClassification.READ_ONLY, schema
             ));
+        }
+    }
+
+    /**
+     * Make what an assertion's parameters read from into dependencies of the
+     * assertion.
+     * <p>
+     * A parameter naming a step that binds no output is a scenario error, and
+     * saying so here beats comparing against nothing at run time: the
+     * comparison would silently succeed or fail for a reason the author never
+     * wrote.
+     *
+     * @return false when the assertion must not be compiled
+     */
+    private boolean dependOnWhatParamsRead(
+            Map<String, Object> params,
+            List<PlanNode> nodes,
+            Map<String, String> childToGroup,
+            String stepId,
+            List<NodeId> deps,
+            List<PlanDiagnostic> diagnostics
+    ) {
+        Map<String, NodeId> boundOutputs = boundOutputs(nodes);
+        for (String binding : referencedBindings(params)) {
+            NodeId source = boundOutputs.get(binding);
+            if (source == null) {
+                diagnostics.add(PlanDiagnostic.error("assertions", stepId,
+                        "A parameter reads 'steps." + binding + "', which no earlier step "
+                                + "binds. Add 'outputAs: " + binding + "' to the step whose "
+                                + "value this assertion compares against"));
+                return false;
+            }
+            NodeId ordering = new NodeId(
+                    childToGroup.getOrDefault(source.value(), source.value()));
+            if (!deps.contains(ordering)) {
+                deps.add(ordering);
+            }
+        }
+        return true;
+    }
+
+    /** Output names the already-compiled steps publish, and the node behind each. */
+    private Map<String, NodeId> boundOutputs(List<PlanNode> nodes) {
+        Map<String, NodeId> bound = new LinkedHashMap<>();
+        for (PlanNode node : nodes) {
+            if (node instanceof PlanNode.OperationNode operation
+                    && operation.outputBinding() != null
+                    && !operation.outputBinding().isBlank()) {
+                bound.put(operation.outputBinding(), operation.nodeId());
+            }
+        }
+        return bound;
+    }
+
+    /** Output names the parameters read from, at any depth. */
+    private Set<String> referencedBindings(Object params) {
+        Set<String> bindings = new LinkedHashSet<>();
+        collectReferencedBindings(params, bindings);
+        return bindings;
+    }
+
+    private void collectReferencedBindings(Object value, Set<String> bindings) {
+        switch (value) {
+            case String text -> {
+                java.util.regex.Matcher reference = STEP_REFERENCE.matcher(text);
+                while (reference.find()) {
+                    bindings.add(reference.group(1));
+                }
+            }
+            case Map<?, ?> map -> map.values()
+                    .forEach(nested -> collectReferencedBindings(nested, bindings));
+            case List<?> list -> list
+                    .forEach(item -> collectReferencedBindings(item, bindings));
+            case null, default -> { /* nothing to read a reference out of */ }
         }
     }
 
@@ -795,6 +887,17 @@ public class PlanCompiler {
         Map<String, SchemaId> outcomes = operation.outcomes() == null
                 ? Map.of() : operation.outcomes();
         Object declaredStatus = step.params() == null ? null : step.params().get("status");
+        if (declaredStatus instanceof String text && text.contains("{{")) {
+            // The schema is resolved here, before the run, so the status that
+            // selects it has to be known here too. Treating a template as a
+            // literal status would look up a schema named "{{...}}" and report
+            // a missing outcome instead of the real problem.
+            diagnostics.add(PlanDiagnostic.error("assertions", step.id(),
+                    "params.status selects which declared response schema to check, so it "
+                            + "is resolved when the plan is built and cannot be an "
+                            + "expression"));
+            return null;
+        }
         SchemaId schemaId;
         if (declaredStatus != null) {
             schemaId = outcomes.get(String.valueOf(declaredStatus));

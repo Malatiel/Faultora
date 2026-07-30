@@ -654,6 +654,59 @@ Every assertion has this common shape:
 An assertion that cannot be evaluated is treated as a failed node rather than
 a silent pass.
 
+### Parameters are expressions
+
+`params` values resolve `{{...}}` templates against the same context step
+`inputs` do, including inside nested maps and lists. A value that is a single
+template keeps its type, so `expected: "{{inputs.expectedStatus}}"` compares as
+a number.
+
+This is how an invariant spanning components is written — there is no compound
+assertion type, because there does not need to be. An assertion on one step
+compares against a value another step produced:
+
+```yaml
+execute:
+  - id: create-payment
+    type: operation
+    operationId: create-payment
+    outputAs: created
+    inputs:
+      body:
+        amount: 2500
+
+  - id: read-ledger
+    type: operation
+    operationId: get-ledger-entry
+    dependsOn: [create-payment]
+    inputs:
+      paymentId: "{{steps.created.body.id}}"
+
+assertions:
+  - id: ledger-matches-the-payment
+    assertionType: jsonpath
+    targetStep: read-ledger
+    params:
+      path: amount
+      equals: "{{steps.created.body.amount}}"
+    message: The ledger records the amount the API accepted
+```
+
+Rules:
+
+- a parameter reading `steps.<name>` makes the step that binds `<name>` a
+  dependency of the assertion, so the value is bound before the comparison;
+- a parameter reading a name no step binds fails plan compilation and says
+  which `outputAs` is missing;
+- a parameter written as a template that resolves to nothing fails the
+  assertion by name, rather than comparing against null;
+- `params.status` of a [`schema`](#schema) assertion selects which declared
+  response schema to check and is resolved when the plan is built, so it cannot
+  be a template;
+- the `until` conditions of an [eventually block](#eventually-steps) resolve the
+  same way, once, alongside the polled step's inputs — every poll asks the
+  identical question.
+
 ### `status`
 
 Checks the HTTP response status.
@@ -958,9 +1011,6 @@ Three properties are worth knowing before writing one:
 - **The window closes when its wait is spent**, whether or not the channel has
   gone quiet. A step ends early only when `maxMessages` matching messages have
   arrived; a busy channel cannot extend it.
-
-Assertion `params` are literal: unlike step `inputs`, they are not expression
-templates. Select the messages in the step, and assert on what was selected.
 
 ## Unsupported execution features
 

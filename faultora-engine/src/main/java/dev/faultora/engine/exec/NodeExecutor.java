@@ -59,8 +59,8 @@ public final class NodeExecutor {
             NodeEvidence evidence = new NodeEvidence(context.connectorContext().evidencePolicy());
 
             Optional<RunResult.NodeResult> earlyResult = switch (node) {
-                case PlanNode.AssertionNode assertion -> Optional.of(
-                        assertions.execute(assertion, context, evidence, nodeStart));
+                case PlanNode.AssertionNode assertion -> Optional.of(assertions.execute(
+                        assertion, context, evidence, expressionContext, nodeStart));
                 case PlanNode.WaitNode wait ->
                         awaitLocally(wait, context, evidence, nodeStart);
                 case PlanNode.OperationNode operation ->

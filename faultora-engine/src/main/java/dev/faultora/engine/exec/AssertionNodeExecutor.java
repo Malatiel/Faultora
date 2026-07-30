@@ -5,6 +5,8 @@ import dev.faultora.engine.plan.PlanNode;
 import dev.faultora.engine.run.RunResult;
 import dev.faultora.model.catalog.NormalizedError;
 import dev.faultora.model.identifier.NodeId;
+import dev.faultora.spec.expression.ExpressionContext;
+import dev.faultora.spec.expression.ExpressionEvaluator;
 import dev.faultora.spi.contract.AssertionProvider;
 import dev.faultora.spi.context.AssertionContext;
 import dev.faultora.spi.result.AssertionResult;
@@ -18,10 +20,18 @@ import java.util.Map;
  * An assertion that cannot be evaluated fails the node: unevaluatable is not
  * the same as satisfied, and reporting it as a pass would be the worst
  * possible outcome for a reliability tool.
+ * <p>
+ * Parameters are expressions, resolved here against the same context a step's
+ * inputs are. That is what makes an invariant spanning components expressible
+ * without a construct of its own: an assertion on a database row compares
+ * against the value an HTTP step returned, using the assertion types that
+ * already exist. The plan carries a dependency on every step a parameter reads,
+ * so the value is bound before the comparison happens.
  */
 final class AssertionNodeExecutor {
 
     private final Map<String, AssertionProvider> providers;
+    private final ExpressionEvaluator expressionEvaluator = new ExpressionEvaluator();
 
     AssertionNodeExecutor(Map<String, AssertionProvider> providers) {
         this.providers = providers;
@@ -31,6 +41,7 @@ final class AssertionNodeExecutor {
             PlanNode.AssertionNode node,
             NodeContext context,
             NodeEvidence ownEvidence,
+            ExpressionContext expressionContext,
             long startedAtMs
     ) {
         NodeId nodeId = node.nodeId();
@@ -45,9 +56,30 @@ final class AssertionNodeExecutor {
                     NormalizedError.ErrorCategory.VALIDATION, startedAtMs);
         }
 
+        Map<String, Object> params;
+        try {
+            params = expressionEvaluator.resolveInputs(node.params(), expressionContext);
+        } catch (RuntimeException unresolvable) {
+            // An assertion comparing against a value it could not resolve would
+            // compare against nothing, and pass or fail for a reason its author
+            // never wrote.
+            return NodeResults.failed(node,
+                    "Cannot resolve this assertion's parameters: " + unresolvable.getMessage(),
+                    NormalizedError.ErrorCategory.VALIDATION, startedAtMs);
+        }
+
+        String emptyReference = firstReferenceResolvingToNothing(node.params(), params);
+        if (emptyReference != null) {
+            // A template that resolved to nothing is a scenario mistake, not a
+            // comparison. Left alone it would compare against null and read as
+            // whatever the provider makes of that.
+            return NodeResults.failed(node, emptyReference,
+                    NormalizedError.ErrorCategory.VALIDATION, startedAtMs);
+        }
+
         AssertionResult result = provider.evaluate(
-                node.assertionType(), node.params(), targetEvidence,
-                new AssertionContext(nodeId.value(), node.params(), node.schema()));
+                node.assertionType(), params, targetEvidence,
+                new AssertionContext(nodeId.value(), params, node.schema()));
 
         ownEvidence.durationMs(System.currentTimeMillis() - startedAtMs);
         context.journal().assertionEvaluated(
@@ -76,5 +108,28 @@ final class AssertionNodeExecutor {
         return new RunResult.NodeResult(
                 nodeId, NodeResults.typeOf(node), RunResult.Status.FAILED,
                 0, ownEvidence.durationMs(), List.of(result), error);
+    }
+
+    /**
+     * The first parameter whose expression resolved to nothing, described.
+     * <p>
+     * A parameter written as a literal may legitimately be absent; one written
+     * as an expression that resolved to nothing cannot be — the scenario names a
+     * value the run does not have. Comparing against it would let the provider
+     * decide what null means, and the answer would not be the author's.
+     *
+     * @return the mistake, or null when every expression resolved
+     */
+    private static String firstReferenceResolvingToNothing(
+            Map<String, Object> declared, Map<String, Object> resolved) {
+        for (Map.Entry<String, Object> parameter : declared.entrySet()) {
+            if (parameter.getValue() instanceof String template
+                    && template.contains("{{")
+                    && resolved.get(parameter.getKey()) == null) {
+                return "Parameter '" + parameter.getKey() + "' reads " + template
+                        + ", which resolved to nothing";
+            }
+        }
+        return null;
     }
 }

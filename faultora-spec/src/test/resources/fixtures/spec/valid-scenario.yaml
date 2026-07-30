@@ -44,7 +44,7 @@ assertions:
     assertionType: jsonpath
     params:
       path: "$.id"
-      equals: "{{firstPayment.id}}"
+      equals: "{{steps.firstPayment.body.id}}"
     targetStep: duplicate-request
     message: Duplicate request should return the same payment ID
 

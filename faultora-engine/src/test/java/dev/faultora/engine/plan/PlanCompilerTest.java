@@ -321,6 +321,87 @@ class PlanCompilerTest {
     }
 
     @Test
+    void anAssertionDependsOnTheStepsItsParametersRead() {
+        // Parameters are expressions, so a parameter reading an earlier step is
+        // a real dependency. Without it the assertion could be ordered before
+        // the step it compares against and evaluate against nothing.
+        ScenarioDocument scenario = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("compound", null, Map.of(), Map.of()),
+                null, null,
+                List.of(new ScenarioStep(
+                        "create", "operation", "create-payment", Map.of(),
+                        "created", List.of(), null, null, Map.of())),
+                null,
+                List.of(new AssertionStep(
+                        "same-id", "jsonpath",
+                        Map.of("path", "id", "equals", "{{steps.created.body.id}}"),
+                        "create", List.of(), null, Map.of())),
+                null, null);
+
+        PlanCompilationResult result = compiler.compile(
+                scenario, catalog, policy, new RunId("run-1"), 1L, "d", "d");
+
+        assertThat(result.isSuccess()).isTrue();
+        PlanNode assertion = result.plan().nodes().stream()
+                .filter(node -> node.nodeId().equals(new NodeId("same-id")))
+                .findFirst().orElseThrow();
+        assertThat(assertion.dependencies()).contains(new NodeId("create"));
+    }
+
+    @Test
+    void anAssertionReadingAnUnboundStepIsRefusedWithItsName() {
+        ScenarioDocument scenario = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("compound", null, Map.of(), Map.of()),
+                null, null,
+                List.of(new ScenarioStep(
+                        "create", "operation", "create-payment", Map.of(),
+                        null, List.of(), null, null, Map.of())),
+                null,
+                List.of(new AssertionStep(
+                        "same-id", "jsonpath",
+                        Map.of("path", "id", "equals", "{{steps.created.body.id}}"),
+                        "create", List.of(), null, Map.of())),
+                null, null);
+
+        PlanCompilationResult result = compiler.compile(
+                scenario, catalog, policy, new RunId("run-1"), 1L, "d", "d");
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.diagnostics()).anyMatch(diagnostic ->
+                diagnostic.message().contains("steps.created")
+                        && diagnostic.message().contains("outputAs: created"));
+    }
+
+    @Test
+    void aSchemaAssertionCannotSelectItsResponseWithAnExpression() {
+        // The schema is resolved while the plan is built, so the status that
+        // selects it has to be known then. A template would be looked up as a
+        // literal status and reported as a missing outcome.
+        ScenarioDocument scenario = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("schema-template", null, Map.of(), Map.of()),
+                null, null,
+                List.of(new ScenarioStep(
+                        "create", "operation", "create-payment", Map.of(),
+                        null, List.of(), null, null, Map.of())),
+                null,
+                List.of(new AssertionStep(
+                        "matches-schema", "schema",
+                        Map.of("status", "{{inputs.expectedStatus}}"),
+                        "create", List.of(), null, Map.of())),
+                null, null);
+
+        PlanCompilationResult result = compiler.compile(
+                scenario, catalog, policy, new RunId("run-1"), 1L, "d", "d");
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.diagnostics()).anyMatch(diagnostic ->
+                diagnostic.message().contains("cannot be an expression"));
+    }
+
+    @Test
     void compileRejectsUnsupportedStepType() {
         ScenarioDocument scenario = scenarioWithExecuteStep(new ScenarioStep(
                 "script-step", "script", null,

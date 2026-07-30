@@ -17,3 +17,4 @@
 | [ADR-013](ADR-013-request-generation.md) | Request generation from catalog schemas | Accepted |
 | [ADR-014](ADR-014-event-observation.md) | Bounded, repeatable observation of event channels | Accepted |
 | [ADR-015](ADR-015-asyncapi-direction.md) | The direction of an imported AsyncAPI operation | Accepted |
+| [ADR-016](ADR-016-assertion-parameters.md) | Assertion parameters are expressions | Accepted |

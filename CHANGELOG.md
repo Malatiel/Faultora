@@ -2,6 +2,30 @@
 
 All notable changes to Faultora are documented in this file.
 
+## Unreleased — 0.8 in progress
+
+### Added
+
+- **Assertion parameters are expressions.** `params` values resolve `{{...}}`
+  templates against the same context step `inputs` do, so an assertion can
+  compare against a value another step produced. This is how a cross-component
+  invariant is written, and it is why there is no compound assertion type: a
+  dedicated one would have to reimplement comparison for every existing
+  assertion, while resolving parameters gives `status`, `jsonpath`, `duration`,
+  the event assertions, and everything added later the same reach. ADR-016
+  records the decision.
+- A parameter reading `steps.<name>` makes the step binding that name a
+  dependency of the assertion, so the value is bound before the comparison
+  happens. A parameter reading a name no step binds fails plan compilation and
+  says which `outputAs` is missing; a template that resolves to nothing fails
+  the assertion by name rather than comparing against null.
+- The `until` conditions of an eventually block resolve the same way, once,
+  alongside the polled step's inputs — every poll asks the identical question.
+
+`params.status` of a `schema` assertion stays literal: it selects which declared
+response schema to check, and that happens when the plan is built. A template
+there is refused with a diagnostic.
+
 ## 0.7.2 — 2026-07-30
 
 A review of the events release; everything here was found by reading the code
