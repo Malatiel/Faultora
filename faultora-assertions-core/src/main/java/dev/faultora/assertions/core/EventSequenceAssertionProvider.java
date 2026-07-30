@@ -58,9 +58,35 @@ public class EventSequenceAssertionProvider implements AssertionProvider {
         boolean ordered = !Boolean.FALSE.equals(params.get("ordered"));
         List<MessageEvidence> messages = ObservedMessages.of(evidence);
 
+        // A locator nothing can read makes every step of the sequence miss, and
+        // the result would read as "the workflow did not happen" rather than
+        // "the evidence policy withheld what this checks".
+        String unreadable = unreadableLocator(expected, messages);
+        if (unreadable != null) {
+            return AssertionResult.indeterminate(ObservedMessages.unreadable(unreadable));
+        }
+
         return ordered
                 ? inOrder(expected, messages)
                 : inAnyOrder(expected, messages);
+    }
+
+    /**
+     * The first locator the sequence names that no observed message can answer,
+     * or null when every one of them is readable.
+     */
+    private String unreadableLocator(
+            List<Map<String, String>> expected, List<MessageEvidence> messages) {
+        for (Map<String, String> clauses : expected) {
+            for (String locator : clauses.keySet()) {
+                boolean readableSomewhere = messages.stream()
+                        .anyMatch(message -> ObservedMessages.isReadable(message, locator));
+                if (!messages.isEmpty() && !readableSomewhere) {
+                    return locator;
+                }
+            }
+        }
+        return null;
     }
 
     /** Each expected message appears after the one before it. */

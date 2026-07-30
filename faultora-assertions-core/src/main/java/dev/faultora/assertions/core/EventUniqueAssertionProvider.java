@@ -54,9 +54,7 @@ public class EventUniqueAssertionProvider implements AssertionProvider {
         for (int index = 0; index < messages.size(); index++) {
             MessageEvidence message = messages.get(index);
             if (!ObservedMessages.isReadable(message, locator)) {
-                return AssertionResult.indeterminate(
-                        "The message payload was not captured, so '" + locator
-                                + "' cannot be read");
+                return AssertionResult.indeterminate(ObservedMessages.unreadable(locator));
             }
             String value = ObservedMessages.value(message, locator);
             if (value == null) {

@@ -234,6 +234,10 @@ public sealed interface RunEvent {
      * @param observed messages the window contained
      * @param matched  messages the step's selector accepted
      * @param waitedMs how long the window was open for
+     * @param requestedWaitMs how long the step asked for, which the run's
+     *                        per-request timeout may have shortened; a
+     *                        scenario's stated wait must not read as fact when
+     *                        it was not honoured
      */
     record MessagesObserved(
             String eventType,
@@ -243,7 +247,8 @@ public sealed interface RunEvent {
             String channel,
             long observed,
             int matched,
-            long waitedMs
+            long waitedMs,
+            long requestedWaitMs
     ) implements RunEvent {
         public MessagesObserved {
             eventType = "MESSAGES_OBSERVED";

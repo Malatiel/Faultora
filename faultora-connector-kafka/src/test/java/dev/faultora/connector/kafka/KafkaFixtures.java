@@ -52,7 +52,12 @@ final class KafkaFixtures {
     }
 
     static ConnectorContext context(EvidencePolicy policy) {
-        return new ConnectorContext(policy, name -> null, 1000, 30_000, 60_000, Map.of());
+        return context(policy, Map.of());
+    }
+
+    /** A context carrying operator-supplied connector configuration. */
+    static ConnectorContext context(EvidencePolicy policy, Map<String, Object> config) {
+        return new ConnectorContext(policy, name -> null, 1000, 30_000, 60_000, config);
     }
 
     static ConnectorContext context() {

@@ -54,6 +54,8 @@ public final class RunSummary {
         Map<String, Integer> polls = new HashMap<>();
         Map<String, String> generated = new HashMap<>();
         Map<String, String> messaging = new HashMap<>();
+        Map<String, Integer> observations = new HashMap<>();
+        Map<String, String> lastObservation = new HashMap<>();
 
         for (RunEvent event : events) {
             switch (event) {
@@ -70,9 +72,13 @@ public final class RunSummary {
                 case RunEvent.MessagePublished published -> messaging.merge(
                         published.nodeId().value(), describe(published),
                         (existing, added) -> existing + ", " + added);
-                case RunEvent.MessagesObserved observed -> messaging.merge(
-                        observed.nodeId().value(), describe(observed),
-                        (existing, added) -> existing + ", " + added);
+                // A polling block observes once per poll. The report shows the
+                // last window and says how many there were, because twenty
+                // concatenated descriptions are not a report.
+                case RunEvent.MessagesObserved observed -> {
+                    observations.merge(observed.nodeId().value(), 1, Integer::sum);
+                    lastObservation.put(observed.nodeId().value(), describe(observed));
+                }
                 case RunEvent.NodeCompleted nodeCompleted -> {
                     Node node = new Node(
                             nodeCompleted.nodeId().value(), "PASSED",
@@ -118,7 +124,10 @@ public final class RunSummary {
             node.retries = retries.get(node.name());
             node.polls = polls.get(node.name());
             node.generated = generated.get(node.name());
-            node.messaging = messaging.get(node.name());
+            node.messaging = describeMessaging(
+                    messaging.get(node.name()),
+                    lastObservation.get(node.name()),
+                    observations.get(node.name()));
         }
 
         return new RunSummary(
@@ -129,6 +138,24 @@ public final class RunSummary {
     private static String describe(RunEvent.InputsGenerated inputs) {
         String label = inputs.field() + " (" + inputs.strategy() + ")";
         return inputs.violation() == null ? label : label + ": " + inputs.violation();
+    }
+
+    /**
+     * What a node did on a channel, in one line: what it published, and the
+     * last window it observed with a count when it observed more than one.
+     */
+    private static String describeMessaging(
+            String published, String lastObserved, Integer observationCount) {
+        List<String> parts = new ArrayList<>();
+        if (published != null) {
+            parts.add(published);
+        }
+        if (lastObserved != null) {
+            parts.add(observationCount != null && observationCount > 1
+                    ? lastObserved + " (last of " + observationCount + " observations)"
+                    : lastObserved);
+        }
+        return parts.isEmpty() ? null : String.join(", ", parts);
     }
 
     /** How a published message is described in a report. */
@@ -144,8 +171,14 @@ public final class RunSummary {
      * selector.
      */
     private static String describe(RunEvent.MessagesObserved observed) {
-        return "observed " + observed.matched() + " of " + observed.observed()
+        String window = "observed " + observed.matched() + " of " + observed.observed()
                 + " on " + observed.channel();
+        // A wait the run shortened is stated, not absorbed: a scenario asking
+        // for a minute and getting thirty seconds must be able to see that.
+        return observed.requestedWaitMs() > observed.waitedMs()
+                ? window + ", waited " + observed.waitedMs() + "ms of the "
+                        + observed.requestedWaitMs() + "ms asked for"
+                : window;
     }
 
     public boolean passed() {

@@ -189,6 +189,50 @@ class EventAssertionsTest {
     }
 
     @Test
+    void aHeaderTheEvidencePolicyStrippedIsIndeterminateNotFailed() {
+        // A message that carried no headers and a policy that captured none look
+        // the same in the evidence. Both outcomes fail the node, so the accurate
+        // message is the one to give.
+        var evidence = ObservedEvidence.observing().message("pay-1", "{}");
+
+        assertThat(correlation.evaluate("event-correlation",
+                Map.of("by", "header:correlation-id"), evidence, CONTEXT))
+                .satisfies(result -> {
+                    assertThat(result.outcome())
+                            .isEqualTo(AssertionResult.Outcome.INDETERMINATE);
+                    assertThat(result.message()).contains("No headers were captured");
+                });
+        assertThat(unique.evaluate("event-unique",
+                Map.of("by", "header:correlation-id"), evidence, CONTEXT).outcome())
+                .isEqualTo(AssertionResult.Outcome.INDETERMINATE);
+    }
+
+    @Test
+    void aSequenceOverAWithheldPayloadIsIndeterminateNotFailed() {
+        // Otherwise every step of the sequence misses and the verdict reads as
+        // "the workflow did not happen".
+        var evidence = ObservedEvidence.observing().withheldMessage("pay-1");
+
+        AssertionResult result = sequence.evaluate("event-sequence",
+                Map.of("of", List.of(Map.of("payload:status", "settled"))),
+                evidence, CONTEXT);
+
+        assertThat(result.outcome()).isEqualTo(AssertionResult.Outcome.INDETERMINATE);
+        assertThat(result.message()).contains("payload was not captured");
+    }
+
+    @Test
+    void aSequenceOverAReadableKeyStillDecides() {
+        var evidence = ObservedEvidence.observing()
+                .withheldMessage("pay-1").withheldMessage("pay-2");
+
+        assertThat(sequence.evaluate("event-sequence",
+                Map.of("of", List.of(Map.of("key", "pay-1"), Map.of("key", "pay-2"))),
+                evidence, CONTEXT).outcome())
+                .isEqualTo(AssertionResult.Outcome.PASS);
+    }
+
+    @Test
     void anAssertionMissingItsOwnParametersSaysSoRatherThanPassing() {
         var evidence = ObservedEvidence.observing().message("a", "{}");
 

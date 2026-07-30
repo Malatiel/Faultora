@@ -533,7 +533,7 @@ public class PlanCompiler {
 
         Map<String, Object> inputExpressions = step.inputs() != null ?
                 new LinkedHashMap<>(step.inputs()) : Map.of();
-        if (!observationFitsTheBudget(
+        if (!observationFitsTheRunsBudget(
                 inputExpressions, targetPolicy, phase, stepId, diagnostics)) {
             return null;
         }
@@ -695,27 +695,23 @@ public class PlanCompiler {
     }
 
     /**
-     * The run's deadline, bounded by the policy's wall-clock budget.
-     * <p>
-     * A scenario declaring no deadline inherits the operator's; one declaring
-     * a longer deadline is refused rather than quietly shortened. Silently
-     * capping would let a scenario read as if it had an hour while the run
-     * stopped after five minutes, and the author would debug the wrong thing.
-     */
-    /**
      * Refuse a step that asks to watch a channel for longer than the whole run
      * is allowed to last.
      * <p>
-     * A connector caps its own waiting at the run's request timeout, so such a
-     * step cannot actually overrun — but it would quietly wait for a fraction
-     * of what its author wrote, and a scenario whose stated wait is fiction is
-     * worse than one that fails to compile. Only a literal is checked: a wait
-     * computed from an expression is not known until the step runs, and the
-     * connector's cap is what holds there.
+     * This is the coarse bound, and the only one the compiler can apply: the
+     * limit that actually shortens an observation is the run's per-request
+     * timeout, which is connector configuration and is not known here. A wait
+     * between the two is therefore compiled and then shortened — so the
+     * connector records both what was asked for and what it waited, and the
+     * report shows the difference rather than leaving the scenario's stated
+     * wait to read as fact.
+     * <p>
+     * Only a literal is checked. A wait computed from an expression is not
+     * known until the step runs.
      *
      * @return false when the step must not be compiled
      */
-    private boolean observationFitsTheBudget(
+    private boolean observationFitsTheRunsBudget(
             Map<String, Object> inputs,
             TargetPolicy targetPolicy,
             String phase,
@@ -737,6 +733,15 @@ public class PlanCompiler {
                         + targetPolicy.maxDurationMs() + "ms for the whole run"));
         return false;
     }
+
+    /**
+     * The run's deadline, bounded by the policy's wall-clock budget.
+     * <p>
+     * A scenario declaring no deadline inherits the operator's; one declaring
+     * a longer deadline is refused rather than quietly shortened. Silently
+     * capping would let a scenario read as if it had an hour while the run
+     * stopped after five minutes, and the author would debug the wrong thing.
+     */
 
     private long boundedByPolicy(
             long scenarioTimeoutMs, TargetPolicy targetPolicy,

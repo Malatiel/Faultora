@@ -3,66 +3,57 @@ package dev.faultora.connector.kafka;
 import dev.faultora.model.catalog.TargetDefinition;
 import dev.faultora.spi.contract.Connector;
 import org.apache.kafka.clients.consumer.Consumer;
-import org.apache.kafka.clients.consumer.OffsetAndTimestamp;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 
 /**
- * One target's clients and observation floors, for the length of a run.
+ * One operation's clients on one target.
  * <p>
- * The floor is the point in a topic a run is willing to look back to, and it is
- * <em>when the run started</em>, resolved through the broker's own timestamps.
- * That is the only anchor that works for a channel the run does not write to:
- * the effect a scenario is waiting for is produced by the application under
- * test, and by the time the run first reads that channel the event it is
- * looking for has usually already been written. An anchor taken at that first
- * read would sit above the event and never see it.
- * <p>
- * Resolution stays lazy — a topic is looked up the first time it is used — but
- * what is resolved is a time, not a position, so the answer does not depend on
- * when the lookup happened.
- * <p>
- * Clients are created on first use, so a run that only publishes never opens a
- * consumer, and a target that is never used opens nothing at all.
+ * A prepared target lasts a single invocation, and the two clients it needs
+ * have opposite lifetimes because Kafka gives them opposite guarantees:
+ * <ul>
+ *   <li>a <b>producer</b> is thread-safe and meant to be shared, so it belongs
+ *       to the run and is handed here rather than created here — publishing
+ *       from a parallel group opens one connection, not one per step;</li>
+ *   <li>a <b>consumer</b> belongs to the single thread that polls it. Sharing
+ *       one between concurrent steps is not slow but wrong: the client refuses
+ *       concurrent access outright, and releasing one step's target would close
+ *       the client another step was reading from. So each prepared target
+ *       creates its own, lazily, and closes only that.</li>
+ * </ul>
+ * The floors an observation reads from are the run's, not this target's — see
+ * {@link ObservationFloors}.
  */
 final class KafkaPreparedTarget implements Connector.PreparedTarget {
 
-    /** How long metadata lookups wait before the operation gives up. */
-    private static final Duration METADATA_TIMEOUT = Duration.ofSeconds(15);
-
     private final TargetDefinition target;
     private final BootstrapServers bootstrap;
-    private final KafkaClients clients;
-    private final Map<String, Object> producerConfig;
-    private final Map<String, Object> consumerConfig;
-    private final Map<String, Map<TopicPartition, Long>> floors = new ConcurrentHashMap<>();
-    private final long observeFromMs;
+    private final Supplier<Producer<byte[], byte[]>> sharedProducer;
+    private final Supplier<Consumer<byte[], byte[]>> newConsumer;
+    private final ObservationFloors floors;
 
-    private Producer<byte[], byte[]> producer;
     private Consumer<byte[], byte[]> consumer;
 
     KafkaPreparedTarget(
             TargetDefinition target,
             BootstrapServers bootstrap,
-            KafkaClients clients,
-            Map<String, Object> producerConfig,
-            Map<String, Object> consumerConfig,
-            long observeFromMs
+            Supplier<Producer<byte[], byte[]>> sharedProducer,
+            Supplier<Consumer<byte[], byte[]>> newConsumer,
+            ObservationFloors floors
     ) {
-        this.observeFromMs = observeFromMs;
         this.target = target;
         this.bootstrap = bootstrap;
-        this.clients = clients;
-        this.producerConfig = Map.copyOf(producerConfig);
-        this.consumerConfig = Map.copyOf(consumerConfig);
+        this.sharedProducer = sharedProducer;
+        this.newConsumer = newConsumer;
+        this.floors = floors;
     }
 
     @Override
@@ -74,22 +65,26 @@ final class KafkaPreparedTarget implements Connector.PreparedTarget {
         return bootstrap;
     }
 
-    synchronized Producer<byte[], byte[]> producer() {
-        if (producer == null) {
-            producer = clients.producer(producerConfig);
-        }
-        return producer;
+    /** The run's producer for this target. */
+    Producer<byte[], byte[]> producer() {
+        return sharedProducer.get();
     }
 
-    synchronized Consumer<byte[], byte[]> consumer() {
+    /** This operation's own consumer, created when it is first needed. */
+    Consumer<byte[], byte[]> consumer() {
         if (consumer == null) {
-            consumer = clients.consumer(consumerConfig);
+            consumer = newConsumer.get();
         }
         return consumer;
     }
 
     /**
      * The partitions of a topic, in a stable order.
+     * <p>
+     * Asked of the broker every time rather than cached: partitions can be
+     * added to a topic while a run is in progress, and a cache would go on
+     * reading the partitions that existed when the run started, silently
+     * missing everything written to a new one.
      *
      * @throws IllegalStateException when the broker knows no such topic
      */
@@ -100,49 +95,22 @@ final class KafkaPreparedTarget implements Connector.PreparedTarget {
         }
         List<TopicPartition> partitions = new ArrayList<>(known.size());
         known.stream()
-                .sorted(java.util.Comparator.comparingInt(PartitionInfo::partition))
+                .sorted(Comparator.comparingInt(PartitionInfo::partition))
                 .forEach(info -> partitions.add(
                         new TopicPartition(info.topic(), info.partition())));
         return partitions;
     }
 
-    /**
-     * The floor for a topic: the first message written at or after the run
-     * began.
-     * <p>
-     * A partition holding nothing that recent has no such offset, and its floor
-     * is its current end — there is nothing to look back at, and everything the
-     * run cares about is still to come.
-     */
+    /** Where an observation of this topic starts. */
     Map<TopicPartition, Long> floor(String topic) {
-        return floors.computeIfAbsent(topic, name -> {
-            List<TopicPartition> partitions = partitions(name);
-            Map<TopicPartition, Long> askedAt = new LinkedHashMap<>();
-            partitions.forEach(partition -> askedAt.put(partition, observeFromMs));
-
-            Map<TopicPartition, OffsetAndTimestamp> byTime =
-                    consumer().offsetsForTimes(askedAt, METADATA_TIMEOUT);
-            Map<TopicPartition, Long> ends = consumer().endOffsets(partitions, METADATA_TIMEOUT);
-
-            Map<TopicPartition, Long> floor = new LinkedHashMap<>();
-            for (TopicPartition partition : partitions) {
-                OffsetAndTimestamp first = byTime == null ? null : byTime.get(partition);
-                floor.put(partition, first != null
-                        ? first.offset() : ends.getOrDefault(partition, 0L));
-            }
-            return Map.copyOf(floor);
-        });
+        return floors.of(target.id().value(), topic, consumer(), partitions(topic));
     }
 
-    /** Release both clients. Idempotent: a run may be closed more than once. */
-    synchronized void close() {
-        if (producer != null) {
-            try {
-                producer.close(Duration.ofSeconds(5));
-            } finally {
-                producer = null;
-            }
-        }
+    /**
+     * Release what this operation owns, and only that. The producer outlives it
+     * and is closed when the run is.
+     */
+    void close() {
         if (consumer != null) {
             try {
                 consumer.close(Duration.ofSeconds(5));

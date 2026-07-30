@@ -52,6 +52,15 @@ final class OperationCollector {
             return List.of();
         }
         TargetId target = targets.get(0).id();
+        if (targets.size() > 1) {
+            // Choosing per channel needs the channel's own `servers`, which this
+            // release does not read. Saying so beats letting a document with two
+            // clusters send every operation at the first one in silence.
+            warnings.add("The document declares " + targets.size()
+                    + " Kafka servers; every operation was bound to '" + target.value()
+                    + "'. Bind the others with --target <id>=<url>, or split the "
+                    + "description: per-channel server selection is not read yet");
+        }
 
         List<OperationDefinition> collected = new ArrayList<>();
         operations.properties().forEach(entry -> {
@@ -80,6 +89,11 @@ final class OperationCollector {
             return null;
         }
         JsonNode channel = SourceDocument.resolve(root, channelReference);
+        if (channel.get("servers") != null) {
+            warnings.add("Channel of operation '" + id + "' names its own servers, "
+                    + "which this release does not read; the operation is bound to the "
+                    + "document's first Kafka server");
+        }
         String topic = topicOf(channel, channelReference);
         if (topic == null) {
             warnings.add("Operation '" + id + "' is on a channel with no address "

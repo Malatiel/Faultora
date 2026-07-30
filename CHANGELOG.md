@@ -2,6 +2,61 @@
 
 All notable changes to Faultora are documented in this file.
 
+## 0.7.2 — 2026-07-30
+
+A review of the events release; everything here was found by reading the code
+rather than by a failing run, which is why most of it is about claims that were
+not yet true.
+
+### Fixed
+
+- **Concurrent steps no longer share a Kafka client.** A prepared target was
+  cached per target and handed to every step, so two steps of a parallel group
+  drove one consumer from two threads — which the client refuses outright — and
+  the first step to finish closed it under the second. The cache bought nothing:
+  the engine prepares and releases around every invocation, so it only ever held
+  an entry while steps overlapped. Each operation now opens its own consumer and
+  closes only that; the producer is shared for the run because a Kafka producer
+  is thread-safe; and the observation floors moved onto the connector, where a
+  run-scoped cache belongs.
+- **An observation cannot outlive its wait.** The poll loop continued while
+  messages kept arriving, so on a live channel a window stayed open past
+  `waitMs` — and with a selector matching nothing there was no bound at all
+  short of the scenario deadline. ADR-014 claimed otherwise, which made this the
+  most serious of the set: a stated bound that does not hold. The window now
+  closes when its wait is spent; a zero wait still reads the batch already
+  there.
+- **The Kafka settings pass-through can no longer replace the broker list.**
+  Operator settings were applied over the connector's own, so
+  `kafka.bootstrap.servers` displaced the list the destination policy had just
+  verified — a policy bypass wearing configuration's clothes. That key, the
+  client id, and the serializers the evidence path depends on are refused by
+  name; TLS, SASL, and tuning still pass through.
+- **A polling block's observations reach the journal.** Every poll is an
+  execution, but only the node lifecycle journalled evidence, so
+  `MESSAGE_PUBLISHED` and `MESSAGES_OBSERVED` were missing for exactly the
+  pattern this release advertises. The translation moved into the journal writer
+  and both paths call it. A report shows the last window and how many there
+  were, rather than twenty concatenated descriptions.
+- **A wait the run shortens is stated rather than absorbed.** `MESSAGES_OBSERVED`
+  now records what the step asked for beside what it waited, and the report says
+  so when they differ. The compile-time check kept the only bound a plan can
+  know — the run's whole budget — and its documentation no longer implies it
+  catches the per-request cap, which is connector configuration.
+- **Unreadable evidence is indeterminate in every event assertion.**
+  `event-sequence` never consulted readability, and `event-correlation` treated a
+  header locator as readable even when the evidence policy had stripped it, so
+  both failed where `event-count` and `event-unique` correctly reported
+  indeterminate. Both outcomes fail the node; only one of them is accurate.
+- An AsyncAPI document declaring more than one Kafka server, or a channel naming
+  its own servers, is warned about instead of having every operation bound to
+  the first server in silence. Per-channel server selection is still not read.
+- The expression context binds observed messages by their coordinates and keeps
+  the payload only on the first, which is the one a scenario reads. The whole
+  list put a second copy of every payload beside the one the evidence map
+  already holds for the length of the run.
+- An oversized AsyncAPI document is refused before it is parsed, not after.
+
 ## 0.7.1 — 2026-07-29
 
 ### Fixed

@@ -21,8 +21,8 @@ import java.util.Map;
  * <p>
  * An observation is bounded three ways, and all three are needed:
  * <ul>
- *   <li><b>below</b>, by the topic's floor — the position the run reached the
- *       topic at — so an observation never reports history that predates the
+ *   <li><b>below</b>, by the topic's floor — where the channel stood when the
+ *       run began — so an observation never reports history that predates the
  *       run. {@code from: beginning} says otherwise, explicitly;</li>
  *   <li><b>above</b>, by a wait that the run's request timeout caps, so no
  *       scenario can hold a run open by observing;</li>
@@ -46,7 +46,15 @@ final class EventObserver {
 
     /** How many matching messages an observation collects when nothing says. */
     private static final int DEFAULT_MAX_MESSAGES = 10;
-    /** How much payload one observation may hold, past which digests stand alone. */
+    /**
+     * How much payload one observation may hold, past which digests stand
+     * alone.
+     * <p>
+     * This bounds the aggregate. A single payload is bounded by the evidence
+     * policy's own size limit, which is the right knob for one message — so the
+     * first message of an observation is stored even if it alone is larger than
+     * this, and the ones after it are not.
+     */
     private static final long EVIDENCE_BUDGET_BYTES = 1024 * 1024;
     /** How long one poll blocks, short enough to notice the deadline. */
     private static final Duration POLL = Duration.ofMillis(250);
@@ -64,6 +72,7 @@ final class EventObserver {
         MessageSelector selector = MessageSelector.from(inputs);
         int maxMessages = maxMessages(inputs);
         long waitMs = KafkaTimeouts.observe(inputs, context);
+        long requestedWaitMs = KafkaTimeouts.requested(inputs);
 
         List<TopicPartition> partitions = target.partitions(operation.topic());
         Map<TopicPartition, Long> floor = target.floor(operation.topic());
@@ -77,16 +86,16 @@ final class EventObserver {
         long storedBytes = 0;
         long deadline = System.nanoTime() + waitMs * 1_000_000L;
 
-        // Poll at least once, and keep polling while messages are still
-        // arriving, so `waitMs: 0` means "what is already there" rather than
-        // "nothing" — a snapshot read is a legitimate observation.
+        // The window closes at its deadline, and nothing extends it. Polling on
+        // while messages keep arriving would sound reasonable and would mean a
+        // busy channel could hold a run open indefinitely — which is the bound
+        // this class claims to have. A zero wait still gets one poll, so it
+        // reads the batch that is already there rather than nothing at all.
         boolean polledOnce = false;
-        boolean drained = false;
         while (matched.size() < maxMessages
-                && (!polledOnce || !drained || System.nanoTime() < deadline)) {
+                && (!polledOnce || System.nanoTime() < deadline)) {
             ConsumerRecords<byte[], byte[]> polled = consumer.poll(POLL);
             polledOnce = true;
-            drained = polled.isEmpty();
             for (ConsumerRecord<byte[], byte[]> record : polled) {
                 observed++;
                 RecordCandidate candidate = new RecordCandidate(record);
@@ -116,6 +125,7 @@ final class EventObserver {
         evidence.put("matched", matched.size());
         evidence.put("selective", !selector.selectsEverything());
         evidence.put("waitedMs", waitMs);
+        evidence.put("requestedWaitMs", requestedWaitMs);
 
         // An observation that found nothing is still an observation: absence is
         // what several of the assertions in this release are about, and turning

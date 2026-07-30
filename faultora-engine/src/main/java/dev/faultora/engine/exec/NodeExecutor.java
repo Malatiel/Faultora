@@ -9,7 +9,6 @@ import dev.faultora.model.identifier.NodeId;
 import dev.faultora.spec.expression.ExpressionContext;
 import dev.faultora.spi.contract.AssertionProvider;
 import dev.faultora.spi.contract.FaultProvider;
-import dev.faultora.spi.evidence.MessageEvidence;
 import dev.faultora.spi.result.OperationResult;
 
 import java.util.List;
@@ -151,36 +150,6 @@ public final class NodeExecutor {
     }
 
     /**
-     * Record what a step did on a channel, when it did anything.
-     * <p>
-     * The engine reads the protocol-neutral message evidence rather than
-     * anything Kafka-shaped, so a second event protocol journals through the
-     * same path. What lands in the journal is coordinates and digests: the
-     * payloads themselves are governed by the evidence policy and stay in
-     * memory, where the report decides whether to show them.
-     */
-    private static void journalMessages(
-            NodeId nodeId, NodeContext context, NodeEvidence evidence) {
-        Map<String, Object> protocolEvidence = evidence.protocolEvidence();
-        MessageEvidence published = MessageEvidence.publishedIn(protocolEvidence);
-        if (published != null) {
-            context.journal().messagePublished(nodeId, published);
-        }
-        if (protocolEvidence.containsKey(MessageEvidence.OBSERVED)) {
-            context.journal().messagesObserved(
-                    nodeId,
-                    String.valueOf(protocolEvidence.getOrDefault("topic", "")),
-                    asLong(protocolEvidence.get("observed")),
-                    MessageEvidence.observedIn(protocolEvidence).size(),
-                    asLong(protocolEvidence.get("waitedMs")));
-        }
-    }
-
-    private static long asLong(Object value) {
-        return value instanceof Number number ? number.longValue() : 0L;
-    }
-
-    /**
      * Store evidence and turn it into a node result. A node that declared
      * {@code expectError} inverts the verdict: it passes only when the
      * operation failed, and the expected error stays visible in the result.
@@ -191,8 +160,7 @@ public final class NodeExecutor {
         context.evidence().put(nodeId, evidence);
         long durationMs = System.currentTimeMillis() - nodeStart;
 
-        evidence.responseBody().ifPresent(body -> context.journal().evidenceCaptured(nodeId, body));
-        journalMessages(nodeId, context, evidence);
+        context.journal().evidenceOf(nodeId, evidence);
 
         boolean expectError = node instanceof PlanNode.OperationNode operation
                 && operation.expectError();

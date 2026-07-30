@@ -32,11 +32,13 @@ mistake this record exists to avoid.
   time, resolved through the broker's own record timestamps. A channel with
   nothing that recent has nothing to look back at, and its floor is its current
   end. `from: beginning` reaches into history, explicitly.
-- **The floor is resolved lazily, on a channel's first use.** What is resolved
-  is a time, so the answer does not depend on when the lookup happened. That is
-  what lets the resolution stay lazy — and lazy resolution is what keeps the
-  broker's vocabulary out of the composition root and protocol-specific keys
-  out of the shared connector context.
+- **The floor is resolved lazily, on a channel's first use, and cached for the
+  run.** What is resolved is a time, so the answer does not depend on when the
+  lookup happened — which is what lets the resolution stay lazy, and lazy
+  resolution is what keeps the broker's vocabulary out of the composition root
+  and protocol-specific keys out of the shared connector context. The cache
+  belongs to the run rather than to a client, because a client lasts one
+  operation and "where we started" does not.
 - **A tolerance of two seconds is applied to the run's start.** The record's
   timestamp is set by whoever produced it, on their clock, which is a different
   machine whenever the application under test is not this process. Missing an
@@ -60,6 +62,24 @@ mistake this record exists to avoid.
   is a failure is an assertion's question. A connector that decided it would
   make absence unassertable, and absence is what several event assertions are
   about.
+- **A wait is spent, not outlived.** The window closes at its deadline even
+  while messages are still arriving. Draining until a channel goes quiet reads
+  as reasonable and means a busy channel can hold a run open for as long as the
+  target stays busy — the bound would exist only on paper. A zero wait still
+  gets one poll, so a snapshot reads the batch already there.
+- **A client's lifetime follows the guarantee the broker gives it.** A producer
+  is thread-safe, so the run keeps one per target and a parallel group publishes
+  through it. A consumer belongs to the one thread that polls it, so each
+  operation opens its own and closes only that. Sharing one between concurrent
+  steps is not slow but wrong twice over: the client refuses concurrent access,
+  and releasing one step's handle would close a client another step is reading
+  from.
+- **The connector owns the settings that decide what a run may reach.** An
+  operator may pass broker settings through — TLS, SASL, tuning — but not the
+  bootstrap list, which the destination policy has just verified, nor the
+  serializers the evidence path depends on. Those are refused by name: a
+  pass-through that could replace the broker list is a policy bypass wearing
+  configuration's clothes.
 - **No consumer group is ever joined.** Partitions are assigned directly and no
   offset is committed, so a run creates no group state on the broker, cannot
   disturb the application's own consumers, and leaves nothing behind when it is
@@ -102,10 +122,15 @@ mistake this record exists to avoid.
 - A scenario on a shared channel without a `match` clause counts whatever else
   was happening. The journal records both the number of messages the window
   contained and the number the step claimed, so the difference is visible.
-- A wait longer than the run's request timeout is silently shortened by the
-  connector — the effective wait is recorded, so a scenario asking for more
-  than it gets can be seen doing so. A literal wait longer than the whole run's
-  budget fails compilation instead.
+- A wait longer than the run's request timeout is shortened by the connector,
+  which records both what was asked for and what it waited; the report states
+  the difference rather than letting the scenario's stated wait read as fact.
+  The compiler can only apply the coarser bound — a literal wait longer than the
+  whole run's budget fails compilation — because the per-request timeout is
+  connector configuration and is not known when a plan is built.
+- Every poll of a polling block opens a consumer, which is the cost of a client
+  that belongs to one thread. The metadata a poll would otherwise repeat is
+  cached for the run, so what remains is the connection.
 - An observation reaches back two seconds further than the run's start, so a
   message written just before the run on the same channel can be selected by a
   scenario that does not narrow its window. Naming a correlation value the run

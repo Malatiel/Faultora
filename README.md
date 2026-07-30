@@ -8,10 +8,10 @@ across HTTP and Kafka, checks technical and business invariants, and produces
 console, JSON, HTML, and JUnit reports. Execution stays inside your
 infrastructure and does not require a hosted control plane or telemetry.
 
-Version 0.7.1 is a runnable technical preview. It targets local
+Version 0.7.2 is a runnable technical preview. It targets local
 development and CI use on Java 21.
 
-## What 0.7.1 includes
+## What 0.7.2 includes
 
 Scenario execution:
 
@@ -80,7 +80,7 @@ than being silently accepted.
 Download the release JAR and its checksums:
 
 ```bash
-FAULTORA_VERSION=0.7.1
+FAULTORA_VERSION=0.7.2
 RELEASE_URL="https://github.com/Malatiel/Faultora/releases/download/v${FAULTORA_VERSION}"
 
 curl --fail --location --retry 3 \
@@ -108,7 +108,7 @@ Every release also includes a CycloneDX SBOM and the Apache 2.0 license.
 The executable artifact is written to:
 
 ```text
-faultora-cli/target/faultora-0.7.1.jar
+faultora-cli/target/faultora-0.7.2.jar
 ```
 
 The regular CI build can run without repository secrets. Configure the
@@ -121,9 +121,9 @@ missing.
 Check the executable and validate the example scenario:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.7.1.jar --version
+java -jar faultora-cli/target/faultora-0.7.2.jar --version
 
-java -jar faultora-cli/target/faultora-0.7.1.jar \
+java -jar faultora-cli/target/faultora-0.7.2.jar \
   validate \
   --scenario examples/payment-service/scenarios/passing.yaml
 ```
@@ -131,7 +131,7 @@ java -jar faultora-cli/target/faultora-0.7.1.jar \
 Generate a starter scenario from an OpenAPI document:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.7.1.jar \
+java -jar faultora-cli/target/faultora-0.7.2.jar \
   init \
   --from-openapi examples/payment-service/openapi.yaml \
   --output ./generated
@@ -140,7 +140,7 @@ java -jar faultora-cli/target/faultora-0.7.1.jar \
 Run a scenario against an API:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.7.1.jar \
+java -jar faultora-cli/target/faultora-0.7.2.jar \
   test \
   --scenario examples/payment-service/scenarios/passing.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -192,7 +192,7 @@ race window, then asserts the business invariant that exactly one payment
 exists:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.7.1.jar \
+java -jar faultora-cli/target/faultora-0.7.2.jar \
   test \
   --scenario examples/payment-service/scenarios/fault-concurrent-duplicate.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -301,7 +301,7 @@ An AsyncAPI 3.0 description brings Kafka channels into the same catalog as the
 HTTP operations, and `--openapi` and `--asyncapi` can be given together:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.7.1.jar \
+java -jar faultora-cli/target/faultora-0.7.2.jar \
   test \
   --scenario examples/payment-worker/scenarios/duplicate-delivery.yaml \
   --asyncapi examples/payment-worker/asyncapi.yaml \
@@ -348,12 +348,13 @@ once:
 
 ```text
 --- Nodes ---
-  [PASSED] send-command (57ms) — published to payment-commands at 0:0
-  [PASSED] send-command-again (23ms) — published to payment-commands at 0:1
-  [PASSED] settlement-appears (1065ms) — 1 poll
+  [PASSED] send-command (46ms) — published to payment-commands at 0:0
+  [PASSED] send-command-again (5ms) — published to payment-commands at 0:1
+  [PASSED] poll-events (1080ms) — observed 1 of 1 on payment-events
+  [PASSED] settlement-appears (1080ms) — 1 poll
          Assertion: PASS — Observed 1 message
-  [PASSED] read-settlements (2067ms) — observed 1 of 1 on payment-events
-  [PASSED] one-effect-per-command (1ms)
+  [PASSED] read-settlements (2075ms) — observed 1 of 1 on payment-events
+  [PASSED] one-effect-per-command (0ms)
          Assertion: PASS — Observed 1 message
   [PASSED] no-payment-settled-twice (4ms)
          Assertion: PASS — 1 message with distinct payload:paymentId
@@ -364,7 +365,10 @@ once:
 Against a consumer that is not idempotent, the same scenario says so:
 
 ```text
-  [FAILED] no-payment-settled-twice (2ms)
+  [PASSED] read-settlements (2058ms) — observed 2 of 2 on payment-events
+  [FAILED] one-effect-per-command (3ms)
+         Assertion: FAIL — Expected exactly 1 message, observed 2
+  [FAILED] no-payment-settled-twice (3ms)
          Assertion: FAIL — Two messages carry the same payload:paymentId
                     'pay-77002': offsets 0 and 1
 ```
@@ -452,7 +456,7 @@ handle is mapped to an environment variable with the `FAULTORA_SECRET_` prefix:
 ```bash
 export FAULTORA_SECRET_PAYMENTS_API='replace-with-a-real-token'
 
-java -jar faultora-cli/target/faultora-0.7.1.jar \
+java -jar faultora-cli/target/faultora-0.7.2.jar \
   test \
   --scenario scenario.yaml \
   --openapi openapi.yaml \

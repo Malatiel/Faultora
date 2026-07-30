@@ -9,6 +9,7 @@ import dev.faultora.model.identifier.NodeId;
 import dev.faultora.spec.expression.ExpressionContext;
 import dev.faultora.spi.evidence.MessageEvidence;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -67,17 +68,36 @@ public final class StepOutputBinder {
      * The first observed message is bound beside the list because expressions
      * address objects, not array positions, and reaching into a list is
      * otherwise impossible in the dotted form scenarios are written in.
+     * <p>
+     * Only that first message keeps its payload. The rest are bound by their
+     * coordinates, because a scenario reads a value out of the message it is
+     * about and the whole list would put a second copy of every payload in the
+     * expression context, next to the one the evidence map already holds for
+     * the length of the run.
      */
     private static void bindProtocolEvidence(NodeEvidence evidence, ObjectNode output) {
         Map<String, Object> protocolEvidence = evidence.protocolEvidence();
         if (protocolEvidence == null || protocolEvidence.isEmpty()) {
             return;
         }
-        ObjectNode protocol = MAPPER.valueToTree(protocolEvidence);
         List<MessageEvidence> messages = MessageEvidence.observedIn(protocolEvidence);
+        Map<String, Object> bindable = new LinkedHashMap<>(protocolEvidence);
+        if (!messages.isEmpty()) {
+            bindable.put(MessageEvidence.OBSERVED, messages.stream()
+                    .map(StepOutputBinder::withoutPayload).toList());
+        }
+        ObjectNode protocol = MAPPER.valueToTree(bindable);
         if (!messages.isEmpty()) {
             protocol.set("message", MAPPER.valueToTree(messages.get(0)));
         }
         output.set("protocol", protocol);
+    }
+
+    /** The same message, identified rather than reproduced. */
+    private static MessageEvidence withoutPayload(MessageEvidence message) {
+        return new MessageEvidence(
+                message.topic(), message.partition(), message.offset(),
+                message.timestampMs(), message.key(), message.headers(),
+                null, message.digest());
     }
 }

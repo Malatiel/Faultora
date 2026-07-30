@@ -1,6 +1,6 @@
 # Scenario reference
 
-This page documents the scenario format implemented by Faultora 0.7.1. The
+This page documents the scenario format implemented by Faultora 0.7.2. The
 format is versioned independently from the application:
 
 ```yaml
@@ -10,7 +10,7 @@ kind: Scenario
 
 Faultora rejects unsupported versions, missing required fields, duplicate step
 IDs, unknown references, dependency cycles, and execution features that are not
-available in 0.7.1.
+available in 0.7.2.
 
 ## Complete example
 
@@ -74,7 +74,7 @@ cleanup:
 Validate a document before running it:
 
 ```bash
-java -jar faultora-0.7.1.jar validate --scenario scenario.yaml
+java -jar faultora-0.7.2.jar validate --scenario scenario.yaml
 ```
 
 ## Top-level fields
@@ -648,7 +648,7 @@ Every assertion has this common shape:
 | `params` | yes | Parameters documented for the selected assertion type. |
 | `targetStep` | no | Operation evidence to inspect; defaults to the last `execute` step. A grouping step holds no evidence of its own, so name one of its children. |
 | `dependsOn` | no | Additional dependencies that must pass first. |
-| `message` | no | Reserved; 0.7.1 reports the assertion provider's evaluated message. |
+| `message` | no | Reserved; 0.7.2 reports the assertion provider's evaluated message. |
 | `metadata` | no | Arbitrary assertion metadata. |
 
 An assertion that cannot be evaluated is treated as a failed node rather than
@@ -935,7 +935,7 @@ Observing:
 | Input | Required | Description |
 |---|---:|---|
 | `match` | no | Which messages this step is about: `key`, `headers`, and `payload` clauses, all of which must hold. Without it, every message in the window is selected. |
-| `waitMs` | no | How long the window stays open. Defaults to 5000 and is capped by the run's request timeout. |
+| `waitMs` | no | How long the window stays open. Defaults to 5000 and is capped by the run's request timeout; when it is shortened, the report says what was asked for and what was waited. `0` reads the batch already there and returns. |
 | `maxMessages` | no | How many matching messages are enough; reaching this ends the wait early. Defaults to 10. |
 | `from` | no | `beginning` reaches back past the run's own floor into the channel's history. |
 
@@ -955,6 +955,9 @@ Three properties are worth knowing before writing one:
   whatever arrived since. Asserting "exactly one" on the poll that first saw
   one event would pass before a second could arrive; asserting it on a later,
   wider observation would not.
+- **The window closes when its wait is spent**, whether or not the channel has
+  gone quiet. A step ends early only when `maxMessages` matching messages have
+  arrived; a busy channel cannot extend it.
 
 Assertion `params` are literal: unlike step `inputs`, they are not expression
 templates. Select the messages in the step, and assert on what was selected.

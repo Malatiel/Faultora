@@ -1,5 +1,6 @@
 package dev.faultora.engine.exec;
 
+import dev.faultora.engine.evidence.NodeEvidence;
 import dev.faultora.engine.journal.RunJournal;
 import dev.faultora.model.catalog.NormalizedError;
 import dev.faultora.model.events.RunEvent;
@@ -121,6 +122,42 @@ public final class JournalWriter {
                 ContentDigest.sha256Uri(body), body.length));
     }
 
+    /**
+     * Everything an execution's evidence contributes to the journal.
+     * <p>
+     * Called wherever evidence is produced, which is more than one place: a node
+     * executes once, and a polled step executes once per poll. Having the
+     * translation here rather than at each call site is what keeps a poll's
+     * evidence as visible as a node's — the events a polling block observes were
+     * invisible for exactly as long as this lived in the node lifecycle.
+     * <p>
+     * The message evidence read here is protocol-neutral, so a second event
+     * protocol journals through this path without the engine learning anything
+     * about it.
+     */
+    public void evidenceOf(NodeId nodeId, NodeEvidence evidence) {
+        evidence.responseBody().ifPresent(body -> evidenceCaptured(nodeId, body));
+
+        Map<String, Object> protocolEvidence = evidence.protocolEvidence();
+        MessageEvidence published = MessageEvidence.publishedIn(protocolEvidence);
+        if (published != null) {
+            messagePublished(nodeId, published);
+        }
+        if (protocolEvidence.containsKey(MessageEvidence.OBSERVED)) {
+            messagesObserved(
+                    nodeId,
+                    String.valueOf(protocolEvidence.getOrDefault("topic", "")),
+                    asLong(protocolEvidence.get("observed")),
+                    MessageEvidence.observedIn(protocolEvidence).size(),
+                    asLong(protocolEvidence.get("waitedMs")),
+                    asLong(protocolEvidence.get("requestedWaitMs")));
+        }
+    }
+
+    private static long asLong(Object value) {
+        return value instanceof Number number ? number.longValue() : 0L;
+    }
+
     /** Where a published message landed on the broker. */
     public void messagePublished(NodeId nodeId, MessageEvidence message) {
         append(new RunEvent.MessagePublished(
@@ -130,10 +167,11 @@ public final class JournalWriter {
 
     /** What an observation window contained, and how much of it the step claimed. */
     public void messagesObserved(
-            NodeId nodeId, String channel, long observed, int matched, long waitedMs) {
+            NodeId nodeId, String channel, long observed, int matched,
+            long waitedMs, long requestedWaitMs) {
         append(new RunEvent.MessagesObserved(
                 "MESSAGES_OBSERVED", now(), runId, nodeId,
-                channel, observed, matched, waitedMs));
+                channel, observed, matched, waitedMs, requestedWaitMs));
     }
 
     public void cleanupStarted(int pendingObligations) {

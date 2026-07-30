@@ -32,13 +32,22 @@ final class KafkaTimeouts {
         return requested > 0 ? requested : DEFAULT_PUBLISH_MS;
     }
 
+    /** How long the step asked to wait, or the default when it said nothing. */
+    static long requested(Map<String, Object> inputs) {
+        long declared = asMillis(inputs == null ? null : inputs.get(WAIT_MS));
+        return declared >= 0 ? declared : DEFAULT_OBSERVE_MS;
+    }
+
     /**
      * How long an observation may wait: what the step asked for, capped by the
      * run's request timeout.
+     * <p>
+     * The two can differ, and when they do the difference is recorded rather
+     * than absorbed — a scenario's stated wait must not read as fact when it was
+     * not honoured.
      */
     static long observe(Map<String, Object> inputs, ConnectorContext context) {
-        long requested = asMillis(inputs == null ? null : inputs.get(WAIT_MS));
-        long wanted = requested >= 0 ? requested : DEFAULT_OBSERVE_MS;
+        long wanted = requested(inputs);
         long ceiling = context == null ? 0 : context.requestTimeoutMs();
         return ceiling > 0 ? Math.min(wanted, ceiling) : wanted;
     }

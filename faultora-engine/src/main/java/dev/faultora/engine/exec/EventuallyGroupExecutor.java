@@ -87,6 +87,11 @@ public final class EventuallyGroupExecutor {
             evidence = new NodeEvidence(context.connectorContext().evidencePolicy());
             OperationResult result = invoker.invoke(child, context, inputs);
             OperationInvoker.populateEvidence(evidence, result);
+            // Every poll is an execution, so every poll's evidence reaches the
+            // journal. A polling block is the usual way to observe an
+            // asynchronous effect, and its observations were invisible while
+            // this was the only execution path that skipped it.
+            context.journal().evidenceOf(child.nodeId(), evidence);
 
             conditionResults = evaluateConditions(group, evidence);
             satisfied = !evidence.hasError() && conditionResults.stream()

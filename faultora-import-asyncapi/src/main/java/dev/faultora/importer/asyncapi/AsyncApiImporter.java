@@ -71,6 +71,18 @@ public class AsyncApiImporter implements SourceImporter {
 
     @Override
     public ImportResult importSource(String sourceContent, ImportContext context) {
+        // Size is checked before parsing: a document too large to accept is not
+        // worth building a tree from first.
+        if (context.maxDocSizeBytes() > 0
+                && sourceContent != null
+                && sourceContent.length() > context.maxDocSizeBytes()) {
+            return new ImportResult(null, List.of(error("POLICY_VIOLATION",
+                    "DOCUMENT_TOO_LARGE",
+                    "Document exceeds maximum size of "
+                            + context.maxDocSizeBytes() + " bytes")),
+                    List.of(), Map.of());
+        }
+
         try {
             JsonNode root = SourceDocument.parse(sourceContent);
 
@@ -87,15 +99,6 @@ public class AsyncApiImporter implements SourceImporter {
                                 + "and importing it under 3.x's rule would reverse every "
                                 + "operation.");
             }
-            if (context.maxDocSizeBytes() > 0
-                    && sourceContent.length() > context.maxDocSizeBytes()) {
-                return new ImportResult(null, List.of(error("POLICY_VIOLATION",
-                        "DOCUMENT_TOO_LARGE",
-                        "Document exceeds maximum size of "
-                                + context.maxDocSizeBytes() + " bytes")),
-                        List.of(), Map.of());
-            }
-
             List<String> warnings = new ArrayList<>();
             Map<SchemaId, DataSchema> schemas = new SchemaCollector(root).collect();
             List<TargetDefinition> targets = targets(root, warnings);

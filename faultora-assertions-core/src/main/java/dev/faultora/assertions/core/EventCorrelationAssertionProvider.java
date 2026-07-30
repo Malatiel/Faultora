@@ -64,9 +64,7 @@ public class EventCorrelationAssertionProvider implements AssertionProvider {
         Set<String> values = new LinkedHashSet<>();
         for (MessageEvidence message : messages) {
             if (!ObservedMessages.isReadable(message, locator)) {
-                return AssertionResult.indeterminate(
-                        "The message payload was not captured, so '" + locator
-                                + "' cannot be read");
+                return AssertionResult.indeterminate(ObservedMessages.unreadable(locator));
             }
             String value = ObservedMessages.value(message, locator);
             if (value == null) {
