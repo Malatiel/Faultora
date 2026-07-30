@@ -6,7 +6,6 @@ import dev.faultora.engine.run.RunResult;
 import dev.faultora.model.catalog.NormalizedError;
 import dev.faultora.model.identifier.NodeId;
 import dev.faultora.spec.expression.ExpressionContext;
-import dev.faultora.spec.expression.ExpressionEvaluator;
 import dev.faultora.spi.contract.AssertionProvider;
 import dev.faultora.spi.context.AssertionContext;
 import dev.faultora.spi.result.AssertionResult;
@@ -29,7 +28,7 @@ public final class EventuallyGroupExecutor {
 
     private final OperationInvoker invoker;
     private final InputResolver inputResolver = new InputResolver();
-    private final ExpressionEvaluator expressionEvaluator = new ExpressionEvaluator();
+    private final AssertionParameters parameters = new AssertionParameters();
     private final Map<String, AssertionProvider> assertionProviders;
 
     public EventuallyGroupExecutor(
@@ -198,8 +197,18 @@ public final class EventuallyGroupExecutor {
             PlanNode.EventuallyNode group, ExpressionContext expressionContext) {
         List<Map<String, Object>> resolved = new ArrayList<>(group.conditions().size());
         for (PlanNode.Condition condition : group.conditions()) {
-            resolved.add(expressionEvaluator.resolveInputs(
-                    condition.params(), expressionContext));
+            Map<String, Object> params =
+                    parameters.resolve(condition.params(), expressionContext);
+            // The same refusals an assertion gets. A condition is an assertion
+            // that runs repeatedly, and a poll comparing against nothing would
+            // simply never be satisfied — a timeout where the report should
+            // have said the scenario named a value the run does not have.
+            String refusal =
+                    parameters.refusal(condition.params(), params, expressionContext);
+            if (refusal != null) {
+                throw new IllegalStateException(refusal);
+            }
+            resolved.add(params);
         }
         return resolved;
     }

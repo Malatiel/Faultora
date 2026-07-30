@@ -402,6 +402,136 @@ class PlanCompilerTest {
     }
 
     @Test
+    void anEventuallyBlockDependsOnWhatItsConditionsRead() {
+        // The flagship use of expression parameters is a condition: wait until
+        // the record the API returned appears somewhere else. Without the
+        // dependency the block can start polling before the value exists and
+        // spend its whole budget waiting for something no poll could see.
+        ScenarioDocument scenario = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("polling", null, Map.of(), Map.of()),
+                null, null,
+                List.of(
+                        new ScenarioStep(
+                                "create", "operation", "create-payment", Map.of(),
+                                "created", List.of(), null, null, Map.of()),
+                        new ScenarioStep(
+                                "settles", "eventually", null, Map.of(), null,
+                                List.of(), "10s", null, false,
+                                List.of(new ScenarioStep(
+                                        "poll", "operation", "get-payment", Map.of(),
+                                        null, List.of(), null, null, Map.of())),
+                                null, null, "200ms",
+                                List.of(new ScenarioStep.Condition(
+                                        "jsonpath",
+                                        Map.of("path", "id",
+                                                "equals", "{{steps.created.body.id}}"),
+                                        null)),
+                                Map.of())),
+                null, null, null, null);
+
+        PlanCompilationResult result = compiler.compile(
+                scenario, catalog, policy, new RunId("run-1"), 1L, "d", "d");
+
+        assertThat(result.isSuccess()).isTrue();
+        PlanNode block = result.plan().nodes().stream()
+                .filter(node -> node.nodeId().equals(new NodeId("settles")))
+                .findFirst().orElseThrow();
+        assertThat(block.dependencies()).contains(new NodeId("create"));
+    }
+
+    @Test
+    void anEventuallyConditionReadingAnUnboundStepIsRefused() {
+        ScenarioDocument scenario = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("polling", null, Map.of(), Map.of()),
+                null, null,
+                List.of(
+                        new ScenarioStep(
+                                "create", "operation", "create-payment", Map.of(),
+                                null, List.of(), null, null, Map.of()),
+                        new ScenarioStep(
+                                "settles", "eventually", null, Map.of(), null,
+                                List.of(), "10s", null, false,
+                                List.of(new ScenarioStep(
+                                        "poll", "operation", "get-payment", Map.of(),
+                                        null, List.of(), null, null, Map.of())),
+                                null, null, "200ms",
+                                List.of(new ScenarioStep.Condition(
+                                        "jsonpath",
+                                        Map.of("path", "id",
+                                                "equals", "{{steps.created.body.id}}"),
+                                        null)),
+                                Map.of())),
+                null, null, null, null);
+
+        PlanCompilationResult result = compiler.compile(
+                scenario, catalog, policy, new RunId("run-1"), 1L, "d", "d");
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.diagnostics()).anyMatch(diagnostic ->
+                diagnostic.message().contains("steps.created"));
+    }
+
+    @Test
+    void oneTemplateNamingTwoStepsDependsOnBoth() {
+        // Two references inside one template. A greedy match anchored at the
+        // opening braces finds only the last of them, and ordering after one of
+        // two steps is ordering after neither.
+        ScenarioDocument scenario = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("two-references", null, Map.of(), Map.of()),
+                null, null,
+                List.of(
+                        new ScenarioStep(
+                                "first", "operation", "create-payment", Map.of(),
+                                "one", List.of(), null, null, Map.of()),
+                        new ScenarioStep(
+                                "second", "operation", "create-payment", Map.of(),
+                                "two", List.of(), null, null, Map.of())),
+                null,
+                List.of(new AssertionStep(
+                        "both", "jsonpath",
+                        Map.of("path", "id",
+                                "equals", "{{ steps.one.body.id == steps.two.body.id }}"),
+                        "second", List.of(), null, Map.of())),
+                null, null);
+
+        PlanCompilationResult result = compiler.compile(
+                scenario, catalog, policy, new RunId("run-1"), 1L, "d", "d");
+
+        assertThat(result.isSuccess()).isTrue();
+        PlanNode assertion = result.plan().nodes().stream()
+                .filter(node -> node.nodeId().equals(new NodeId("both")))
+                .findFirst().orElseThrow();
+        assertThat(assertion.dependencies())
+                .contains(new NodeId("first"), new NodeId("second"));
+    }
+
+    @Test
+    void aMessageMentioningStepsInventsNoDependency() {
+        ScenarioDocument scenario = new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("prose", null, Map.of(), Map.of()),
+                null, null,
+                List.of(new ScenarioStep(
+                        "create", "operation", "create-payment", Map.of(),
+                        null, List.of(), null, null, Map.of())),
+                null,
+                List.of(new AssertionStep(
+                        "readable", "jsonpath",
+                        Map.of("path", "id", "exists", true),
+                        "create", List.of(),
+                        "checked after steps.created has run", Map.of())),
+                null, null);
+
+        PlanCompilationResult result = compiler.compile(
+                scenario, catalog, policy, new RunId("run-1"), 1L, "d", "d");
+
+        assertThat(result.isSuccess()).isTrue();
+    }
+
+    @Test
     void compileRejectsUnsupportedStepType() {
         ScenarioDocument scenario = scenarioWithExecuteStep(new ScenarioStep(
                 "script-step", "script", null,

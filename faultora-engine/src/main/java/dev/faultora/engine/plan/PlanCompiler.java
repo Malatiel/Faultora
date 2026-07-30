@@ -23,16 +23,30 @@ public class PlanCompiler {
     private static final String OBSERVATION_WAIT = "waitMs";
 
     /**
-     * A reference to a bound step's output inside a template.
+     * One {@code {{expression}}} inside a parameter value.
+     * <p>
+     * References are looked for inside a template rather than anywhere in the
+     * text, so the words "steps." in a message cannot invent a dependency.
+     */
+    private static final java.util.regex.Pattern TEMPLATE =
+            java.util.regex.Pattern.compile("\\{\\{(.+?)}}");
+
+    /**
+     * A reference to a bound step's output.
      * <p>
      * Assertion parameters are expressions, so an assertion may compare against
      * a value an earlier step produced. That makes the reference a real
      * dependency, and the plan has to carry it: an assertion evaluated before
-     * the step it reads from would compare against nothing and pass.
+     * the step it reads from would compare against nothing and pass. Every
+     * reference in a template counts — one expression may name two steps, and
+     * ordering after only the last of them is ordering after neither.
+     * <p>
+     * The name pattern is the one {@code ScenarioValidator} enforces on
+     * {@code outputAs}, so a binding this cannot recognise is one the scenario
+     * was not allowed to declare.
      */
     private static final java.util.regex.Pattern STEP_REFERENCE =
-            java.util.regex.Pattern.compile(
-                    "\\{\\{[^}]*\\bsteps\\.([A-Za-z_][A-Za-z0-9_-]*)");
+            java.util.regex.Pattern.compile("\\bsteps\\.([A-Za-z_][A-Za-z0-9_-]*)");
 
     /**
      * Compile a scenario against a catalog.
@@ -229,7 +243,7 @@ public class PlanCompiler {
             } else if ("eventually".equals(step.type())) {
                 PlanNode eventuallyNode = compileEventually(
                         step, phase, operationIndex, targetPolicy, childToGroup,
-                        generatedInputs, diagnostics);
+                        generatedInputs, nodes, diagnostics);
                 if (eventuallyNode != null) {
                     nodes.add(eventuallyNode);
                 }
@@ -316,6 +330,7 @@ public class PlanCompiler {
             TargetPolicy targetPolicy,
             Map<String, String> childToGroup,
             GeneratedInputCompiler generatedInputs,
+            List<PlanNode> nodes,
             List<PlanDiagnostic> diagnostics
     ) {
         String stepId = step.id();
@@ -383,10 +398,23 @@ public class PlanCompiler {
             return null;
         }
         int maxPolls = (int) requestedPolls;
+
+        // A condition's parameters are expressions like an assertion's, so what
+        // they read from is a dependency of the block. Without it a block could
+        // start polling for a value the step producing it had not yet bound,
+        // and spend its whole budget waiting for something no poll could see.
+        List<NodeId> deps = new ArrayList<>(
+                resolveDependencies(step.dependsOn(), childToGroup));
+        for (PlanNode.Condition condition : conditions) {
+            if (!dependOnWhatParamsRead(
+                    condition.params(), nodes, childToGroup, stepId, deps, diagnostics)) {
+                return null;
+            }
+        }
+
         return new PlanNode.EventuallyNode(
                 new NodeId(stepId), children.get(0), conditions,
-                timeoutMs, intervalMs, maxPolls,
-                resolveDependencies(step.dependsOn(), childToGroup),
+                timeoutMs, intervalMs, maxPolls, deps,
                 groupSafety(children)
         );
     }
@@ -773,9 +801,13 @@ public class PlanCompiler {
     private void collectReferencedBindings(Object value, Set<String> bindings) {
         switch (value) {
             case String text -> {
-                java.util.regex.Matcher reference = STEP_REFERENCE.matcher(text);
-                while (reference.find()) {
-                    bindings.add(reference.group(1));
+                java.util.regex.Matcher template = TEMPLATE.matcher(text);
+                while (template.find()) {
+                    java.util.regex.Matcher reference =
+                            STEP_REFERENCE.matcher(template.group(1));
+                    while (reference.find()) {
+                        bindings.add(reference.group(1));
+                    }
                 }
             }
             case Map<?, ?> map -> map.values()

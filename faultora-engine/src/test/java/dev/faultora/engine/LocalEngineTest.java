@@ -1590,6 +1590,77 @@ class LocalEngineTest {
                 .contains("expected", "resolved to nothing");
     }
 
+    @Test
+    void aNestedTemplateResolvingToNothingFailsLikeATopLevelOne() {
+        // Without the deep check the assertion would pass on its top-level
+        // parameter while the nested one silently compared against null.
+        ExecutionPlan plan = ExecutionPlan.builder()
+                .runId(new RunId("run-params-nested"))
+                .scenario(buildScenario())
+                .catalog(catalog)
+                .targetPolicy(policy)
+                .seed(42L)
+                .scenarioDigest("sha256:abc")
+                .catalogDigest("sha256:def")
+                .addNode(new PlanNode.OperationNode(
+                        new NodeId("create"), new OperationId("create-payment"),
+                        findOp("create-payment"), Map.of(), null, List.of(),
+                        SafetyClassification.MUTATING, 0, 0))
+                .addNode(new PlanNode.AssertionNode(
+                        new NodeId("nested-ghost"), "status",
+                        Map.of("expected", 200,
+                                "match", Map.of("id", "{{steps.never-bound.body.id}}")),
+                        new NodeId("create"), null, List.of(new NodeId("create")),
+                        SafetyClassification.READ_ONLY))
+                .build();
+
+        RunResult result = run(plan, exprContext, "params-nested-journal.ndjson");
+
+        RunResult.NodeResult assertion =
+                result.nodeResults().get(new NodeId("nested-ghost"));
+        assertThat(assertion.status()).isEqualTo(RunResult.Status.FAILED);
+        assertThat(assertion.error().message())
+                .as("the message names where the template sits")
+                .contains("match.id", "resolved to nothing");
+    }
+
+    @Test
+    void anAssertionRefusesToCompareAgainstASecret() {
+        // An assertion writes what it compared into its message, and that
+        // message reaches the journal, the console and the HTML report. There
+        // is no way to compare against a secret and keep it one.
+        ExpressionContext withSecret = ExpressionContext.builder()
+                .secret("apiKey", "***")
+                .build();
+        ExecutionPlan plan = ExecutionPlan.builder()
+                .runId(new RunId("run-params-secret"))
+                .scenario(buildScenario())
+                .catalog(catalog)
+                .targetPolicy(policy)
+                .seed(42L)
+                .scenarioDigest("sha256:abc")
+                .catalogDigest("sha256:def")
+                .addNode(new PlanNode.OperationNode(
+                        new NodeId("create"), new OperationId("create-payment"),
+                        findOp("create-payment"), Map.of(), null, List.of(),
+                        SafetyClassification.MUTATING, 0, 0))
+                .addNode(new PlanNode.AssertionNode(
+                        new NodeId("compares-a-secret"), "status",
+                        Map.of("expected", "{{secrets.apiKey}}"),
+                        new NodeId("create"), null, List.of(new NodeId("create")),
+                        SafetyClassification.READ_ONLY))
+                .build();
+
+        RunResult result = run(plan, withSecret, "params-secret-journal.ndjson");
+
+        RunResult.NodeResult assertion =
+                result.nodeResults().get(new NodeId("compares-a-secret"));
+        assertThat(assertion.status()).isEqualTo(RunResult.Status.FAILED);
+        assertThat(assertion.error().message()).contains("reads a secret");
+        // The refusal names the parameter, never the value behind it.
+        assertThat(assertion.error().message()).doesNotContain("***");
+    }
+
     /** Execute a plan with the stub connector and the status assertion. */
     private RunResult run(ExecutionPlan plan, ExpressionContext context, String journalName) {
         LocalEngine engine = new LocalEngine(

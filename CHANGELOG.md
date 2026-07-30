@@ -20,7 +20,18 @@ All notable changes to Faultora are documented in this file.
   says which `outputAs` is missing; a template that resolves to nothing fails
   the assertion by name rather than comparing against null.
 - The `until` conditions of an eventually block resolve the same way, once,
-  alongside the polled step's inputs — every poll asks the identical question.
+  alongside the polled step's inputs — every poll asks the identical question —
+  and carry the same dependencies and the same refusals. The flagship use of
+  expression parameters is a condition, so a guard the assertion section had and
+  the polling block did not would have been worse than none: it would have
+  looked present.
+- A parameter reading a secret is refused. An assertion compares by writing what
+  it compared into its message, and that message reaches the journal, the
+  console and the HTML report — this decision opened the only path by which a
+  secret could reach one, so it closes it. The refusal names the parameter and
+  never the value.
+- Both refusals reach any depth: a template nested inside a map or a list is
+  checked like a top-level one.
 
 `params.status` of a `schema` assertion stays literal: it selects which declared
 response schema to check, and that happens when the plan is built. A template

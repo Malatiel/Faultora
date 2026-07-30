@@ -699,13 +699,16 @@ Rules:
 - a parameter reading a name no step binds fails plan compilation and says
   which `outputAs` is missing;
 - a parameter written as a template that resolves to nothing fails the
-  assertion by name, rather than comparing against null;
+  assertion by name, at any depth, rather than comparing against null;
+- a parameter reading a secret is refused: an assertion writes what it compared
+  into its message, and that message reaches the journal, the console, and the
+  report;
 - `params.status` of a [`schema`](#schema) assertion selects which declared
   response schema to check and is resolved when the plan is built, so it cannot
   be a template;
 - the `until` conditions of an [eventually block](#eventually-steps) resolve the
   same way, once, alongside the polled step's inputs — every poll asks the
-  identical question.
+  identical question — and carry the same dependencies and the same refusals.
 
 ### `status`
 
