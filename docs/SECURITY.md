@@ -338,6 +338,27 @@ grant: the credentials a run connects with should not be able to write. An
 operator who supplies a writing account has removed the only protection that
 does not depend on this project being correct. See ADR-017.
 
+**A statement is read whole, not by its first word.** A statement that begins
+by reading can still write: PostgreSQL runs a data-modifying common table
+expression, and `SELECT … INTO` creates a table. So every bare word of a
+declared statement — outside string literals, quoted identifiers and comments
+— is checked against a list of words that write, and one of them refuses the
+observation. The list is deliberately broader than any one dialect needs; a
+refused query can be rewritten, and a permitted write cannot be undone.
+
+**A database URL whose host cannot be found is refused.** Not every driver
+writes `//host`: Oracle's thin driver writes `jdbc:oracle:thin:@host:1521:SID`.
+Treating "no `//`" as "nothing to classify" would have let such a URL reach an
+internal host with the destination policy never consulted, so a URL this
+connector cannot read is refused unless its subprotocol runs in-process.
+
+**A driver's own message reaches the report.** It is what names the column that
+does not exist or the type that would not cast, and several drivers quote the
+offending value inside it. The message is bounded in length and never contains
+the JDBC URL, but a value from a failing query can appear in it. A run against
+data that must not be quoted anywhere should use credentials scoped to a view
+that does not expose it.
+
 ## 10. Data protection
 
 ### 10.1 In transit

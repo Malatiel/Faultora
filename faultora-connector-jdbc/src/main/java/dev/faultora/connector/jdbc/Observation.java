@@ -3,6 +3,7 @@ package dev.faultora.connector.jdbc;
 import dev.faultora.model.catalog.NormalizedError;
 import dev.faultora.model.security.EvidencePolicy;
 import dev.faultora.spi.context.ConnectorContext;
+import dev.faultora.spi.evidence.EvidenceCapture;
 import dev.faultora.spi.evidence.TableEvidence;
 import dev.faultora.spi.result.OperationResult;
 
@@ -68,7 +69,7 @@ final class Observation {
             }
 
             try (ResultSet rows = prepared.executeQuery()) {
-                return report(rows, maxRows, startedAt);
+                return report(rows, maxRows, policy, startedAt);
             }
         } catch (SQLException failed) {
             return OperationResult.failure(
@@ -76,8 +77,17 @@ final class Observation {
         }
     }
 
+    /**
+     * The rows, once the evidence policy has had them.
+     * <p>
+     * The policy is applied here rather than left to the caller because this is
+     * where the values still exist: a redacted cell must never be built into
+     * evidence and removed afterwards, and a run that captures no bodies must
+     * not have held them in the first place.
+     */
     private static OperationResult report(
-            ResultSet rows, int maxRows, long startedAt) throws SQLException {
+            ResultSet rows, int maxRows, EvidencePolicy policy, long startedAt)
+            throws SQLException {
         ResultSetMetaData metadata = rows.getMetaData();
         List<String> columns = new ArrayList<>(metadata.getColumnCount());
         for (int column = 1; column <= metadata.getColumnCount(); column++) {
@@ -102,7 +112,7 @@ final class Observation {
             kept.add(row);
         }
 
-        TableEvidence table = new TableEvidence(columns, kept, truncated);
+        TableEvidence table = EvidenceCapture.table(columns, kept, truncated, policy);
         return OperationResult.success(
                 -1, Map.of(), null, elapsedMs(startedAt),
                 JdbcConnector.evidenceOf(table, fetched));

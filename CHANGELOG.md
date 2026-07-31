@@ -43,8 +43,21 @@ there is refused with a diagnostic.
   SEC-07 forbids and which would leave nobody with a list of what a run may
   read. ADR-017 records the decision.
 - Read-only is enforced three times and only the third is a guarantee: a single
-  statement beginning `SELECT` or `WITH`, a read-only connection, and read-only
-  credentials the operator supplies. The first two are code; a grant is not.
+  reading statement, a read-only connection, and read-only credentials the
+  operator supplies. The first two are code; a grant is not.
+- A statement is read whole rather than by its first word. A common table
+  expression can `DELETE` and `SELECT … INTO` creates a table, so every bare
+  word outside literals, quoted identifiers and comments is checked against a
+  list of words that write. A `;` inside a comment no longer looks like a
+  second statement.
+- A database URL whose host this cannot find is refused rather than allowed.
+  Oracle's thin driver writes `jdbc:oracle:thin:@host:1521:SID`, and reading a
+  missing `//` as "in-process, so nothing to classify" made the destination
+  policy silently optional for it.
+- The evidence policy applies to rows: a policy capturing no bodies keeps the
+  row count and drops the values, so `row-count` still answers while the
+  assertions that read a value are indeterminate rather than wrong, and a
+  `redactPaths` entry naming a column replaces that column's values.
 - Values are bound through a prepared statement in one pass that also produces
   the binding order, so a `::cast` and a colon inside a literal cannot be
   mistaken for parameters.
@@ -57,9 +70,23 @@ there is refused with a diagnostic.
   a ledger whose entries do not sum to zero has lost or invented money, and no
   single request can tell you that.
 - A `ROWS_OBSERVED` journal event carrying counts and a digest, never the rows.
+  The digest is taken over a canonical rendering of the table — columns in
+  order, a null distinct from the text `null`, separators inside a value
+  escaped — because a digest that changes when the rows did not cannot be
+  compared between runs.
+- `row-unique` reads a SQL NULL as SQL does: two rows with no value are not
+  duplicates of each other. It compares numbers as decimals, as `row-value` and
+  `row-balance` do, so the same pair of rows cannot be distinct here and equal
+  there. A `double` column holding NaN or an infinity is indeterminate rather
+  than an error inside an assertion.
 - `--observations`, `--db-user`, and `--db-secret-id`. The password is resolved
   where it is used, as the bearer token is; nothing in the composition root ever
-  holds the value.
+  holds the value. An expired or missing handle refuses the observation with
+  `SECRET_UNAVAILABLE` and no retry, rather than connecting with a stale value
+  and reporting what looks like the database rejecting the run.
+- The connect timeout travels as a connection property rather than through
+  `DriverManager.setLoginTimeout`, which is process-wide state a connector has
+  no business writing.
 - The released executable ships the PostgreSQL driver: a shaded jar cannot take
   one from `-cp`, so shipping none would make observations unusable from the
   artifact. Another database means building the CLI with its driver.

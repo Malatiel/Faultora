@@ -7,6 +7,7 @@ import dev.faultora.model.identifier.OperationId;
 import dev.faultora.model.identifier.ProtocolId;
 import dev.faultora.model.identifier.TargetId;
 import dev.faultora.model.security.EvidencePolicy;
+import dev.faultora.model.security.SecretHandle;
 import dev.faultora.net.DestinationPolicyViolation;
 import dev.faultora.net.HostPolicy;
 import dev.faultora.spi.context.ConnectorContext;
@@ -26,6 +27,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
@@ -271,6 +273,136 @@ class JdbcConnectorTest {
                         throw new IllegalStateException(message);
                     }))
                     .isInstanceOf(IllegalStateException.class);
+        }
+    }
+
+    @Test
+    void aStatementThatBeginsByReadingAndThenWritesIsRefused() {
+        // The first word is not the statement. PostgreSQL runs a data-modifying
+        // common table expression, and SELECT … INTO creates a table; both open
+        // with a keyword that reads.
+        for (String write : List.of(
+                "WITH gone AS (DELETE FROM ledger_entries RETURNING *) SELECT * FROM gone",
+                "WITH more AS (INSERT INTO ledger_entries VALUES (9,'x','y',1) RETURNING *)"
+                        + " SELECT * FROM more",
+                "SELECT * INTO copy_of_ledger FROM ledger_entries")) {
+            OperationResult result = observe(write, Map.of(), 100);
+
+            assertThat(result.isSuccess()).as(write).isFalse();
+            assertThat(result.error().code()).isEqualTo("OBSERVATION_REFUSED");
+            assertThat(result.error().message()).as(write).contains("which writes");
+        }
+        assertThat(rowCount()).as("the table is untouched").isEqualTo(3);
+    }
+
+    @Test
+    void anOrdinaryReadIsNotRefusedForContainingAWordThatCanBeginAWrite() {
+        // 'comment' is an ordinary column name and 'replace' an ordinary
+        // function. Neither can write from inside a statement that began by
+        // reading, and refusing them would make the check broken rather than
+        // strict.
+        assertThatCode(() -> ReadOnlyStatement.of(
+                "SELECT replace(account, ' ', '') AS account, comment "
+                        + "FROM ledger_entries WHERE payment_id = :paymentId"))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void credentialsInAUrlAreNotMistakenForItsHost() {
+        // In '//user:pw@10.0.0.5/db' the host is what follows the '@'.
+        // Classifying 'user' would check a name nobody connects to.
+        assertThatThrownBy(() -> JdbcUrl.parse(
+                "jdbc:mysql://reader:hunter2@10.0.0.5:3306/payments",
+                HostPolicy.defaultPolicy()))
+                .isInstanceOf(DestinationPolicyViolation.class)
+                .hasMessageContaining("10.0.0.5")
+                .hasMessageNotContaining("hunter2");
+    }
+
+    @Test
+    void aCommentIsNotASecondStatement() {
+        // A ';' inside a comment ends nothing. Refusing it would make an
+        // operator strip the comments out of a document written to be read.
+        assertThat(observe("SELECT id FROM ledger_entries -- one per entry; really\n"
+                + "ORDER BY id", Map.of(), 100).isSuccess()).isTrue();
+        assertThat(observe("SELECT id /* not a write: DELETE; */ FROM ledger_entries",
+                Map.of(), 100).isSuccess()).isTrue();
+    }
+
+    @Test
+    void aUrlWhoseHostThisCannotFindIsRefused() {
+        // Oracle's thin driver writes its host after an '@' rather than after
+        // '//'. Reading "no '//', so nothing to classify" would have let a run
+        // reach an internal database with the destination policy never asked.
+        assertThatThrownBy(() -> JdbcUrl.parse(
+                "jdbc:oracle:thin:@db.internal:1521:ORCL", HostPolicy.defaultPolicy()))
+                .isInstanceOf(DestinationPolicyViolation.class)
+                .hasMessageContaining("Cannot find the host")
+                .hasMessageNotContaining("db.internal");
+    }
+
+    @Test
+    void anExpiredSecretIsNotRetried() {
+        SecretHandle expired = new SecretHandle(
+                "ledger-password", "***", "env", System.currentTimeMillis() - 1000,
+                () -> "hunter2".toCharArray());
+        ConnectorContext context = new ConnectorContext(
+                new EvidencePolicy(true, true, Set.of(), 0, 100,
+                        List.of(), Set.of(), "session"),
+                name -> expired, 2000, 10_000, 20_000,
+                Map.of(JdbcConnector.USER, "reader",
+                        JdbcConnector.SECRET_ID, "ledger-password"));
+
+        OperationResult result = execute("SELECT 1", Map.of(), context);
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.error().code()).isEqualTo("SECRET_UNAVAILABLE");
+        assertThat(result.error().retryable()).isFalse();
+        assertThat(result.error().message()).doesNotContain("hunter2");
+    }
+
+    @Test
+    void aPolicyThatCapturesNoBodiesCountsRowsWithoutKeepingThem() {
+        ConnectorContext withheld = new ConnectorContext(
+                new EvidencePolicy(false, false, Set.of(), 0, 100,
+                        List.of(), Set.of(), "session"),
+                name -> null, 2000, 10_000, 20_000, Map.of());
+
+        OperationResult result = execute(
+                "SELECT account, amount FROM ledger_entries ORDER BY id",
+                Map.of(), withheld);
+
+        TableEvidence table = TableEvidence.observedIn(result.protocolEvidence());
+        assertThat(table.rowCount()).as("a count is not content").isEqualTo(3);
+        assertThat(table.valuesWithheld()).isTrue();
+        assertThat(table.column("amount")).containsOnlyNulls();
+    }
+
+    @Test
+    void aColumnTheEvidencePolicyRedactsIsNotKept() {
+        ConnectorContext redacting = new ConnectorContext(
+                new EvidencePolicy(true, true, Set.of(), 0, 100,
+                        List.of("$.AMOUNT"), Set.of(), "session"),
+                name -> null, 2000, 10_000, 20_000, Map.of());
+
+        OperationResult result = execute(
+                "SELECT account, amount FROM ledger_entries ORDER BY id",
+                Map.of(), redacting);
+
+        TableEvidence table = TableEvidence.observedIn(result.protocolEvidence());
+        assertThat(table.column("AMOUNT")).containsOnly("***");
+        assertThat(table.column("ACCOUNT")).contains("receivable");
+    }
+
+    private OperationResult execute(
+            String sql, Map<String, Object> inputs, ConnectorContext context) {
+        try (JdbcConnector connector = new JdbcConnector(HostPolicy.permissive())) {
+            Connector.PreparedTarget target = connector.prepare(ledger(), context);
+            try {
+                return connector.execute(target, observation(sql), inputs, context);
+            } finally {
+                connector.release(target);
+            }
         }
     }
 

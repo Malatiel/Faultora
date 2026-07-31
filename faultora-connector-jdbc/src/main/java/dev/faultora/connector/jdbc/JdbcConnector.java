@@ -4,6 +4,7 @@ import dev.faultora.model.catalog.NormalizedError;
 import dev.faultora.model.catalog.OperationDefinition;
 import dev.faultora.model.catalog.TargetDefinition;
 import dev.faultora.model.identifier.ProtocolId;
+import dev.faultora.model.security.SecretHandle;
 import dev.faultora.net.DestinationPolicyViolation;
 import dev.faultora.net.HostPolicy;
 import dev.faultora.spi.context.ConnectorContext;
@@ -91,19 +92,26 @@ public final class JdbcConnector implements Connector {
     }
 
     private Connection open(JdbcUrl url, ConnectorContext context) {
+        Properties properties = new Properties();
+
         long connectSeconds = Math.max(1,
                 (context == null ? 5000 : context.connectTimeoutMs()) / 1000);
-        DriverManager.setLoginTimeout((int) connectSeconds);
+        String timeoutProperty = connectTimeoutPropertyFor(url);
+        if (timeoutProperty != null) {
+            properties.setProperty(timeoutProperty, Long.toString(connectSeconds));
+        }
 
         // The password is resolved here and used immediately: it never becomes
         // a field of this connector, and nothing above it ever holds the value.
-        Properties properties = new Properties();
         String user = text(context, USER);
         if (user != null) {
             properties.setProperty("user", user);
-            char[] password = passwordOf(context);
-            if (password != null) {
+        }
+        char[] password = passwordOf(context);
+        if (password != null) {
+            try {
                 properties.setProperty("password", new String(password));
+            } finally {
                 java.util.Arrays.fill(password, '\0');
             }
         }
@@ -126,14 +134,54 @@ public final class JdbcConnector implements Connector {
         return value instanceof String text && !text.isBlank() ? text : null;
     }
 
-    /** The password behind the operator's secret handle, or null when none. */
+    /**
+     * The password behind the operator's secret handle, or null when none.
+     * <p>
+     * An expired handle is refused rather than used. A resolver that rotates
+     * credentials hands out a handle with a lifetime, and connecting with a
+     * value past it produces an authentication failure that reads like the
+     * database rejecting the run — the same reason the HTTP connector checks it.
+     */
     private static char[] passwordOf(ConnectorContext context) {
         String secretId = text(context, SECRET_ID);
-        if (secretId == null || context.secretResolver() == null) {
+        if (secretId == null) {
             return null;
         }
-        var handle = context.secretResolver().apply(secretId);
-        return handle == null ? null : handle.secretValue();
+        if (context.secretResolver() == null) {
+            throw new IllegalStateException(
+                    "No secret resolver configured for: " + secretId);
+        }
+        SecretHandle handle = context.secretResolver().apply(secretId);
+        if (handle == null) {
+            throw new IllegalStateException(
+                    "Secret resolver returned null for: " + secretId);
+        }
+        if (handle.isExpired()) {
+            throw new IllegalStateException(
+                    "Secret handle expired for: " + secretId);
+        }
+        char[] password = handle.secretValue();
+        if (password == null || password.length == 0) {
+            throw new IllegalStateException(
+                    "Secret value is empty for: " + secretId);
+        }
+        return password;
+    }
+
+    /**
+     * The connection property a driver takes its connect timeout in, in
+     * seconds, or null when this connector knows of none for it.
+     * <p>
+     * {@link DriverManager#setLoginTimeout} is portable and is process-wide
+     * state: setting it here would change how every other driver in this JVM
+     * connects, including one a host application owns, and the last connector
+     * to call it would win. So the timeout travels as a connection property
+     * instead — and only to a driver documented to read it under that name, in
+     * those units, because a driver handed a property it does not know can
+     * refuse the connection outright, as H2 does.
+     */
+    private static String connectTimeoutPropertyFor(JdbcUrl url) {
+        return url.value().startsWith("jdbc:postgresql:") ? "connectTimeout" : null;
     }
 
     @Override
@@ -159,6 +207,12 @@ public final class JdbcConnector implements Connector {
             return OperationResult.failure(new NormalizedError(
                     NormalizedError.ErrorCategory.NETWORK,
                     "DATABASE_UNAVAILABLE", unreachable.getMessage(), true, Map.of()), 0);
+        } catch (IllegalStateException noCredentials) {
+            // Not retryable: a missing or expired secret is configuration, and
+            // trying again with it produces the same refusal from the database.
+            return OperationResult.failure(new NormalizedError(
+                    NormalizedError.ErrorCategory.VALIDATION,
+                    "SECRET_UNAVAILABLE", noCredentials.getMessage(), false, Map.of()), 0);
         }
     }
 

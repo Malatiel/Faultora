@@ -1,10 +1,12 @@
 package dev.faultora.assertions.core;
 
 import dev.faultora.spi.context.AssertionContext;
+import dev.faultora.spi.contract.AssertionProvider;
 import dev.faultora.spi.result.AssertionResult;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -162,5 +164,70 @@ class TabularAssertionsTest {
                 Map.of("column", "payment_id", "equals", "pay-1"),
                 booking().truncated(), CONTEXT).outcome())
                 .isEqualTo(AssertionResult.Outcome.INDETERMINATE);
+    }
+
+    @Test
+    void rowsMissingAValueAreNotDuplicatesOfEachOther() {
+        // SQL says a NULL equals nothing, not even another NULL, and a unique
+        // index agrees. Reading two unset values as a collision would report a
+        // duplicate the database would have accepted.
+        var unset = ObservedTableEvidence.observing("external_ref")
+                .row(new Object[] {null})
+                .row(new Object[] {null});
+
+        assertThat(unique.evaluate("row-unique", Map.of("column", "external_ref"),
+                unset, CONTEXT).outcome())
+                .isEqualTo(AssertionResult.Outcome.PASS);
+    }
+
+    @Test
+    void twoWaysOfWritingTheSameNumberAreOneValue() {
+        // row-value and row-balance compare amounts as decimals. A uniqueness
+        // check that did not would call the same pair of rows distinct here and
+        // equal there.
+        var duplicated = ObservedTableEvidence.observing("amount")
+                .row(new BigDecimal("2500.00"))
+                .row(2500);
+
+        AssertionResult result = unique.evaluate(
+                "row-unique", Map.of("column", "amount"), duplicated, CONTEXT);
+
+        assertThat(result.outcome()).isEqualTo(AssertionResult.Outcome.FAIL);
+        assertThat(result.message()).contains("Rows 0 and 1");
+    }
+
+    @Test
+    void aValueNoDecimalCanHoldIsIndeterminateRatherThanAnError() {
+        // A double column can hold NaN or an infinity. Neither is a decimal,
+        // and an assertion that threw on one would fail the run with a stack
+        // trace instead of a verdict.
+        var notANumber = ObservedTableEvidence.observing("amount")
+                .row(Double.NaN)
+                .row(Double.POSITIVE_INFINITY);
+
+        assertThat(balance.evaluate("row-balance",
+                Map.of("column", "amount", "equals", 0), notANumber, CONTEXT).outcome())
+                .isEqualTo(AssertionResult.Outcome.INDETERMINATE);
+        assertThat(unique.evaluate("row-unique", Map.of("column", "amount"),
+                notANumber, CONTEXT).outcome())
+                .isEqualTo(AssertionResult.Outcome.PASS);
+    }
+
+    @Test
+    void valuesTheEvidencePolicyWithheldAreIndeterminateRatherThanWrong() {
+        // A policy that captures no bodies keeps the count and drops the
+        // values. Counting still answers; reading a value must not compare
+        // against the blank left behind.
+        var counted = booking().withheld();
+
+        assertThat(count.evaluate("row-count", Map.of("equals", 2), counted, CONTEXT)
+                .outcome()).isEqualTo(AssertionResult.Outcome.PASS);
+        for (AssertionProvider provider : List.of(value, balance, unique)) {
+            AssertionResult result = provider.evaluate(provider.type(),
+                    Map.of("column", "amount", "equals", "2500"), counted, CONTEXT);
+            assertThat(result.outcome()).as(provider.type())
+                    .isEqualTo(AssertionResult.Outcome.INDETERMINATE);
+            assertThat(result.message()).as(provider.type()).contains("no bodies");
+        }
     }
 }

@@ -45,9 +45,9 @@ public class RowBalanceAssertionProvider implements AssertionProvider {
             return refusal;
         }
         String column = ObservedMessages.parameter(params, "column");
-        AssertionResult missing = ObservedRows.missingColumn(rows, column);
-        if (missing != null) {
-            return missing;
+        AssertionResult unreadable = ObservedRows.unreadableColumn(rows, column);
+        if (unreadable != null) {
+            return unreadable;
         }
         BigDecimal expected = ObservedRows.number(
                 ObservedMessages.parameter(params, "equals"));

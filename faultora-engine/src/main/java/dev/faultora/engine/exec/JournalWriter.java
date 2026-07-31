@@ -184,7 +184,7 @@ public final class JournalWriter {
         append(new RunEvent.RowsObserved(
                 "ROWS_OBSERVED", now(), runId, nodeId,
                 table.rowCount(), fetched, table.truncated(),
-                ContentDigest.sha256Uri(table.rows().toString())));
+                ContentDigest.sha256Uri(table.canonicalForm())));
     }
 
     public void cleanupStarted(int pendingObligations) {

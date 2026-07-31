@@ -5,8 +5,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.faultora.model.security.EvidencePolicy;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -104,6 +106,78 @@ public final class EvidenceCapture {
         return exceedsLimit(content, effective)
                 ? Arrays.copyOf(content, (int) effective.maxBodyBytes())
                 : Arrays.copyOf(content, content.length);
+    }
+
+    /**
+     * The rows the policy permits keeping, as tabular evidence.
+     * <p>
+     * A result set is not a document, so the same policy lands on it slightly
+     * differently, and both ways it lands conservatively:
+     * <ul>
+     *   <li><b>No bodies means no values, not no rows.</b> How many rows an
+     *       observation returned is a count rather than content, and the
+     *       counting assertions still answer from it. The values go, and
+     *       {@link TableEvidence#valuesWithheld()} says they went, so an
+     *       assertion that reads one is indeterminate rather than comparing
+     *       against a blank.</li>
+     *   <li><b>A redact path names a column.</b> Its leading segment is matched
+     *       against the column name and the whole cell is replaced. Matching
+     *       further into a cell would mean parsing it as a document, and a cell
+     *       that cannot be parsed could not then be redacted — so the cell goes
+     *       whole, which is the side of that choice a policy asked for.</li>
+     * </ul>
+     *
+     * @param rows each row keyed by column name, in the order they were read
+     */
+    public static TableEvidence table(
+            List<String> columns,
+            List<Map<String, Object>> rows,
+            boolean truncated,
+            EvidencePolicy policy
+    ) {
+        EvidencePolicy effective = effective(policy);
+        List<Map<String, Object>> kept = rows == null ? List.of() : rows;
+        if (!effective.captureBodies()) {
+            return new TableEvidence(
+                    columns, kept.stream().map(row -> Map.<String, Object>of()).toList(),
+                    truncated, true);
+        }
+
+        Set<String> redactedColumns = leadingSegments(effective.redactPaths());
+        if (redactedColumns.isEmpty()) {
+            return new TableEvidence(columns, kept, truncated, false);
+        }
+        List<Map<String, Object>> redacted = new ArrayList<>(kept.size());
+        for (Map<String, Object> row : kept) {
+            Map<String, Object> copy = new LinkedHashMap<>(row);
+            copy.replaceAll((column, value) ->
+                    redactedColumns.contains(column.toLowerCase(Locale.ROOT))
+                            ? REDACTED_MARKER : value);
+            redacted.add(copy);
+        }
+        return new TableEvidence(columns, redacted, truncated, false);
+    }
+
+    /** The first segment of each redact path, lowercased. */
+    private static Set<String> leadingSegments(List<String> paths) {
+        if (paths == null || paths.isEmpty()) {
+            return Set.of();
+        }
+        Set<String> segments = new LinkedHashSet<>();
+        for (String path : paths) {
+            if (path == null || path.isBlank()) {
+                continue;
+            }
+            String normalized = path.startsWith("$.") ? path.substring(2) : path;
+            if (normalized.startsWith("$")) normalized = normalized.substring(1);
+            if (normalized.startsWith(".")) normalized = normalized.substring(1);
+            int dot = normalized.indexOf('.');
+            String leading = dot < 0 ? normalized : normalized.substring(0, dot);
+            if (!leading.isBlank()) {
+                segments.add(leading.toLowerCase(Locale.ROOT));
+            }
+        }
+        return Set.copyOf(segments);
     }
 
     /** Whether the policy's allowlist admits this media type. */

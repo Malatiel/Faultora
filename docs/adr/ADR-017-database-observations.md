@@ -32,17 +32,39 @@ The obvious place is the step that makes the observation. That place is wrong.
   it redirects an API to staging — a document committed to a repository never
   names the database a run actually reads.
 - **Read-only is enforced three times, and only the third is a guarantee.** The
-  connector accepts a single statement beginning `SELECT` or `WITH`; the
-  connection is set read-only; and the documentation asks for read-only
-  credentials. The first two are code, and code is one defect away from being
-  wrong. A grant is not. An operator who gives this connector a writing account
-  has removed the only protection that does not depend on this project being
-  correct, and the connector's own javadoc says so.
+  connector accepts a single reading statement; the connection is set
+  read-only; and the documentation asks for read-only credentials. The first
+  two are code, and code is one defect away from being wrong. A grant is not.
+  An operator who gives this connector a writing account has removed the only
+  protection that does not depend on this project being correct, and the
+  connector's own javadoc says so.
+- **A statement is read whole, not by its first word.** The first version of
+  this check read the opening keyword, and the opening keyword is not the
+  statement: PostgreSQL runs `WITH x AS (DELETE FROM ledger RETURNING *) SELECT
+  * FROM x`, which begins `WITH` and deletes rows, and `SELECT … INTO` creates
+  a table while beginning `SELECT`. So every bare word — outside string
+  literals, quoted identifiers and comments — is checked against a list of
+  words that write, and one of them refuses the observation before a connection
+  opens.
 - **The statement check is strict rather than clever.** A parser that
-  understood every dialect could permit more and would be wrong somewhere. Two
-  opening keywords, and a `;` with anything after it refused, is a rule an
-  operator can hold in their head — and the semicolon rule is what stops a
-  reading observation from carrying a write behind one.
+  understood every dialect could permit more and would be wrong somewhere. A
+  list of words that may not appear is a rule an operator can hold in their
+  head, and a refused query can always be rewritten. The `;` rule belongs to
+  the same choice: a semicolon with anything after it is what would put a
+  second statement beyond the check the first passed.
+- **A URL whose host cannot be found is refused, not allowed.** Not every
+  driver writes `//host`; Oracle's thin driver writes
+  `jdbc:oracle:thin:@host:1521:SID`. Reading a missing `//` as "in-process, so
+  nothing to classify" made the destination policy silently optional for those
+  drivers. A subprotocol that reaches no network is now named explicitly, and
+  everything else must show its host to be checked.
+- **The evidence policy applies to rows, through the shared capture.** Values
+  are content and counts are not: a policy capturing no bodies keeps the row
+  count and drops the values, and `TableEvidence.valuesWithheld` makes an
+  assertion that reads one indeterminate rather than wrong. A redact path whose
+  leading segment names a column replaces that cell whole — matching further
+  into a cell would mean parsing it, and a cell that cannot be parsed could not
+  then be redacted.
 - **Values are bound, never interpolated.** Named `:parameters` become
   positional markers in one pass that also produces the binding order, so the
   two cannot disagree. A `::` cast is not a parameter and neither is a colon
@@ -81,6 +103,19 @@ The obvious place is the step that makes the observation. That place is wrong.
   including one that joins it to something else.
 - **Trusting the catalog's `READ_ONLY` classification.** The catalog is the
   document with the SQL in it. A file cannot classify itself honestly.
+- **Refusing `WITH` outright** rather than scanning for words that write. It
+  would close the same hole and would cost every ordinary common table
+  expression, which is how readable analytical SQL is written. Scanning refuses
+  the same statements and keeps the ones nobody was worried about.
+- **Replacing the driver's message.** It is the only thing that names the
+  column that does not exist, and several drivers quote the offending value
+  inside it. The message is bounded rather than dropped, and `docs/SECURITY.md`
+  states the exposure — a connector that silently swallowed it would trade a
+  stated risk for an unusable diagnostic.
+- **`DriverManager.setLoginTimeout` for the connect timeout.** It is portable
+  and it is process-wide: it would change how every other driver in the JVM
+  connects, including one a host application owns. The timeout travels as a
+  connection property instead, to the drivers documented to take it.
 - **A connection pool.** It would help a scenario making many observations and
   would have to be closed on connector close rather than on release; the
   correctness question it raises is the one that bit the Kafka consumer, and

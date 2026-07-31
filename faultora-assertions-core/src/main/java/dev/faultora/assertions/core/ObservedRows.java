@@ -46,8 +46,15 @@ final class ObservedRows {
         return null;
     }
 
-    /** A column the rows must have, or an explanation of why they do not. */
-    static AssertionResult missingColumn(TableEvidence rows, String column) {
+    /**
+     * Why a column cannot be read, or null when it can.
+     * <p>
+     * A column the observation did not return is a failure: the scenario names
+     * a column the query does not produce, and no run will change that. A
+     * column whose values the evidence policy withheld is indeterminate
+     * instead — the data may be exactly right, and this run cannot see it.
+     */
+    static AssertionResult unreadableColumn(TableEvidence rows, String column) {
         if (column == null || column.isBlank()) {
             return AssertionResult.indeterminate(
                     "This assertion needs 'column' to name the column it reads");
@@ -56,6 +63,11 @@ final class ObservedRows {
             return AssertionResult.fail(
                     "The observation returned no column '" + column + "'; it returned "
                             + rows.columns(), Map.of("columns", rows.columns()));
+        }
+        if (rows.valuesWithheld()) {
+            return AssertionResult.indeterminate(
+                    "The evidence policy captured no bodies, so the values of '" + column
+                            + "' were not kept and this assertion cannot read them");
         }
         return null;
     }
@@ -66,12 +78,17 @@ final class ObservedRows {
      * A database returns its own numeric types, and a scenario writes decimals
      * as text. Comparing them as {@link BigDecimal} means 2500 and 2500.00 are
      * the same amount, which is what a ledger means by them.
+     * <p>
+     * Not every {@link Number} is one: a {@code double} column can hold NaN or
+     * an infinity, which no decimal represents. Those are not numbers here
+     * either, so a balance over them is indeterminate rather than a crash
+     * inside an assertion.
      */
     static BigDecimal number(Object value) {
         return switch (value) {
             case null -> null;
             case BigDecimal decimal -> decimal;
-            case Number number -> new BigDecimal(number.toString());
+            case Number number -> parse(number.toString());
             case CharSequence text -> parse(text.toString());
             default -> parse(value.toString());
         };

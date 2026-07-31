@@ -18,6 +18,7 @@ class ObservedTableEvidence implements EvidenceView {
     private final List<Map<String, Object>> rows = new ArrayList<>();
     private final boolean observation;
     private boolean truncated;
+    private boolean valuesWithheld;
 
     private ObservedTableEvidence(boolean observation, String... columns) {
         this.observation = observation;
@@ -48,12 +49,23 @@ class ObservedTableEvidence implements EvidenceView {
         return this;
     }
 
+    /** The same rows, counted but with their values not captured. */
+    ObservedTableEvidence withheld() {
+        this.valuesWithheld = true;
+        return this;
+    }
+
     @Override
     public Map<String, Object> protocolEvidence() {
         return observation
-                ? Map.of(TableEvidence.OBSERVED,
-                        new TableEvidence(columns, rows, truncated))
+                ? Map.of(TableEvidence.OBSERVED, new TableEvidence(
+                        columns, valuesWithheld ? blanked() : rows,
+                        truncated, valuesWithheld))
                 : Map.of("status", "not an observation");
+    }
+
+    private List<Map<String, Object>> blanked() {
+        return rows.stream().map(row -> Map.<String, Object>of()).toList();
     }
 
     @Override

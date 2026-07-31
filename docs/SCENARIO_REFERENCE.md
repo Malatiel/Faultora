@@ -1004,6 +1004,12 @@ params:
   column: payment_id
 ```
 
+Rows with no value in that column are not duplicates of each other: SQL says a
+NULL equals nothing, not even another NULL, and a unique index agrees. Numbers
+compare as decimals here too, so 2500 and 2500.00 are one value rather than
+two — which also means `0001` and `1` are one value. On a zero-padded
+identifier, check the column that is not numeric.
+
 ## Database observations
 
 A run reads a database through observations an **operator** declares, not
@@ -1050,15 +1056,22 @@ The scenario then names it like any other operation:
 What holds for every observation:
 
 - **it can only read.** A statement that does not begin `SELECT` or `WITH` is
-  refused before a connection opens, a `;` with anything after it is refused,
-  and the connection is set read-only. Give Faultora **read-only credentials**
-  as well: the first two rules are code, and code is one defect away from being
-  wrong;
+  refused before a connection opens, and so is one that contains a word that
+  writes anywhere in it — a common table expression can `DELETE`, and
+  `SELECT … INTO` creates a table, so the whole statement is read rather than
+  its first word. A `;` with anything after it is refused, and the connection
+  is set read-only. Give Faultora **read-only credentials** as well: all of
+  that is code, and code is one defect away from being wrong;
 - **values are bound, never interpolated.** A `:parameter` becomes a positional
   marker; a `::cast` and a colon inside a literal are left alone;
 - **rows are bounded at the driver** by the evidence policy's row limit, so
   rows that are not kept are not fetched either. A result that was cut is
   marked truncated, and the counting assertions refuse to answer from it;
+- **the evidence policy applies to the values.** A policy that captures no
+  bodies keeps how many rows an observation returned and keeps none of their
+  values, so `row-count` still answers and `row-value`, `row-balance` and
+  `row-unique` are indeterminate rather than wrong. A `redactPaths` entry whose
+  first segment names a column replaces that column's values;
 - **the server is a target**, so `--target ledger=jdbc:…` redirects an
   observation to a test database exactly as `--target` redirects an API.
 

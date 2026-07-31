@@ -50,9 +50,9 @@ public class RowValueAssertionProvider implements AssertionProvider {
             return refusal;
         }
         String column = ObservedMessages.parameter(params, "column");
-        AssertionResult missing = ObservedRows.missingColumn(rows, column);
-        if (missing != null) {
-            return missing;
+        AssertionResult unreadable = ObservedRows.unreadableColumn(rows, column);
+        if (unreadable != null) {
+            return unreadable;
         }
         String expected = ObservedMessages.parameter(params, "equals");
         if (expected == null) {
