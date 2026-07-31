@@ -1,0 +1,186 @@
+package dev.faultora.connector.jdbc;
+
+import dev.faultora.model.catalog.NormalizedError;
+import dev.faultora.model.catalog.OperationDefinition;
+import dev.faultora.model.catalog.TargetDefinition;
+import dev.faultora.model.identifier.ProtocolId;
+import dev.faultora.net.DestinationPolicyViolation;
+import dev.faultora.net.HostPolicy;
+import dev.faultora.spi.context.ConnectorContext;
+import dev.faultora.spi.contract.Connector;
+import dev.faultora.spi.evidence.TableEvidence;
+import dev.faultora.spi.result.OperationResult;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Properties;
+import java.util.Set;
+
+/**
+ * Observes a database, and only observes it.
+ * <p>
+ * Three things stop this connector from writing, and the third is the one that
+ * matters:
+ * <ul>
+ *   <li>the declared statement must be a single reading statement, checked
+ *       before a connection is opened — see {@link ReadOnlyStatement};</li>
+ *   <li>the connection is set read-only, so a driver that can enforce it
+ *       does;</li>
+ *   <li><b>the credentials should be read-only.</b> Faultora cannot check this
+ *       and does not pretend to. The two rules above are code, and code is one
+ *       defect away from being wrong; a grant is not. An operator who gives
+ *       this connector a writing account has removed the only guarantee that
+ *       does not depend on this project being correct.</li>
+ * </ul>
+ * Values a scenario supplies are bound through a prepared statement and never
+ * assembled into the text, so what a run may read is what the operator's
+ * document says it may read.
+ */
+public final class JdbcConnector implements Connector {
+
+    /** Protocol identifier of operations this connector executes. */
+    public static final String PROTOCOL = "jdbc";
+
+    /** Metadata key carrying the declared statement. */
+    static final String SQL = "sql";
+
+    private static final ProtocolId PROTOCOL_ID = new ProtocolId(PROTOCOL);
+
+    /** Config key naming the user observations connect as. */
+    public static final String USER = "databaseUser";
+
+    /** Config key naming the secret handle that supplies its password. */
+    public static final String SECRET_ID = "databaseSecretId";
+
+    private final HostPolicy hostPolicy;
+
+    public JdbcConnector() {
+        this(HostPolicy.defaultPolicy());
+    }
+
+    public JdbcConnector(HostPolicy hostPolicy) {
+        this.hostPolicy = hostPolicy;
+    }
+
+    @Override
+    public ProtocolId protocol() {
+        return PROTOCOL_ID;
+    }
+
+    @Override
+    public Set<String> capabilities() {
+        return Set.of("jdbc-observe", "tabular-evidence");
+    }
+
+    /**
+     * A handle for one observation.
+     * <p>
+     * Not cached, and not pooled. A JDBC connection belongs to one thread, and
+     * the engine prepares and releases around every invocation — the same shape
+     * the Kafka consumer has, for the same reason: a shared handle would be
+     * driven by two steps of a parallel group at once, and the first to finish
+     * would close it under the second.
+     */
+    @Override
+    public PreparedTarget prepare(TargetDefinition target, ConnectorContext context) {
+        JdbcUrl url = JdbcUrl.parse(target.baseUrl(), hostPolicy);
+        return new JdbcPreparedTarget(target, url, () -> open(url, context));
+    }
+
+    private Connection open(JdbcUrl url, ConnectorContext context) {
+        long connectSeconds = Math.max(1,
+                (context == null ? 5000 : context.connectTimeoutMs()) / 1000);
+        DriverManager.setLoginTimeout((int) connectSeconds);
+
+        // The password is resolved here and used immediately: it never becomes
+        // a field of this connector, and nothing above it ever holds the value.
+        Properties properties = new Properties();
+        String user = text(context, USER);
+        if (user != null) {
+            properties.setProperty("user", user);
+            char[] password = passwordOf(context);
+            if (password != null) {
+                properties.setProperty("password", new String(password));
+                java.util.Arrays.fill(password, '\0');
+            }
+        }
+        try {
+            Connection connection = DriverManager.getConnection(url.value(), properties);
+            // A driver that can refuse writes on a read-only connection now
+            // will. One that cannot leaves the statement check and the grant.
+            connection.setReadOnly(true);
+            connection.setAutoCommit(true);
+            return connection;
+        } catch (SQLException unreachable) {
+            throw new DestinationPolicyViolation(
+                    "Cannot connect to " + url.redacted() + ": " + unreachable.getMessage());
+        }
+    }
+
+    private static String text(ConnectorContext context, String key) {
+        Object value = context == null || context.config() == null
+                ? null : context.config().get(key);
+        return value instanceof String text && !text.isBlank() ? text : null;
+    }
+
+    /** The password behind the operator's secret handle, or null when none. */
+    private static char[] passwordOf(ConnectorContext context) {
+        String secretId = text(context, SECRET_ID);
+        if (secretId == null || context.secretResolver() == null) {
+            return null;
+        }
+        var handle = context.secretResolver().apply(secretId);
+        return handle == null ? null : handle.secretValue();
+    }
+
+    @Override
+    public OperationResult execute(
+            PreparedTarget preparedTarget,
+            OperationDefinition operation,
+            Map<String, Object> inputs,
+            ConnectorContext context
+    ) {
+        JdbcPreparedTarget target = (JdbcPreparedTarget) preparedTarget;
+        Object declared = operation.protocolMetadata() == null
+                ? null : operation.protocolMetadata().get(SQL);
+        try {
+            ReadOnlyStatement statement =
+                    ReadOnlyStatement.of(declared == null ? null : declared.toString());
+            return Observation.run(
+                    target, statement, inputs == null ? Map.of() : inputs, context);
+        } catch (IllegalArgumentException refused) {
+            return OperationResult.failure(new NormalizedError(
+                    NormalizedError.ErrorCategory.VALIDATION,
+                    "OBSERVATION_REFUSED", refused.getMessage(), false, Map.of()), 0);
+        } catch (DestinationPolicyViolation unreachable) {
+            return OperationResult.failure(new NormalizedError(
+                    NormalizedError.ErrorCategory.NETWORK,
+                    "DATABASE_UNAVAILABLE", unreachable.getMessage(), true, Map.of()), 0);
+        }
+    }
+
+    @Override
+    public void release(PreparedTarget preparedTarget) {
+        if (preparedTarget instanceof JdbcPreparedTarget target) {
+            target.close();
+        }
+    }
+
+    @Override
+    public void close() {
+        // Every connection belongs to an operation and was closed with it.
+    }
+
+    /** Protocol evidence for an observation, beside the rows themselves. */
+    static Map<String, Object> evidenceOf(TableEvidence table, long fetchedRows) {
+        Map<String, Object> evidence = new LinkedHashMap<>();
+        evidence.put(TableEvidence.OBSERVED, table);
+        evidence.put("rowCount", table.rowCount());
+        evidence.put("fetchedRows", fetchedRows);
+        evidence.put("truncated", table.truncated());
+        return evidence;
+    }
+}

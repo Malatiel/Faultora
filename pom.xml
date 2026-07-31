@@ -44,6 +44,8 @@
         <jmespath.version>0.5.1</jmespath.version>
         <kafka-clients.version>3.9.1</kafka-clients.version>
         <testcontainers.version>1.20.6</testcontainers.version>
+        <h2.version>2.4.240</h2.version>
+        <postgresql.version>42.7.3</postgresql.version>
         <httpclient5.version>5.6.1</httpclient5.version>
         <httpcore5.version>5.4.3</httpcore5.version>
 
@@ -70,8 +72,10 @@
         <module>faultora-import-common</module>
         <module>faultora-import-openapi</module>
         <module>faultora-import-asyncapi</module>
+        <module>faultora-import-observations</module>
         <module>faultora-connector-http</module>
         <module>faultora-connector-kafka</module>
+        <module>faultora-connector-jdbc</module>
         <module>faultora-faults-local</module>
         <module>faultora-faults-toxiproxy</module>
         <module>faultora-assertions-core</module>
@@ -134,6 +138,16 @@
             <dependency>
                 <groupId>dev.faultora</groupId>
                 <artifactId>faultora-import-asyncapi</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.faultora</groupId>
+                <artifactId>faultora-import-observations</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.faultora</groupId>
+                <artifactId>faultora-connector-jdbc</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
@@ -230,6 +244,21 @@
                 <groupId>org.apache.kafka</groupId>
                 <artifactId>kafka-clients</artifactId>
                 <version>${kafka-clients.version}</version>
+            </dependency>
+
+            <!-- Database drivers. H2 exercises the connector's bounds and
+                 refusals offline; PostgreSQL is what the reference system and
+                 the release gate run against. -->
+            <dependency>
+                <groupId>com.h2database</groupId>
+                <artifactId>h2</artifactId>
+                <version>${h2.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.postgresql</groupId>
+                <artifactId>postgresql</artifactId>
+                <version>${postgresql.version}</version>
             </dependency>
 
             <!-- Disposable infrastructure for the event end-to-end suite -->

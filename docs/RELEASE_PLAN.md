@@ -176,6 +176,12 @@ compound type would have had to reimplement. Deciding this before the JDBC
 connector arrives is what keeps 0.8's largest item from being designed under
 deadline.
 
+Status: assertion parameters are expressions, with the polling block's
+conditions carrying the same compile-time dependencies and refusals as the
+assertions section, and a parameter reading a secret refused at the boundary
+rather than redacted after the fact. What remains is M3-03, the remainder of
+M3-04, and M3-05.
+
 - JDBC observation connector: parameterized read-only observations, statement
   and connection deadlines, bounded rows, tabular evidence, mutation refused by
   both connector policy and database credentials (M3-03).
@@ -187,7 +193,102 @@ deadline.
   (M3-05).
 
 Gate: the M3 exit gate — at least one complete distributed business invariant
-verified, with deterministic observation windows and cleanup.
+verified, with deterministic observation windows and cleanup. Concretely: one
+scenario drives a command over HTTP, observes the event it causes, and proves
+the ledger balances; duplicate delivery produces one business effect; a lost
+outbox event is detected; a reconciliation run resolves an unknown provider
+outcome — and each of these scenarios fails against its known-broken variant,
+because a reliability test that has never failed proves nothing.
+
+#### Phase 1 — decide before building
+
+Three reviews of the events release found the same two root causes: a stated
+bound that did not hold, and a first window design that only a real broker
+could disprove. Both are cheaper to prevent on paper than in code, so three
+ADRs land before the connector does:
+
+- **Read-only enforcement.** Two layers, as M3-03 demands: the connector
+  refuses a mutating statement, and the database credentials are read-only.
+  The ADR records how a statement is classified, what happens when
+  classification is unsure — fail closed, because SQL parsing is always
+  incomplete — and what the database does with a mutation that slipped past.
+- **The database observation window.** A broker stamps every record; a
+  database does not. The ADR chooses the anchor — a run-scoped marker, a
+  timestamp column the contract declares, or a snapshot — and states how the
+  choice stays deterministic under retries and polling. ADR-014 records what
+  guessing here costs.
+- **The tabular evidence model.** Protocol-neutral, in the SPI beside
+  `MessageEvidence`, so assertions, the journal, and the report read tables
+  without learning SQL. The same ADR says what a database operation *is* in
+  the catalog: there is no AsyncAPI for a database, so the way a scenario
+  declares a query is new scenario contract — and everything new in the
+  contract is frozen at 1.0.
+
+#### Phase 2 — JDBC observation connector
+
+Built against the checklist the events review produced, not discovered by a
+later one:
+
+- **Client lifecycle.** Nothing is shared across threads: a connection belongs
+  to one operation, the pool to the run — the same shape the Kafka connector
+  settled on after concurrent steps drove one consumer from two threads.
+- **Every declared bound holds.** Statement deadline, connection deadline, row
+  count, byte volume: each enforced, each with a test that fails when it is
+  not, or deleted from the documentation. A limit that constrains nothing
+  answers a reviewer's question falsely.
+- **Destination policy.** The database host passes through `HostPolicy` like
+  any bootstrap server. JDBC resolves its own connections, so pinning is
+  unavailable exactly as it is for Kafka — `docs/SECURITY.md` states the
+  asymmetry rather than implying parity.
+- **Secrets.** Connection details resolve through the secret resolver and are
+  never scenario input; a refusal names the parameter and never the value.
+- **Evidence through the SPI.** Cell size, columns, rows, classification, and
+  redaction go through `EvidenceCapture`, the one implementation of the one
+  policy. Selection reads the row as it arrived; assertions read what the
+  policy kept, and withheld data makes an assertion indeterminate, never
+  failed — the rule the event assertions converged on.
+- **The journal sees every execution from day one.** A rows-observed event is
+  emitted on both paths — a node, and every poll of an eventually block — not
+  added when a review notices the gap.
+
+#### Phase 3 — Tabular assertions
+
+Row count, equality, numeric balance, and uniqueness. Numeric balance is the
+ledger invariant, so it is an assertion type of its own rather than a scenario
+idiom. Every one inherits expression parameters through the shared
+`AssertionParameters`, which is what makes the cross-component claim
+expressible: the balance check compares against the amount the API accepted
+without any construct designed for that pairing.
+
+#### Phase 4 — The payment recovery reference system
+
+Transactional outbox, idempotent consumer, double-entry ledger, provider
+simulator with accepted-but-response-lost behaviour, reconciliation worker,
+and failure variants selected by configuration. All of it disposable test
+infrastructure; the default build stays offline.
+
+#### Phase 5 — Prove the gate, then audit the claims
+
+- Gate scenarios run against a real disposable database, not an in-memory
+  stand-in. The events release's most serious defect passed every unit test
+  and was visible only against a real broker.
+- Every statement the release adds to `README.md`, `docs/`, or an ADR is
+  checked against the code, and every new guarantee carries the test that
+  fails when it is violated — the 0.6 discipline, applied at arrival rather
+  than at a debt release.
+- The JDBC driver joins the size baseline the Kafka codecs started in 0.7, as
+  a number rather than a surprise.
+
+#### What 0.8 deliberately does not touch
+
+- The undecided semantics listed under 1.0 — an assertion named `jsonpath`
+  that evaluates JMESPath, `equals` distinguishing 5 from 5.0, a dotted path
+  that cannot index a list. Each is decided once, before the freeze, not
+  incidentally here.
+- Scenario contract beyond what database operations and tabular assertions
+  require. The freeze is close; the contract stops growing on its own.
+- Runner and controller groundwork. 0.9 and 2.0 own those, and early
+  scaffolding becomes a second thing to keep correct.
 
 ### 0.9 — Private-network runner
 

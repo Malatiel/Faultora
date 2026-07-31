@@ -93,11 +93,17 @@ public final class TargetResolver {
 
     /** The protocol a URL's scheme names, or null when it names none. */
     private static String protocolOf(String url) {
-        int scheme = url.indexOf("://");
+        String lower = url.toLowerCase(java.util.Locale.ROOT);
+        // A database URL names its driver after the protocol — jdbc:postgresql:
+        // — so the protocol is the first segment, not everything before "://".
+        if (lower.startsWith("jdbc:")) {
+            return "jdbc";
+        }
+        int scheme = lower.indexOf("://");
         if (scheme <= 0) {
             return null;
         }
-        String name = url.substring(0, scheme).toLowerCase(java.util.Locale.ROOT);
+        String name = lower.substring(0, scheme);
         // A connector speaks one protocol; the transport it is secured with is
         // not a different one.
         return switch (name) {

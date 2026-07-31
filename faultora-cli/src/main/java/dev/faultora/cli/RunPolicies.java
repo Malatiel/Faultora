@@ -117,6 +117,13 @@ final class RunPolicies {
         if (options.authSecretId() != null) {
             config.put("authSecretId", options.authSecretId());
         }
+        if (options.databaseUser() != null) {
+            config.put(dev.faultora.connector.jdbc.JdbcConnector.USER, options.databaseUser());
+        }
+        if (options.databaseSecretId() != null) {
+            config.put(dev.faultora.connector.jdbc.JdbcConnector.SECRET_ID,
+                    options.databaseSecretId());
+        }
         return new ConnectorContext(
                 evidencePolicy(), secrets::resolve, 5000, 30000, 60000, config);
     }

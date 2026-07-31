@@ -3,6 +3,7 @@ package dev.faultora.cli;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.faultora.connector.http.DestinationPolicy;
 import dev.faultora.connector.http.HttpConnector;
+import dev.faultora.connector.jdbc.JdbcConnector;
 import dev.faultora.connector.kafka.KafkaConnector;
 import dev.faultora.engine.LocalEngine;
 import dev.faultora.engine.journal.RunJournal;
@@ -175,13 +176,17 @@ public class TestCommand implements Command {
         try (HttpConnector httpConnector = options.allowPrivate()
                 ? new HttpConnector(DestinationPolicy.permissive())
                 : new HttpConnector();
-             KafkaConnector kafkaConnector = kafkaConnectorFor(compilation, options)) {
+             KafkaConnector kafkaConnector = kafkaConnectorFor(compilation, options);
+             JdbcConnector jdbcConnector = jdbcConnectorFor(compilation, options)) {
             Connector faultAwareConnector =
                     new FaultInjectingConnector(httpConnector, localFaults);
             Map<String, Connector> connectors = new LinkedHashMap<>();
             connectors.put("http", faultAwareConnector);
             if (kafkaConnector != null) {
                 connectors.put(KafkaConnector.PROTOCOL, kafkaConnector);
+            }
+            if (jdbcConnector != null) {
+                connectors.put(JdbcConnector.PROTOCOL, jdbcConnector);
             }
             LocalEngine engine = new LocalEngine(
                     connectors, assertionProviders, faultProviders);
@@ -208,14 +213,35 @@ public class TestCommand implements Command {
      */
     private KafkaConnector kafkaConnectorFor(
             PlanCompilationResult compilation, TestOptions options) {
-        boolean needed = compilation.plan().catalog().targets().stream()
-                .flatMap(target -> target.protocols().stream())
-                .anyMatch(protocol -> KafkaConnector.PROTOCOL.equals(protocol.value()));
-        if (!needed) {
+        if (!speaks(compilation, KafkaConnector.PROTOCOL)) {
             return null;
         }
         return new KafkaConnector(options.allowPrivate()
                 ? HostPolicy.permissive() : HostPolicy.defaultPolicy());
+    }
+
+    /**
+     * A JDBC connector when the run needs one, and null when it does not.
+     * <p>
+     * The credentials travel as a user name and a secret handle in the
+     * connector context, and the password is resolved where it is used. Nothing
+     * in this composition root ever holds the value — the same shape the HTTP
+     * connector's bearer token has, for the same reason.
+     */
+    private JdbcConnector jdbcConnectorFor(
+            PlanCompilationResult compilation, TestOptions options) {
+        if (!speaks(compilation, JdbcConnector.PROTOCOL)) {
+            return null;
+        }
+        return new JdbcConnector(options.allowPrivate()
+                ? HostPolicy.permissive() : HostPolicy.defaultPolicy());
+    }
+
+    /** Whether any target in the compiled catalog speaks a protocol. */
+    private boolean speaks(PlanCompilationResult compilation, String protocol) {
+        return compilation.plan().catalog().targets().stream()
+                .flatMap(target -> target.protocols().stream())
+                .anyMatch(declared -> protocol.equals(declared.value()));
     }
 
     /**
@@ -344,6 +370,10 @@ public class TestCommand implements Command {
         System.out.println("  -s, --scenario <path>      Scenario YAML file (required)");
         System.out.println("  -o, --openapi <path>       OpenAPI document for catalog");
         System.out.println("  -a, --asyncapi <path>      AsyncAPI 3.0 document for catalog");
+        System.out.println("      --observations <path>  Observation catalog: the read-only");
+        System.out.println("                             queries a run is permitted to make");
+        System.out.println("      --db-user <name>       User the observations connect as");
+        System.out.println("      --db-secret-id <id>    Secret handle supplying its password");
         System.out.println("  -t, --target <url>         Base URL for every catalog target");
         System.out.println("                             (default: " + TestOptions.DEFAULT_TARGET_URL + ")");
         System.out.println("  -t, --target <id>=<url>    Base URL for one catalog target (repeatable)");

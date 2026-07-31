@@ -644,7 +644,7 @@ Every assertion has this common shape:
 | Field | Required | Description |
 |---|---:|---|
 | `id` | yes | Stable ID, unique across every scenario section. |
-| `assertionType` | yes | `status`, `header`, `schema`, `jsonpath`, `duration`, `event-count`, `event-unique`, `event-correlation`, or `event-sequence`. |
+| `assertionType` | yes | `status`, `header`, `schema`, `jsonpath`, `duration`, `event-count`, `event-unique`, `event-correlation`, `event-sequence`, `row-count`, `row-value`, `row-balance`, or `row-unique`. |
 | `params` | yes | Parameters documented for the selected assertion type. |
 | `targetStep` | no | Operation evidence to inspect; defaults to the last `execute` step. A grouping step holds no evidence of its own, so name one of its children. |
 | `dependsOn` | no | Additional dependencies that must pass first. |
@@ -948,6 +948,122 @@ Ordered means the matching messages appear in the observed order, not that they
 are adjacent: a workflow may emit events the scenario is not asserting about,
 and demanding adjacency would break the assertion every time the system does
 something additional and correct.
+
+### `row-count`
+
+How many rows an observation returned. Needs one of `equals`, `min`, or `max`.
+
+```yaml
+assertionType: row-count
+params:
+  equals: 2
+```
+
+A result the row limit cut is **indeterminate**, not counted: the number there
+would be the limit rather than the answer.
+
+### `row-value`
+
+That a column holds the value it should. By default every row must match;
+`row: 0` checks one.
+
+```yaml
+assertionType: row-value
+params:
+  column: amount
+  equals: "{{steps.created.body.amount}}"
+```
+
+With parameters being expressions, this is the cross-component comparison
+itself — the amount the API accepted, read back out of the database. Numbers
+compare as decimals, so 2500 and 2500.00 agree.
+
+### `row-balance`
+
+That a column of numbers sums to what it should.
+
+```yaml
+assertionType: row-balance
+params:
+  column: amount
+  equals: 0
+```
+
+The double-entry check, and the reason tabular assertions exist: a ledger whose
+entries do not sum to zero has lost or invented money, and no single request
+can tell you that.
+
+### `row-unique`
+
+That no two rows share a value in a column — the database half of the
+duplicate-effect question.
+
+```yaml
+assertionType: row-unique
+params:
+  column: payment_id
+```
+
+## Database observations
+
+A run reads a database through observations an **operator** declares, not
+through SQL in the scenario. A scenario names an observation; what it reads is
+reviewable in one file that lives beside the deployment.
+
+```yaml
+# observations.yaml
+apiVersion: faultora.dev/v1alpha1
+kind: Observations
+
+servers:
+  ledger:
+    url: jdbc:postgresql://localhost:5432/payments
+
+observations:
+  ledger-entries-for:
+    server: ledger
+    description: The entries recorded against one payment
+    sql: >-
+      SELECT account, amount FROM ledger_entries
+      WHERE payment_id = :paymentId ORDER BY id
+    parameters:
+      paymentId:
+        type: string
+        required: true
+```
+
+```bash
+--observations observations.yaml --db-user faultora_readonly --db-secret-id LEDGER_PASSWORD
+```
+
+The scenario then names it like any other operation:
+
+```yaml
+- id: read-ledger
+  type: operation
+  operationId: ledger-entries-for
+  dependsOn: [create-payment]
+  inputs:
+    paymentId: "{{steps.created.body.id}}"
+```
+
+What holds for every observation:
+
+- **it can only read.** A statement that does not begin `SELECT` or `WITH` is
+  refused before a connection opens, a `;` with anything after it is refused,
+  and the connection is set read-only. Give Faultora **read-only credentials**
+  as well: the first two rules are code, and code is one defect away from being
+  wrong;
+- **values are bound, never interpolated.** A `:parameter` becomes a positional
+  marker; a `::cast` and a colon inside a literal are left alone;
+- **rows are bounded at the driver** by the evidence policy's row limit, so
+  rows that are not kept are not fetched either. A result that was cut is
+  marked truncated, and the counting assertions refuse to answer from it;
+- **the server is a target**, so `--target ledger=jdbc:…` redirects an
+  observation to a test database exactly as `--target` redirects an API.
+
+The released executable ships the PostgreSQL driver. Another database means
+building the CLI with its driver on the classpath.
 
 ## Event operations
 

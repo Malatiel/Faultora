@@ -37,6 +37,42 @@ All notable changes to Faultora are documented in this file.
 response schema to check, and that happens when the plan is built. A template
 there is refused with a diagnostic.
 
+- **Database observations** (M3-03). A run reads a database through queries an
+  *operator* declares in an observation catalog, imported like OpenAPI and
+  AsyncAPI and named by the scenario — not through SQL in the scenario, which
+  SEC-07 forbids and which would leave nobody with a list of what a run may
+  read. ADR-017 records the decision.
+- Read-only is enforced three times and only the third is a guarantee: a single
+  statement beginning `SELECT` or `WITH`, a read-only connection, and read-only
+  credentials the operator supplies. The first two are code; a grant is not.
+- Values are bound through a prepared statement in one pass that also produces
+  the binding order, so a `::cast` and a colon inside a literal cannot be
+  mistaken for parameters.
+- `EvidencePolicy.maxRows` — declared since 0.1 and enforced nowhere — bounds
+  rows at the driver, with a matching fetch size so rows that are not kept are
+  not fetched. A result the limit cut is marked truncated, and the counting
+  assertions refuse to answer from it rather than counting the limit.
+- **Four tabular assertions** (M3-04, remainder): `row-count`, `row-value`,
+  `row-balance`, and `row-unique`. `row-balance` is the double-entry check —
+  a ledger whose entries do not sum to zero has lost or invented money, and no
+  single request can tell you that.
+- A `ROWS_OBSERVED` journal event carrying counts and a digest, never the rows.
+- `--observations`, `--db-user`, and `--db-secret-id`. The password is resolved
+  where it is used, as the bearer token is; nothing in the composition root ever
+  holds the value.
+- The released executable ships the PostgreSQL driver: a shaded jar cannot take
+  one from `-cp`, so shipping none would make observations unusable from the
+  artifact. Another database means building the CLI with its driver.
+- `ObservationNode`, promised by the architecture document since M3-03 was
+  written, is removed rather than built. A database read is an operation with
+  inputs and evidence, needing no lifecycle an operation node lacks — as events
+  needed no node type of their own. What differs between protocols is the shape
+  of the evidence, not the shape of the node.
+- A `jdbc:` URL names its protocol before its driver, so `--target
+  ledger=jdbc:…` redirects a database as `--target` redirects an API. Reading
+  the scheme as everything before `://` would have called it `jdbc:postgresql`
+  and left every database target unredirectable.
+
 ## 0.7.2 — 2026-07-30
 
 A review of the events release; everything here was found by reading the code

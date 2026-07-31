@@ -28,6 +28,7 @@ import java.util.Map;
         @JsonSubTypes.Type(value = RunEvent.InputsGenerated.class, name = "INPUTS_GENERATED"),
         @JsonSubTypes.Type(value = RunEvent.MessagePublished.class, name = "MESSAGE_PUBLISHED"),
         @JsonSubTypes.Type(value = RunEvent.MessagesObserved.class, name = "MESSAGES_OBSERVED"),
+        @JsonSubTypes.Type(value = RunEvent.RowsObserved.class, name = "ROWS_OBSERVED"),
         @JsonSubTypes.Type(value = RunEvent.FaultInjected.class, name = "FAULT_INJECTED"),
         @JsonSubTypes.Type(value = RunEvent.FaultRolledBack.class, name = "FAULT_ROLLED_BACK"),
         @JsonSubTypes.Type(value = RunEvent.AssertionEvaluated.class, name = "ASSERTION_EVALUATED"),
@@ -252,6 +253,36 @@ public sealed interface RunEvent {
     ) implements RunEvent {
         public MessagesObserved {
             eventType = "MESSAGES_OBSERVED";
+        }
+    }
+
+    /**
+     * A database observation returned rows.
+     * <p>
+     * Counts and a digest, never the rows themselves: what a query returned is
+     * evidence the policy governs and the report decides how to show, while the
+     * journal is a file on disk that outlives the run.
+     *
+     * @param rows      rows the observation kept
+     * @param fetched   rows the driver was asked for, which exceeds what was
+     *                  kept only when the limit cut the result
+     * @param truncated whether the row limit stopped the read before the result
+     *                  did — an assertion counting rows against a truncated
+     *                  result is counting the limit
+     * @param digest    digest of the kept rows, for referring to them
+     */
+    record RowsObserved(
+            String eventType,
+            long timestamp,
+            RunId runId,
+            NodeId nodeId,
+            int rows,
+            long fetched,
+            boolean truncated,
+            String digest
+    ) implements RunEvent {
+        public RowsObserved {
+            eventType = "ROWS_OBSERVED";
         }
     }
 

@@ -41,11 +41,19 @@
         </dependency>
         <dependency>
             <groupId>dev.faultora</groupId>
+            <artifactId>faultora-import-observations</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.faultora</groupId>
             <artifactId>faultora-connector-http</artifactId>
         </dependency>
         <dependency>
             <groupId>dev.faultora</groupId>
             <artifactId>faultora-connector-kafka</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.faultora</groupId>
+            <artifactId>faultora-connector-jdbc</artifactId>
         </dependency>
         <dependency>
             <groupId>dev.faultora</groupId>
@@ -62,6 +70,15 @@
         <dependency>
             <groupId>dev.faultora</groupId>
             <artifactId>faultora-reporting</artifactId>
+        </dependency>
+        <!-- The one database driver the executable ships with. A shaded jar
+             cannot take a driver from -cp, so shipping none would make database
+             observations unusable from the released artifact; shipping every
+             driver would be a licence and size problem. PostgreSQL is what the
+             reference system and the release gate run against. -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
         </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>

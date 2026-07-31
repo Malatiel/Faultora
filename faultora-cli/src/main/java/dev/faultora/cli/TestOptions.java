@@ -17,8 +17,11 @@ import java.util.Map;
  *
  * @param scenarioPath  scenario document to run
  * @param openApiPath   OpenAPI document to import, or null
- * @param asyncApiPath  AsyncAPI document to import, or null; with neither
- *                      document a catalog is derived from the scenario
+ * @param asyncApiPath  AsyncAPI document to import, or null
+ * @param observationsPath observation catalog to import, or null; with no
+ *                      document at all a catalog is derived from the scenario
+ * @param databaseUser  user the database observations connect as, or null
+ * @param databaseSecretId secret handle supplying that user's password
  * @param targetUrl     base URL every catalog target is bound to
  * @param targetUrls    per-target base URLs, keyed by catalog target ID
  * @param formats       report formats to render
@@ -36,6 +39,9 @@ record TestOptions(
         Path scenarioPath,
         Path openApiPath,
         Path asyncApiPath,
+        Path observationsPath,
+        String databaseUser,
+        String databaseSecretId,
         String targetUrl,
         Map<String, String> targetUrls,
         List<String> formats,
@@ -60,6 +66,9 @@ record TestOptions(
         Path scenarioPath = null;
         Path openApiPath = null;
         Path asyncApiPath = null;
+        Path observationsPath = null;
+        String databaseUser = null;
+        String databaseSecretId = null;
         String targetUrl = DEFAULT_TARGET_URL;
         Map<String, String> targetUrls = new LinkedHashMap<>();
         List<String> formats = List.of("console");
@@ -79,6 +88,10 @@ record TestOptions(
                 case "--scenario", "-s" -> scenarioPath = Path.of(requireNext(it, "--scenario"));
                 case "--openapi", "-o" -> openApiPath = Path.of(requireNext(it, "--openapi"));
                 case "--asyncapi", "-a" -> asyncApiPath = Path.of(requireNext(it, "--asyncapi"));
+                case "--observations" ->
+                        observationsPath = Path.of(requireNext(it, "--observations"));
+                case "--db-user" -> databaseUser = requireNext(it, "--db-user");
+                case "--db-secret-id" -> databaseSecretId = requireNext(it, "--db-secret-id");
                 case "--target", "-t" -> {
                     String value = requireNext(it, "--target");
                     String targetId = targetIdOf(value);
@@ -125,7 +138,8 @@ record TestOptions(
         }
 
         return new TestOptions(
-                scenarioPath, openApiPath, asyncApiPath, targetUrl, Map.copyOf(targetUrls), formats,
+                scenarioPath, openApiPath, asyncApiPath, observationsPath,
+                databaseUser, databaseSecretId, targetUrl, Map.copyOf(targetUrls), formats,
                 outputDir, seed, allowPrivate, allowDestructive, authSecretId, toxiproxyUrl,
                 Map.copyOf(inputs), List.copyOf(allowedExtensions), false);
     }
@@ -147,7 +161,7 @@ record TestOptions(
 
     private static TestOptions help() {
         return new TestOptions(
-                null, null, null, DEFAULT_TARGET_URL, Map.of(), List.of(), Path.of("."),
+                null, null, null, null, null, null, DEFAULT_TARGET_URL, Map.of(), List.of(), Path.of("."),
                 0, false, false, null, null, Map.of(), List.of(), true);
     }
 

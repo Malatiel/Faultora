@@ -9,6 +9,7 @@ import dev.faultora.model.identifier.OperationId;
 import dev.faultora.model.identifier.RunId;
 import dev.faultora.model.security.ContentDigest;
 import dev.faultora.spi.evidence.MessageEvidence;
+import dev.faultora.spi.evidence.TableEvidence;
 import dev.faultora.spi.result.ActiveFault;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -143,6 +144,10 @@ public final class JournalWriter {
         if (published != null) {
             messagePublished(nodeId, published);
         }
+        TableEvidence table = TableEvidence.observedIn(protocolEvidence);
+        if (table != null) {
+            rowsObserved(nodeId, table, asLong(protocolEvidence.get("fetchedRows")));
+        }
         if (protocolEvidence.containsKey(MessageEvidence.OBSERVED)) {
             messagesObserved(
                     nodeId,
@@ -172,6 +177,14 @@ public final class JournalWriter {
         append(new RunEvent.MessagesObserved(
                 "MESSAGES_OBSERVED", now(), runId, nodeId,
                 channel, observed, matched, waitedMs, requestedWaitMs));
+    }
+
+    /** What a database observation returned, by count and by digest. */
+    public void rowsObserved(NodeId nodeId, TableEvidence table, long fetched) {
+        append(new RunEvent.RowsObserved(
+                "ROWS_OBSERVED", now(), runId, nodeId,
+                table.rowCount(), fetched, table.truncated(),
+                ContentDigest.sha256Uri(table.rows().toString())));
     }
 
     public void cleanupStarted(int pendingObligations) {

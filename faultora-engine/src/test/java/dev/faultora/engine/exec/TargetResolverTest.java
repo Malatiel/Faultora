@@ -20,6 +20,7 @@ class TargetResolverTest {
     private static final TargetId PAYMENTS = new TargetId("payments");
     private static final TargetId LEDGER = new TargetId("ledger");
     private static final TargetId BROKER = new TargetId("broker");
+    private static final TargetId LEDGER_DB = new TargetId("ledger-db");
 
     @Test
     void usesTheCatalogDefinitionWhenNoRedirectIsConfigured() {
@@ -93,6 +94,22 @@ class TargetResolverTest {
     }
 
     @Test
+    void aDatabaseUrlNamesItsProtocolBeforeItsDriver() {
+        // "jdbc:postgresql://host/db" speaks jdbc; reading the scheme as
+        // everything before "://" would call it "jdbc:postgresql" and leave
+        // every database target unredirectable.
+        ConnectorContext context = context(Map.of(
+                TargetResolver.BASE_URL, "jdbc:h2:mem:test"));
+
+        assertThat(TargetResolver.resolve(LEDGER_DB, databaseCatalog(), context).baseUrl())
+                .isEqualTo("jdbc:h2:mem:test");
+        assertThat(TargetResolver.resolve(PAYMENTS, databaseCatalog(),
+                context(Map.of(TargetResolver.BASE_URL, "jdbc:h2:mem:test"))).baseUrl())
+                .as("an HTTP target is left alone by a database redirect")
+                .isEqualTo("https://payments.example.com");
+    }
+
+    @Test
     void anUndeclaredTargetResolvesOnlyThroughAnExplicitRedirect() {
         TargetId unknown = new TargetId("warehouse");
 
@@ -128,6 +145,20 @@ class TargetResolverTest {
                         new TargetDefinition(
                                 BROKER, "Broker", "kafka://broker.example.com:9092",
                                 List.of(new ProtocolId("kafka")), List.of(), Map.of())),
+                List.of(), Map.of(), Map.of(), List.of());
+    }
+
+    /** A catalog with an API and a database, as an invariant scenario has. */
+    private ApiCatalog databaseCatalog() {
+        return new ApiCatalog(
+                new CatalogVersion("v1alpha1-db"),
+                List.of(
+                        new TargetDefinition(
+                                PAYMENTS, "Payments", "https://payments.example.com",
+                                List.of(new ProtocolId("http")), List.of(), Map.of()),
+                        new TargetDefinition(
+                                LEDGER_DB, "Ledger", "jdbc:postgresql://db.example.com/ledger",
+                                List.of(new ProtocolId("jdbc")), List.of(), Map.of())),
                 List.of(), Map.of(), Map.of(), List.of());
     }
 

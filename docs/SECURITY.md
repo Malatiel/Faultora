@@ -326,8 +326,17 @@ credentials.
 
 **Classification cannot be assumed uniform across protocols.** It is a property
 of each connector, not of the engine, because each client resolves its own
-destinations. Where a connector cannot pin what it resolved, that gap is stated
-with the connector rather than papered over here.
+destinations. The HTTP connector classifies and pins; the Kafka and JDBC
+connectors classify and cannot pin, because their clients resolve their own
+brokers and hosts. The refusal is real in all three; the protection against a
+name that resolves differently the second time exists only in the first.
+
+**A database observation has a fourth protection, and it is not ours.** The
+connector accepts only a single reading statement and sets its connection
+read-only. Both are code. The guarantee that survives a defect in either is the
+grant: the credentials a run connects with should not be able to write. An
+operator who supplies a writing account has removed the only protection that
+does not depend on this project being correct. See ADR-017.
 
 ## 10. Data protection
 

@@ -64,6 +64,10 @@ final class CatalogLoader {
         if (options.asyncApiPath() != null) {
             imported.add(importCatalog("asyncapi", options.asyncApiPath(), extensionPolicy));
         }
+        if (options.observationsPath() != null) {
+            imported.add(importCatalog(
+                    "observations", options.observationsPath(), extensionPolicy));
+        }
         if (imported.isEmpty()) {
             return deriveFromScenario(scenario, options.targetUrl());
         }

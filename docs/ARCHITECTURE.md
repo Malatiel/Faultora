@@ -88,9 +88,11 @@ flowchart LR
     C --> E["Local execution engine"]
     E --> H["HTTP connector"]
     E --> K["Kafka connector"]
+    E --> J["JDBC connector"]
     E --> F["Fault provider"]
     H --> S["Target system"]
     K --> B["Broker"]
+    J --> D["Database"]
     F --> S
     E --> A["Assertion engine"]
     A --> R["Report renderers"]
@@ -200,10 +202,11 @@ The compiled plan is a directed acyclic graph of typed nodes:
 - `FaultStopNode`
 - `AssertionNode`
 - `CleanupNode`
-- `ObservationNode` — planned with the database observation connector of M3-03;
-  every other kind above exists today. Event observation needed no node of its
-  own: it is an operation, and its evidence is a set of messages rather than a
-  response
+Every kind above exists. `ObservationNode` was listed here until M3-03 shipped
+and is now removed rather than built: a database read is an operation with
+inputs and evidence, needing no lifecycle an operation node lacks — exactly as
+event observation needed no node type of its own. What differs between
+protocols is the shape of the evidence, not the shape of the node
 
 Every node declares a stable node ID, its dependencies, and a safety
 classification. The rest belongs to the node kinds that can honour it:
@@ -281,7 +284,7 @@ public interface SourceImporter {
 }
 ```
 
-Implemented: OpenAPI and AsyncAPI. Later implementations: Arazzo,
+Implemented: OpenAPI, AsyncAPI, and observation catalogs. Later implementations: Arazzo,
 Protobuf, Postman collections, and a manual operation format.
 
 ### 7.2 Connector
@@ -304,7 +307,7 @@ public interface Connector {
 }
 ```
 
-Implemented: HTTP and Kafka. Later implementations: gRPC, AMQP,
+Implemented: HTTP, Kafka, and JDBC observations. Later implementations: gRPC, AMQP,
 WebSocket, GraphQL, and JDBC observation.
 
 ### 7.3 Fault provider
@@ -481,8 +484,10 @@ faultora/
 ├── faultora-import-common
 ├── faultora-import-openapi
 ├── faultora-import-asyncapi
+├── faultora-import-observations
 ├── faultora-connector-http
 ├── faultora-connector-kafka
+├── faultora-connector-jdbc
 ├── faultora-faults-local
 ├── faultora-faults-toxiproxy
 ├── faultora-assertions-core

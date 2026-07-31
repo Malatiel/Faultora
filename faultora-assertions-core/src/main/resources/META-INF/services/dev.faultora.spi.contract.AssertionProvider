@@ -7,3 +7,7 @@ dev.faultora.assertions.core.EventCountAssertionProvider
 dev.faultora.assertions.core.EventUniqueAssertionProvider
 dev.faultora.assertions.core.EventCorrelationAssertionProvider
 dev.faultora.assertions.core.EventSequenceAssertionProvider
+dev.faultora.assertions.core.RowCountAssertionProvider
+dev.faultora.assertions.core.RowBalanceAssertionProvider
+dev.faultora.assertions.core.RowUniqueAssertionProvider
+dev.faultora.assertions.core.RowValueAssertionProvider

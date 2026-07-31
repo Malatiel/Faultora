@@ -69,6 +69,9 @@ public final class RunSummary {
                 case RunEvent.InputsGenerated inputs -> generated.merge(
                         inputs.nodeId().value(), describe(inputs),
                         (existing, added) -> existing + ", " + added);
+                case RunEvent.RowsObserved rows -> messaging.merge(
+                        rows.nodeId().value(), describe(rows),
+                        (existing, added) -> existing + ", " + added);
                 case RunEvent.MessagePublished published -> messaging.merge(
                         published.nodeId().value(), describe(published),
                         (existing, added) -> existing + ", " + added);
@@ -156,6 +159,16 @@ public final class RunSummary {
                     : lastObserved);
         }
         return parts.isEmpty() ? null : String.join(", ", parts);
+    }
+
+    /**
+     * How an observation's rows are described in a report. A truncated result
+     * says so, because a count taken from one is a count of the limit.
+     */
+    private static String describe(RunEvent.RowsObserved rows) {
+        return rows.truncated()
+                ? "observed " + rows.rows() + " rows (truncated at the row limit)"
+                : "observed " + rows.rows() + (rows.rows() == 1 ? " row" : " rows");
     }
 
     /** How a published message is described in a report. */
