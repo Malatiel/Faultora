@@ -1,10 +1,14 @@
 package dev.faultora.examples.recovery;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.io.IOException;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 
 /**
@@ -17,6 +21,8 @@ import java.time.Duration;
  */
 final class ProviderClient implements Provider {
 
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
     private final HttpClient http = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(2)).build();
     private final String baseUrl;
@@ -27,11 +33,17 @@ final class ProviderClient implements Provider {
 
     @Override
     public Outcome charge(String paymentId, long amount) {
+        // Built by the mapper rather than by concatenation. A payment id is
+        // client-supplied, and an id holding a quote would otherwise send the
+        // provider something that is not the request this code reads as.
+        String body = MAPPER.createObjectNode()
+                .put("paymentId", paymentId)
+                .put("amount", amount)
+                .toString();
         HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + "/charges"))
                 .header("Content-Type", "application/json")
                 .timeout(Duration.ofSeconds(5))
-                .POST(HttpRequest.BodyPublishers.ofString(
-                        "{\"paymentId\":\"" + paymentId + "\",\"amount\":" + amount + "}"))
+                .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build();
         return send(request);
     }
@@ -39,7 +51,8 @@ final class ProviderClient implements Provider {
     @Override
     public Outcome outcomeOf(String paymentId) {
         HttpRequest request = HttpRequest
-                .newBuilder(URI.create(baseUrl + "/charges/" + paymentId))
+                .newBuilder(URI.create(baseUrl + "/charges/"
+                        + URLEncoder.encode(paymentId, StandardCharsets.UTF_8)))
                 .timeout(Duration.ofSeconds(5))
                 .GET().build();
         return send(request);

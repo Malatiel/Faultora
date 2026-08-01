@@ -1,6 +1,8 @@
 package dev.faultora.examples.recovery;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 
@@ -89,24 +91,42 @@ public final class Schema {
      */
     public static void grantReadOnly(Connection connection, String password)
             throws SQLException {
+        // Created once and kept. Dropping it between runs fails as soon as it
+        // holds a grant, and re-granting is idempotent anyway — which matters,
+        // because the tables it may read are recreated each time.
+        if (!roleExists(connection)) {
+            try (Statement statement = connection.createStatement()) {
+                // PostgreSQL binds no parameters in DDL, so the password is a
+                // literal — quoted here rather than pasted in, because a
+                // fixture password with a quote in it would otherwise end the
+                // statement and start something else.
+                statement.execute("CREATE ROLE " + READ_ONLY_ROLE
+                        + " LOGIN PASSWORD " + quoted(password));
+            }
+        }
         try (Statement statement = connection.createStatement()) {
-            // Created once and kept. Dropping it between runs fails as soon as
-            // it holds a grant, and re-granting is idempotent anyway — which
-            // matters, because the tables it may read are recreated each time.
-            statement.execute(
-                    "DO $$ BEGIN"
-                            + " IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '"
-                            + READ_ONLY_ROLE + "') THEN"
-                            + " CREATE ROLE " + READ_ONLY_ROLE
-                            + " LOGIN PASSWORD '" + password + "';"
-                            + " END IF;"
-                            + " END $$;");
             statement.execute("GRANT CONNECT ON DATABASE "
                     + connection.getCatalog() + " TO " + READ_ONLY_ROLE);
             statement.execute("GRANT USAGE ON SCHEMA public TO " + READ_ONLY_ROLE);
             statement.execute("GRANT SELECT ON ALL TABLES IN SCHEMA public TO "
                     + READ_ONLY_ROLE);
         }
+    }
+
+    /** Whether the observation role is already there, asked with a binding. */
+    private static boolean roleExists(Connection connection) throws SQLException {
+        try (PreparedStatement select = connection.prepareStatement(
+                "SELECT 1 FROM pg_roles WHERE rolname = ?")) {
+            select.setString(1, READ_ONLY_ROLE);
+            try (ResultSet rows = select.executeQuery()) {
+                return rows.next();
+            }
+        }
+    }
+
+    /** A string as a SQL literal, with any quote inside it made harmless. */
+    private static String quoted(String literal) {
+        return "'" + literal.replace("'", "''") + "'";
     }
 
     /** Remove everything an earlier scenario left, so runs cannot read it. */

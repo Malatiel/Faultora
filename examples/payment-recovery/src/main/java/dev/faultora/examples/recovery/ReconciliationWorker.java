@@ -94,7 +94,8 @@ final class ReconciliationWorker implements AutoCloseable {
     }
 
     /**
-     * Payments that have settled down without being booked.
+     * Payments that have settled down without being booked, and are not
+     * already decided.
      * <p>
      * Read from the ledger rather than from a status column, because the ledger
      * is what the invariant is about and a status is something a process had to
@@ -102,6 +103,11 @@ final class ReconciliationWorker implements AutoCloseable {
      * by the grace period, and one that slips through anyway is harmless: the
      * claim key means whichever of the two commits first books it, and the
      * other rolls back.
+     * <p>
+     * {@code refused} is the one status this does read, and only to stop:
+     * a payment the provider says it never took is decided, and asking it again
+     * every 200 ms forever would be a question nobody is waiting for an answer
+     * to.
      */
     private Map<String, Long> unresolvedPayments() throws SQLException {
         Map<String, Long> unresolved = new LinkedHashMap<>();
@@ -110,6 +116,7 @@ final class ReconciliationWorker implements AutoCloseable {
                      "SELECT p.payment_id, p.amount FROM payments p "
                              + "LEFT JOIN ledger_entries l ON l.payment_id = p.payment_id "
                              + "WHERE l.id IS NULL "
+                             + "AND p.status <> 'refused' "
                              + "AND p.created_at < now() - interval '1 second'");
              ResultSet rows = select.executeQuery()) {
             while (rows.next()) {

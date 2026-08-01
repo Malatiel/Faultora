@@ -159,12 +159,30 @@ final class SettlementConsumer implements AutoCloseable {
                 connection.commit();
             } catch (SQLException failed) {
                 connection.rollback();
+                lost(messageKey, failed);
                 return;
             }
         } catch (SQLException unavailable) {
+            lost(messageKey, unavailable);
             return;
         }
         announce(paymentId, amount);
+    }
+
+    /**
+     * A command this consumer dropped, and why.
+     * <p>
+     * Offsets are committed automatically here, so a command whose transaction
+     * failed is gone: the offset moves whether or not anything was booked. That
+     * is a real hole, and it is left open on purpose — a reference system small
+     * enough to read should not carry a retry mechanism nobody is testing — but
+     * it is not left silent. A production consumer commits the offset only
+     * after the transaction that consumed it, which is the same trade the
+     * outbox relay makes at the other end of this pipeline.
+     */
+    private static void lost(String messageKey, SQLException cause) {
+        System.err.println("payment-recovery: dropped " + messageKey
+                + " after a database failure: " + cause.getMessage());
     }
 
     /**

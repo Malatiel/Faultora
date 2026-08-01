@@ -8,6 +8,8 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -102,7 +104,8 @@ final class ProviderSimulator implements AutoCloseable {
 
     private void reportCharge(HttpExchange exchange) throws IOException {
         String path = exchange.getRequestURI().getPath();
-        String paymentId = path.substring(path.lastIndexOf('/') + 1);
+        String paymentId = URLDecoder.decode(
+                path.substring(path.lastIndexOf('/') + 1), StandardCharsets.UTF_8);
         if (accepted.contains(paymentId)) {
             respond(exchange, 200, Map.of("status", "accepted"));
         } else {
