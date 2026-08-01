@@ -47,7 +47,7 @@ exactly that provider and passes.
 ## Running the gate
 
 ```bash
-./mvnw verify -pl integration-tests
+./mvnw verify
 ```
 
 `CrossComponentE2ETest` starts a disposable PostgreSQL and Kafka through

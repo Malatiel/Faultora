@@ -134,9 +134,10 @@ class CrossComponentE2ETest {
     }
 
     private int run(String scenario, String seed) throws IOException {
-        Path outputDir = Path.of(System.getProperty("java.io.tmpdir"),
-                "faultora-e2e-cross-" + seed);
-        Files.createDirectories(outputDir);
+        // A fresh directory per run. Seeds restart with the JVM, so a reused
+        // path would let an assertion about this run's journal be satisfied by
+        // the previous suite's — an assertion that cannot fail.
+        Path outputDir = Files.createTempDirectory("faultora-e2e-cross-" + seed + "-");
         lastOutputDir = outputDir;
         return new FaultoraCli(
                 new PrintWriter(System.out, true), new PrintWriter(System.err, true))

@@ -417,7 +417,7 @@ just arrived.
 Cutting 1.0 at the runner instead means the contracts freeze after the scenario
 language has been in real use through four releases. The product's
 differentiator — a business invariant verified across HTTP, events, and a
-database, under injected faults, reproducibly — is complete at 0.8, and the
+database, under injected faults, reproducibly — was completed at 0.8, and the
 private-network runner at 0.9 makes it deployable where such systems live.
 Distributed sharding matters to teams whose suites outgrow one machine, which
 is a problem adopters get after the tool is in CI, not before.
