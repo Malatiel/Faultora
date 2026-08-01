@@ -51,19 +51,30 @@ public final class Schema {
                     """);
             // Double entry: a booking is two rows summing to zero. An invariant
             // no single request can show, which is why it is the gate.
+            // provider_reference is nullable on purpose. An entry booked
+            // straight through carries none, and only the receivable entry of
+            // a recovered charge carries one — so a uniqueness check over this
+            // column meets the SQL semantics it implements, where two rows
+            // with no value are not duplicates of each other.
             statement.execute("""
                     CREATE TABLE ledger_entries (
-                        id           BIGSERIAL   PRIMARY KEY,
-                        payment_id   VARCHAR(64) NOT NULL,
-                        account      VARCHAR(32) NOT NULL,
-                        amount       BIGINT      NOT NULL,
-                        created_at   TIMESTAMPTZ NOT NULL DEFAULT now())
+                        id                 BIGSERIAL   PRIMARY KEY,
+                        payment_id         VARCHAR(64) NOT NULL,
+                        account            VARCHAR(32) NOT NULL,
+                        amount             BIGINT      NOT NULL,
+                        provider_reference VARCHAR(64),
+                        created_at         TIMESTAMPTZ NOT NULL DEFAULT now())
                     """);
             // What makes the consumer idempotent: the key is inserted in the
-            // same transaction as the booking, so a redelivery collides.
+            // same transaction as the booking, so a redelivery collides. The
+            // collision is counted rather than discarded, so a scenario can
+            // assert "processed once, seen twice" rather than inferring the
+            // second half of it from the ledger.
             statement.execute("""
                     CREATE TABLE processed_messages (
                         message_key  VARCHAR(128) PRIMARY KEY,
+                        payment_id   VARCHAR(64)  NOT NULL,
+                        deliveries   INT          NOT NULL DEFAULT 1,
                         processed_at TIMESTAMPTZ  NOT NULL DEFAULT now())
                     """);
         }

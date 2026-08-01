@@ -96,6 +96,13 @@ execute:
     inputs:
       paymentId: "pay-{{run.seed}}"
 
+  - id: read-deliveries
+    type: operation
+    operationId: deliveries-of
+    dependsOn: [read-settlement-events]
+    inputs:
+      paymentId: "pay-{{run.seed}}"
+
 assertions:
   - id: one-effect-per-command
     assertionType: row-count
@@ -135,3 +142,14 @@ assertions:
     params:
       column: payment_id
     message: No two settlements name the same payment
+
+  # "Processed once, seen twice." Without this the scenario would be inferring
+  # the duplicate from the absence of its effect, which is inferring the thing
+  # under test from the thing it is being tested against.
+  - id: the-duplicate-really-arrived
+    assertionType: row-value
+    targetStep: read-deliveries
+    params:
+      column: deliveries
+      equals: 2
+    message: The command was delivered twice and the consumer recorded both

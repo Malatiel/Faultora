@@ -107,6 +107,16 @@ assertions:
       equals: settled
     message: The payment the API accepted is settled in the database
 
+  # Both entries were booked straight through, so neither carries a provider
+  # reference. Two rows with no value are not duplicates of each other — SQL
+  # says a NULL equals nothing, and a unique index agrees.
+  - id: no-two-entries-share-a-provider-reference
+    assertionType: row-unique
+    targetStep: read-ledger
+    params:
+      column: provider_reference
+    message: No two entries claim the same provider charge
+
   - id: the-event-carries-its-correlation
     assertionType: event-correlation
     targetStep: poll-events

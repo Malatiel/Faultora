@@ -72,6 +72,18 @@ assertions:
       equals: "{{steps.requested.body.amount}}"
     message: The recovered booking carries the amount the API accepted
 
+  - id: the-recovery-names-the-charge-it-booked
+    assertionType: row-value
+    targetStep: poll-ledger
+    params:
+      column: provider_reference
+      row: 0
+      equals: "charge-pay-{{run.seed}}"
+    message: >-
+      The recovered entry carries the provider's reference for the charge it
+      was booked from, so a reader can tell a recovered booking from one that
+      went straight through.
+
   - id: no-payment-left-in-doubt
     assertionType: row-value
     targetStep: read-payment-row

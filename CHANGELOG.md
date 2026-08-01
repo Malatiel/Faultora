@@ -93,7 +93,12 @@ there is refused with a diagnostic.
   no business writing.
 - The released executable ships the PostgreSQL driver: a shaded jar cannot take
   one from `-cp`, so shipping none would make observations unusable from the
-  artifact. Another database means building the CLI with its driver.
+  artifact. Another database means building the CLI with its driver. **The
+  artifact is now 26 MB**, of which the driver is roughly 2 MB uncompressed —
+  a number rather than a surprise, as the Kafka codecs were at 0.7. That the
+  shaded jar actually resolves `jdbc:postgresql:` was checked against the built
+  jar rather than assumed from the dependency: a services file lost in shading
+  would have failed every user's first observation while every test passed.
 - `ObservationNode`, promised by the architecture document since M3-03 was
   written, is removed rather than built. A database read is an operation with
   inputs and evidence, needing no lifecycle an operation node lacks — as events

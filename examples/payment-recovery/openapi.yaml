@@ -82,5 +82,7 @@ components:
           type: string
         status:
           type: string
-          description: requested until settled, unknown while a provider outcome is missing
-          enum: [requested, settled, unknown]
+          description: >-
+            requested until settled; unknown while a provider outcome is
+            missing, and refused when the provider declined the charge
+          enum: [requested, settled, unknown, refused]

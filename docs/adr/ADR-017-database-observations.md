@@ -78,7 +78,9 @@ The obvious place is the step that makes the observation. That place is wrong.
   oddly for one that never writes and is what makes the sentence true:
   PostgreSQL opens the server-side cursor a fetch size depends on only inside a
   transaction, and in autocommit the driver materializes the whole result set.
-  The connection belongs to one observation and is closed with it.
+  The connection belongs to one observation and is closed with it. What is
+  proved is that the driver's documented precondition now holds; no test
+  measures a server-side portal, and the gate's own reads are two rows.
 - **A truncated result says so.** One row past the limit is read to learn that
   the result was cut, and `TableEvidence.truncated` carries it. An assertion
   that counts rows against a truncated result is counting the limit, so the

@@ -138,15 +138,20 @@ final class SettlementConsumer implements AutoCloseable {
         // that accepts it and loses the response leaves the outcome unknown,
         // which is the one thing this consumer cannot resolve on its own.
         Provider.Outcome outcome = provider.charge(paymentId, amount);
-        if (outcome == Provider.Outcome.UNKNOWN) {
-            markUnknown(paymentId);
+        if (outcome != Provider.Outcome.ACCEPTED) {
+            // A refused charge is money that never moved, and an unknown one is
+            // money that may have. Neither is booked here: the first because
+            // there is nothing to book, the second because only the provider
+            // can say, and reconciliation is what asks it.
+            mark(paymentId, outcome == Provider.Outcome.REFUSED ? "refused" : "unknown");
             return;
         }
 
         try (Connection connection = database.transaction()) {
             try {
-                if (config.idempotentConsumer() && !claim(connection, messageKey)) {
+                if (config.idempotentConsumer() && !claim(connection, messageKey, paymentId)) {
                     connection.rollback();
+                    countRedelivery(messageKey);
                     return;
                 }
                 book(connection, paymentId, amount);
@@ -168,13 +173,41 @@ final class SettlementConsumer implements AutoCloseable {
      * The insert is the claim. Two deliveries race it inside the database
      * rather than inside this process, so the answer is the same whether the
      * duplicate arrives on another partition, another instance, or a week later.
+     * <p>
+     * The claim is an insert and nothing else. Counting the repeat here was the
+     * first attempt and it counted nothing: the transaction that discovers a
+     * duplicate is the transaction that rolls back, and it took the increment
+     * with it. So the count is written afterwards, on its own.
      */
-    private boolean claim(Connection connection, String messageKey) throws SQLException {
+    private boolean claim(Connection connection, String messageKey, String paymentId)
+            throws SQLException {
         try (PreparedStatement claim = connection.prepareStatement(
-                "INSERT INTO processed_messages (message_key) VALUES (?) "
+                "INSERT INTO processed_messages (message_key, payment_id) VALUES (?, ?) "
                         + "ON CONFLICT DO NOTHING")) {
             claim.setString(1, messageKey);
+            claim.setString(2, paymentId);
             return claim.executeUpdate() == 1;
+        }
+    }
+
+    /**
+     * Record that a command arrived again, after the work has been declined.
+     * <p>
+     * Bookkeeping rather than correctness: nothing depends on this count being
+     * right, and the settlement it belongs to has already been rolled back. It
+     * exists so a scenario can assert "processed once, seen twice" instead of
+     * inferring the second half from the absence of a second effect — which
+     * would be inferring the thing under test from the thing testing it.
+     */
+    private void countRedelivery(String messageKey) {
+        try (Connection connection = database.connection();
+             PreparedStatement count = connection.prepareStatement(
+                     "UPDATE processed_messages SET deliveries = deliveries + 1 "
+                             + "WHERE message_key = ?")) {
+            count.setString(1, messageKey);
+            count.executeUpdate();
+        } catch (SQLException unavailable) {
+            // A miscount changes nothing about what was booked.
         }
     }
 
@@ -207,14 +240,24 @@ final class SettlementConsumer implements AutoCloseable {
         }
     }
 
-    private void markUnknown(String paymentId) {
+    /**
+     * Record what this system currently believes, for whoever asks the API.
+     * <p>
+     * A failure here is survivable and is not silently ignored on the strength
+     * of that: the reconciliation worker looks for payments with no booking
+     * rather than for this status, so a status that never got written delays
+     * nothing. What it costs is an honest answer to {@code GET /payments/{id}}
+     * until the booking lands.
+     */
+    private void mark(String paymentId, String status) {
         try (Connection connection = database.connection();
              PreparedStatement mark = connection.prepareStatement(
-                     "UPDATE payments SET status = 'unknown' WHERE payment_id = ?")) {
-            mark.setString(1, paymentId);
+                     "UPDATE payments SET status = ? WHERE payment_id = ?")) {
+            mark.setString(1, status);
+            mark.setString(2, paymentId);
             mark.executeUpdate();
         } catch (SQLException unavailable) {
-            // The reconciliation worker reads the ledger, not this column.
+            // Next pass, or never: the ledger is what anything depends on.
         }
     }
 

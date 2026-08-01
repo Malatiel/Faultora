@@ -24,7 +24,7 @@ import java.util.Map;
  * <p>
  * {@link SystemConfig#reconciling()} false is the system without it. Nothing
  * else changes: the charge is still taken, the response is still lost, and the
- * payment simply stays unknown with no ledger entries — which is a payment
+ * payment simply stays unbooked — which is a payment
  * taken from a customer and recorded nowhere.
  */
 final class ReconciliationWorker implements AutoCloseable {
@@ -62,20 +62,55 @@ final class ReconciliationWorker implements AutoCloseable {
         }
     }
 
+    /**
+     * One pass, resolving both ways.
+     * <p>
+     * A charge the provider has is booked; a charge it does not have is marked
+     * failed. Leaving the second case alone would be the reconciler that only
+     * looks one way — it would clear the ledger's arithmetic while leaving
+     * payments in a state nobody ever reaches a decision about.
+     */
     private void reconcileOnce() throws SQLException {
-        Map<String, Long> unresolved = unresolvedPayments();
-        for (Map.Entry<String, Long> payment : unresolved.entrySet()) {
-            if (provider.outcomeOf(payment.getKey()) == Provider.Outcome.ACCEPTED) {
-                book(payment.getKey(), payment.getValue());
+        for (Map.Entry<String, Long> payment : unresolvedPayments().entrySet()) {
+            switch (provider.outcomeOf(payment.getKey())) {
+                case ACCEPTED -> book(payment.getKey(), payment.getValue());
+                case REFUSED -> mark(payment.getKey(), "refused");
+                case UNKNOWN -> {
+                    // The provider could not be reached at all. Nothing is
+                    // decided, and the next pass asks again.
+                }
             }
         }
     }
 
+    private void mark(String paymentId, String status) throws SQLException {
+        try (Connection connection = database.connection();
+             PreparedStatement mark = connection.prepareStatement(
+                     "UPDATE payments SET status = ? WHERE payment_id = ?")) {
+            mark.setString(1, status);
+            mark.setString(2, paymentId);
+            mark.executeUpdate();
+        }
+    }
+
+    /**
+     * Payments that have settled down without being booked.
+     * <p>
+     * Read from the ledger rather than from a status column, because the ledger
+     * is what the invariant is about and a status is something a process had to
+     * remember to write. A payment the consumer is still working on is excluded
+     * by the grace period, and one that slips through anyway is harmless: the
+     * claim key means whichever of the two commits first books it, and the
+     * other rolls back.
+     */
     private Map<String, Long> unresolvedPayments() throws SQLException {
         Map<String, Long> unresolved = new LinkedHashMap<>();
         try (Connection connection = database.connection();
              PreparedStatement select = connection.prepareStatement(
-                     "SELECT payment_id, amount FROM payments WHERE status = 'unknown'");
+                     "SELECT p.payment_id, p.amount FROM payments p "
+                             + "LEFT JOIN ledger_entries l ON l.payment_id = p.payment_id "
+                             + "WHERE l.id IS NULL "
+                             + "AND p.created_at < now() - interval '1 second'");
              ResultSet rows = select.executeQuery()) {
             while (rows.next()) {
                 unresolved.put(rows.getString("payment_id"), rows.getLong("amount"));
@@ -87,9 +122,10 @@ final class ReconciliationWorker implements AutoCloseable {
     private void book(String paymentId, long amount) throws SQLException {
         try (Connection connection = database.transaction()) {
             try (PreparedStatement claim = connection.prepareStatement(
-                    "INSERT INTO processed_messages (message_key) VALUES (?) "
-                            + "ON CONFLICT DO NOTHING")) {
+                    "INSERT INTO processed_messages (message_key, payment_id) "
+                            + "VALUES (?, ?) ON CONFLICT DO NOTHING")) {
                 claim.setString(1, OutboxRelay.COMMANDS_TOPIC + ":" + paymentId);
+                claim.setString(2, paymentId);
                 if (claim.executeUpdate() != 1) {
                     // Somebody settled it while this pass was deciding to.
                     connection.rollback();
@@ -97,15 +133,22 @@ final class ReconciliationWorker implements AutoCloseable {
                 }
             }
             try (PreparedStatement entry = connection.prepareStatement(
-                    "INSERT INTO ledger_entries (payment_id, account, amount) "
-                            + "VALUES (?, ?, ?)")) {
+                    "INSERT INTO ledger_entries "
+                            + "(payment_id, account, amount, provider_reference) "
+                            + "VALUES (?, ?, ?, ?)")) {
+                // Only the receivable entry carries the provider's reference:
+                // it is the side of the booking the charge corresponds to, and
+                // putting it on both would make two rows share a value that
+                // identifies one charge.
                 entry.setString(1, paymentId);
                 entry.setString(2, "receivable");
                 entry.setLong(3, amount);
+                entry.setString(4, "charge-" + paymentId);
                 entry.executeUpdate();
                 entry.setString(1, paymentId);
                 entry.setString(2, "revenue");
                 entry.setLong(3, -amount);
+                entry.setNull(4, java.sql.Types.VARCHAR);
                 entry.executeUpdate();
             }
             try (PreparedStatement mark = connection.prepareStatement(

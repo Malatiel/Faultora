@@ -1078,6 +1078,11 @@ What holds for every observation:
 The released executable ships the PostgreSQL driver. Another database means
 building the CLI with its driver on the classpath.
 
+A complete catalog, and the scenarios that use it, live in
+[`examples/payment-recovery`](../examples/payment-recovery) — the same files the
+cross-component gate runs, so the documented example and the tested one cannot
+drift apart.
+
 ## Event operations
 
 An operation whose catalog entry declares `protocol: kafka` publishes or

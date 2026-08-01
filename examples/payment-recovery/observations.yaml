@@ -22,7 +22,7 @@ observations:
     server: ledger
     description: The entries booked against one payment, in the order they were written
     sql: >-
-      SELECT account, amount FROM ledger_entries
+      SELECT account, amount, provider_reference FROM ledger_entries
       WHERE payment_id = :paymentId ORDER BY id
     parameters:
       paymentId:
@@ -46,6 +46,21 @@ observations:
     sql: >-
       SELECT id FROM outbox
       WHERE payment_id = :paymentId AND published_at IS NULL
+    parameters:
+      paymentId:
+        type: string
+        required: true
+
+  deliveries-of:
+    server: ledger
+    description: >-
+      How many times each command for one payment was delivered, as the
+      consumer recorded it. One effect seen twice is the sentence the
+      duplicate-delivery scenario is about, and this is the half of it the
+      ledger cannot show.
+    sql: >-
+      SELECT payment_id, deliveries FROM processed_messages
+      WHERE payment_id = :paymentId
     parameters:
       paymentId:
         type: string
