@@ -1,0 +1,65 @@
+apiVersion: faultora.dev/v1alpha1
+kind: Observations
+
+# The queries a run may make against the payment database, written by whoever
+# operates it. A scenario names one of these; it cannot write SQL of its own,
+# so this file is the complete list of what any run can see.
+#
+# Every observation is scoped to one payment. That is not only tidiness: runs
+# share a database, and an unscoped count would read another run's rows and
+# report a defect that belongs to nobody.
+
+servers:
+  ledger:
+    url: jdbc:postgresql://localhost:5432/payments
+    description: >-
+      The payment system's own database. A run redirects this with
+      --target ledger=jdbc:postgresql://…, so this URL is a placeholder for
+      documentation rather than an address anything connects to.
+
+observations:
+  ledger-entries-for:
+    server: ledger
+    description: The entries booked against one payment, in the order they were written
+    sql: >-
+      SELECT account, amount FROM ledger_entries
+      WHERE payment_id = :paymentId ORDER BY id
+    parameters:
+      paymentId:
+        type: string
+        required: true
+
+  payment-state:
+    server: ledger
+    description: What the system currently believes about one payment
+    sql: >-
+      SELECT payment_id, status, amount FROM payments
+      WHERE payment_id = :paymentId
+    parameters:
+      paymentId:
+        type: string
+        required: true
+
+  unpublished-outbox-for:
+    server: ledger
+    description: Outbox rows for one payment that the relay has not published yet
+    sql: >-
+      SELECT id FROM outbox
+      WHERE payment_id = :paymentId AND published_at IS NULL
+    parameters:
+      paymentId:
+        type: string
+        required: true
+
+  settlements-of:
+    server: ledger
+    description: >-
+      One row per settlement booked against a payment. A second row is a second
+      business effect, which is what a non-idempotent consumer produces.
+    sql: >-
+      SELECT payment_id, amount FROM ledger_entries
+      WHERE payment_id = :paymentId AND account = 'receivable' ORDER BY id
+    parameters:
+      paymentId:
+        type: string
+        required: true

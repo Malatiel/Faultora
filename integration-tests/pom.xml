@@ -32,6 +32,11 @@
         </dependency>
         <dependency>
             <groupId>dev.faultora</groupId>
+            <artifactId>payment-recovery</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>dev.faultora</groupId>
             <artifactId>faultora-model</artifactId>
             <scope>test</scope>
         </dependency>
@@ -45,6 +50,13 @@
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>kafka</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- The cross-component gate reads a real database. An in-memory one
+             would prove the connector's bounds and not that its queries run. -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -62,6 +74,21 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <environmentVariables>
+                        <!-- The database password the cross-component gate
+                             connects with, resolved the way a deployment
+                             resolves one: FAULTORA_SECRET_<HANDLE>. The
+                             database it opens is a disposable container that
+                             exists for the length of the test, so the value
+                             here is a fixture rather than a secret. -->
+                        <FAULTORA_SECRET_LEDGER_PASSWORD>faultora-readonly</FAULTORA_SECRET_LEDGER_PASSWORD>
+                    </environmentVariables>
+                </configuration>
             </plugin>
         </plugins>
     </build>

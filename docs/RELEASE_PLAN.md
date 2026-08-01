@@ -24,24 +24,30 @@ Three consequences worth stating plainly:
   runners to execute exactly that. A team that invests in a scenario suite
   before 1.0 keeps it afterwards.
 
-## 2. Where 0.7.2 stands
+## 2. Where 0.8.0 stands
 
 | Milestone | State |
 |---|---|
 | M0 — Foundation | complete |
 | M1 — HTTP vertical slice | complete |
 | M2 — Reliability engine | complete |
-| M3 — Event-driven and cross-component | M3-01, M3-02 and the event half of M3-04 complete |
+| M3 — Event-driven and cross-component | complete |
 | M4 — Private-network runner | not started |
 | M5 — Distributed execution | not started |
 | M6 — 1.0 hardening | not started |
 
-Shipped and working: OpenAPI and AsyncAPI import into one catalog, HTTP and
-Kafka connectors under one destination policy, scenario language with
-sequential, parallel, repeat, and eventually blocks, retries, deadlines bounded
-by the execution policy, in-process and Toxiproxy faults, request generation
-from schemas, assertions including the response schema and four event
-assertions, four report formats, and a reproducible run journal.
+Shipped and working: OpenAPI, AsyncAPI and observation-catalog import into one
+catalog, HTTP, Kafka and JDBC connectors under one destination policy, scenario
+language with sequential, parallel, repeat, and eventually blocks, retries,
+deadlines bounded by the execution policy, in-process and Toxiproxy faults,
+request generation from schemas, assertions including the response schema, four
+event assertions and four tabular ones, assertion parameters that resolve as
+expressions, four report formats, and a reproducible run journal.
+
+The M3 exit gate is met: four scenarios prove a business invariant across HTTP,
+events and a database against the payment recovery reference system, each one
+run again against the variant that removes the property it checks, and failing
+there.
 
 ## 3. Releases
 
@@ -176,11 +182,11 @@ compound type would have had to reimplement. Deciding this before the JDBC
 connector arrives is what keeps 0.8's largest item from being designed under
 deadline.
 
-Status: assertion parameters are expressions, with the polling block's
+Status: shipped. Assertion parameters are expressions, with the polling block's
 conditions carrying the same compile-time dependencies and refusals as the
 assertions section, and a parameter reading a secret refused at the boundary
-rather than redacted after the fact. What remains is M3-03, the remainder of
-M3-04, and M3-05.
+rather than redacted after the fact. M3-03, M3-04 and M3-05 are complete, and
+the gate below is met.
 
 - JDBC observation connector: parameterized read-only observations, statement
   and connection deadlines, bounded rows, tabular evidence, mutation refused by

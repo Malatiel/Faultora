@@ -1,0 +1,83 @@
+apiVersion: faultora.dev/v1alpha1
+kind: Scenario
+
+metadata:
+  name: reconciled-unknown-outcome
+  description: >-
+    The provider took the charge and the answer never came back. This is the one
+    state a payment system cannot resolve by trying harder: charging again might
+    take the money twice, and giving up might lose it. The only resolution is to
+    ask the provider what it knows, and to finish the booking for the charges it
+    says it accepted.
+
+    The system under this scenario has a provider that always loses the response,
+    so every payment reaches that state. What the scenario proves is that it does
+    not stay there.
+  labels:
+    team: payments
+    suite: reliability
+
+timeout: 2m
+
+execute:
+  - id: request-payment
+    type: operation
+    operationId: request-payment
+    outputAs: requested
+    inputs:
+      body:
+        paymentId: "pay-{{run.seed}}"
+        amount: 1800
+        currency: EUR
+
+  - id: booking-appears
+    type: eventually
+    timeout: 30s
+    interval: 1s
+    dependsOn: [request-payment]
+    steps:
+      - id: poll-ledger
+        type: operation
+        operationId: ledger-entries-for
+        inputs:
+          paymentId: "pay-{{run.seed}}"
+    until:
+      - assertionType: row-count
+        params:
+          equals: 2
+        message: reconciliation eventually books the charge the provider accepted
+
+  - id: read-payment-row
+    type: operation
+    operationId: payment-state
+    dependsOn: [booking-appears]
+    inputs:
+      paymentId: "pay-{{run.seed}}"
+
+assertions:
+  - id: the-ledger-balances
+    assertionType: row-balance
+    targetStep: poll-ledger
+    params:
+      column: amount
+      equals: 0
+    message: A charge recovered by reconciliation is booked like any other
+
+  - id: the-amount-survived-the-recovery
+    assertionType: row-value
+    targetStep: poll-ledger
+    params:
+      column: amount
+      row: 0
+      equals: "{{steps.requested.body.amount}}"
+    message: The recovered booking carries the amount the API accepted
+
+  - id: no-payment-left-in-doubt
+    assertionType: row-value
+    targetStep: read-payment-row
+    params:
+      column: status
+      equals: settled
+    message: >-
+      The payment is settled rather than unknown. A payment left unknown is
+      money taken from a customer and recorded nowhere.

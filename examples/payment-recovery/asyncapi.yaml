@@ -1,0 +1,99 @@
+asyncapi: 3.0.0
+
+info:
+  title: Payment Recovery Events
+  version: "1.0.0"
+  description: >-
+    The event side of the reference system. The settlement consumer receives
+    settle commands the outbox relay publishes, and sends a settlement event for
+    each payment it books — once per payment, however many times the command
+    arrives.
+
+    `action` is stated from the consuming application's point of view, so
+    `receive` is the channel a test publishes to and `send` is the channel a
+    test observes.
+
+servers:
+  broker:
+    host: localhost:9092
+    protocol: kafka
+    description: The broker the relay, the consumer and the test share
+
+channels:
+  paymentCommands:
+    address: payment-commands
+    description: Settle commands, published from the outbox
+    messages:
+      settlePayment:
+        $ref: '#/components/messages/SettlePayment'
+
+  paymentEvents:
+    address: payment-events
+    description: What the settlement consumer booked
+    messages:
+      paymentSettled:
+        $ref: '#/components/messages/PaymentSettled'
+
+operations:
+  settlePayment:
+    action: receive
+    summary: The consumer receives a settle command, so a test can publish one
+    channel:
+      $ref: '#/channels/paymentCommands'
+    messages:
+      - $ref: '#/channels/paymentCommands/messages/settlePayment'
+
+  paymentSettled:
+    action: send
+    summary: The consumer sends a settlement event, so a test observes one
+    channel:
+      $ref: '#/channels/paymentEvents'
+    messages:
+      - $ref: '#/channels/paymentEvents/messages/paymentSettled'
+
+components:
+  messages:
+    SettlePayment:
+      name: SettlePayment
+      title: Settle a payment
+      correlationId:
+        location: $message.header#/correlation-id
+      payload:
+        $ref: '#/components/schemas/SettleCommand'
+
+    PaymentSettled:
+      name: PaymentSettled
+      title: A payment was booked
+      correlationId:
+        location: $message.header#/correlation-id
+      payload:
+        $ref: '#/components/schemas/SettledEvent'
+
+  schemas:
+    SettleCommand:
+      type: object
+      required: [paymentId, amount]
+      properties:
+        paymentId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        amount:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+        currency:
+          type: string
+          enum: [EUR, USD, GBP]
+
+    SettledEvent:
+      type: object
+      required: [paymentId, status]
+      properties:
+        paymentId:
+          type: string
+        status:
+          type: string
+          enum: [settled]
+        amount:
+          type: integer

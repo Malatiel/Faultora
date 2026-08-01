@@ -1,0 +1,137 @@
+apiVersion: faultora.dev/v1alpha1
+kind: Scenario
+
+metadata:
+  name: duplicate-delivery-one-effect
+  description: >-
+    The outbox relay is allowed to publish twice. It reads a committed row,
+    publishes it, and marks it — and a crash between the publish and the mark
+    republishes the command on the next pass. That duplicate is the trade the
+    pattern makes, and it is only acceptable because the consumer downstream is
+    idempotent.
+
+    This scenario redelivers the command on purpose and proves the business
+    effect happened once: two ledger entries, one settlement, one event.
+  labels:
+    team: payments
+    suite: reliability
+
+timeout: 2m
+
+execute:
+  - id: request-payment
+    type: operation
+    operationId: request-payment
+    outputAs: requested
+    inputs:
+      body:
+        paymentId: "pay-{{run.seed}}"
+        amount: 2500
+        currency: EUR
+
+  # Wait for the first delivery to be booked. Redelivering before the consumer
+  # has seen the command at all would prove nothing about idempotency.
+  - id: settlement-announced
+    type: eventually
+    timeout: 60s
+    interval: 1s
+    dependsOn: [request-payment]
+    steps:
+      - id: poll-events
+        type: operation
+        operationId: paymentSettled
+        inputs:
+          match:
+            payload:
+              paymentId: "pay-{{run.seed}}"
+          waitMs: 1000
+          maxMessages: 5
+    until:
+      - assertionType: event-count
+        params:
+          min: 1
+        message: the settlement event eventually appears
+
+  # The same command again. Nothing about it is different: this is what a
+  # redelivery looks like from the consumer's side.
+  - id: redeliver-command
+    type: operation
+    operationId: settlePayment
+    dependsOn: [settlement-announced]
+    inputs:
+      key: "pay-{{run.seed}}"
+      headers:
+        correlation-id: "pay-{{run.seed}}"
+      body:
+        paymentId: "pay-{{run.seed}}"
+        amount: 2500
+        currency: EUR
+
+  # A bounded second look, from the run's floor, so a second effect that
+  # arrives late is still counted. Reading the ledger straight after the
+  # redelivery would find the correct system's two rows before the broken
+  # system had finished writing its extra two — and pass against both.
+  - id: read-settlement-events
+    type: operation
+    operationId: paymentSettled
+    dependsOn: [redeliver-command]
+    inputs:
+      match:
+        payload:
+          paymentId: "pay-{{run.seed}}"
+      waitMs: 3000
+      maxMessages: 10
+
+  - id: read-ledger
+    type: operation
+    operationId: ledger-entries-for
+    dependsOn: [read-settlement-events]
+    inputs:
+      paymentId: "pay-{{run.seed}}"
+
+  - id: read-settlements
+    type: operation
+    operationId: settlements-of
+    dependsOn: [read-settlement-events]
+    inputs:
+      paymentId: "pay-{{run.seed}}"
+
+assertions:
+  - id: one-effect-per-command
+    assertionType: row-count
+    targetStep: read-settlements
+    params:
+      equals: 1
+    message: >-
+      A command delivered twice settles the payment exactly once. This is the
+      sentence the whole scenario exists for, and it is a row count rather than
+      a message count because the effect is what matters, not the announcement.
+
+  - id: the-booking-is-whole
+    assertionType: row-count
+    targetStep: read-ledger
+    params:
+      equals: 2
+    message: One settlement books exactly two entries, whatever arrived twice
+
+  - id: the-ledger-balances
+    assertionType: row-balance
+    targetStep: read-ledger
+    params:
+      column: amount
+      equals: 0
+    message: The entries booked for this payment still sum to zero
+
+  - id: one-event-announced
+    assertionType: event-count
+    targetStep: read-settlement-events
+    params:
+      equals: 1
+    message: One effect is announced once
+
+  - id: no-payment-settled-twice
+    assertionType: row-unique
+    targetStep: read-settlements
+    params:
+      column: payment_id
+    message: No two settlements name the same payment

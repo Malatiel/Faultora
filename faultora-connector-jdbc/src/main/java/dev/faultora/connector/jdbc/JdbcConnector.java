@@ -120,7 +120,15 @@ public final class JdbcConnector implements Connector {
             // A driver that can refuse writes on a read-only connection now
             // will. One that cannot leaves the statement check and the grant.
             connection.setReadOnly(true);
-            connection.setAutoCommit(true);
+            // Not autocommit, which reads oddly for a connection that never
+            // writes. PostgreSQL only opens a server-side cursor — the thing
+            // that makes the fetch size bound what is fetched rather than what
+            // is returned — inside a transaction. In autocommit the driver
+            // materializes the whole result set and the documented bound would
+            // be a claim about nothing. The connection belongs to one
+            // observation and is closed with it, so the transaction it opens
+            // is rolled back with nothing in it.
+            connection.setAutoCommit(false);
             return connection;
         } catch (SQLException unreachable) {
             throw new DestinationPolicyViolation(

@@ -2,7 +2,11 @@
 
 All notable changes to Faultora are documented in this file.
 
-## Unreleased — 0.8 in progress
+## 0.8.0 — 2026-08-01
+
+One scenario now proves a business invariant across HTTP, events and a
+database. That sentence is the release, and everything below it is what had to
+be true first.
 
 ### Added
 
@@ -99,6 +103,38 @@ there is refused with a diagnostic.
   ledger=jdbc:…` redirects a database as `--target` redirects an API. Reading
   the scheme as everything before `://` would have called it `jdbc:postgresql`
   and left every database target unredirectable.
+- **The payment recovery reference system** (M3-05), in
+  `examples/payment-recovery`: a transactional outbox, an outbox relay, an
+  idempotent consumer, a double-entry ledger, a provider that can take a charge
+  and lose the response, and a reconciliation worker. Four broken variants ship
+  with it, each removing exactly one property, because a variant that broke two
+  things at once would let a scenario pass its gate for the wrong reason.
+- **The M3 exit gate**, in `CrossComponentE2ETest`: four scenarios, each run
+  twice — against the correct system, where it must pass, and against the
+  variant missing the property it is about, where it must fail. A command over
+  HTTP causes an event and a booking that balances; a command delivered twice
+  has one business effect; a payment committed without its event is caught; a
+  charge whose provider response was lost is reconciled. It runs through the
+  packaged CLI against a disposable PostgreSQL and Kafka, and the observations
+  connect as a role that holds `SELECT` and nothing else — so the grant
+  `SECURITY.md` calls the real guarantee is now the grant the gate runs under.
+
+### Fixed
+
+- **A run can import more than one description again.** Merging catalogs joined
+  their content digests with `+`, and a catalog version is an identifier —
+  bounded, and admitting no `+`. Every run that named an OpenAPI document
+  beside an AsyncAPI one failed before it started. Nothing caught it because
+  every suite passed exactly one document, which is precisely what the
+  cross-component gate does not do; the union now carries one digest taken over
+  the documents' digests, in the order they were named.
+- **The row limit bounds what is fetched, on the driver that ships.** An
+  observation's connection was in autocommit, and PostgreSQL opens the
+  server-side cursor that makes a fetch size mean anything only inside a
+  transaction — so "rows that are not kept are not fetched" was true of the
+  code and not of the database. The connection no longer autocommits. It
+  belongs to one observation and is closed with it, so the transaction it opens
+  is rolled back with nothing in it.
 
 ## 0.7.2 — 2026-07-30
 

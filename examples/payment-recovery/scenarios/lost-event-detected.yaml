@@ -1,0 +1,86 @@
+apiVersion: faultora.dev/v1alpha1
+kind: Scenario
+
+metadata:
+  name: lost-event-detected
+  description: >-
+    A payment committed without the event that was supposed to follow it is
+    invisible from the outside: the API answers 201, the caller is satisfied,
+    and nothing downstream ever happens. That is what a system loses when it
+    commits first and publishes afterwards, and it is why the event belongs in
+    the transaction that causes it.
+
+    This scenario asks for a payment and waits for the ledger to show that it
+    was actually settled. Against a system whose outbox row is written outside
+    the transaction, the wait is all there is.
+  labels:
+    team: payments
+    suite: reliability
+
+timeout: 2m
+
+execute:
+  - id: request-payment
+    type: operation
+    operationId: request-payment
+    outputAs: requested
+    inputs:
+      body:
+        paymentId: "pay-{{run.seed}}"
+        amount: 4200
+        currency: EUR
+
+  # The effect, read where it is durable. Polling the database rather than the
+  # broker is deliberate: an event nobody published is exactly what this is
+  # looking for, so the absence of the event cannot be the thing being waited on.
+  - id: booking-appears
+    type: eventually
+    timeout: 30s
+    interval: 1s
+    dependsOn: [request-payment]
+    steps:
+      - id: poll-ledger
+        type: operation
+        operationId: ledger-entries-for
+        inputs:
+          paymentId: "pay-{{run.seed}}"
+    until:
+      - assertionType: row-count
+        params:
+          equals: 2
+        message: the payment is eventually booked into the ledger
+
+  - id: read-outbox
+    type: operation
+    operationId: unpublished-outbox-for
+    dependsOn: [booking-appears]
+    inputs:
+      paymentId: "pay-{{run.seed}}"
+
+assertions:
+  - id: the-ledger-balances
+    assertionType: row-balance
+    targetStep: poll-ledger
+    params:
+      column: amount
+      equals: 0
+    message: What the request asked for was booked, and it balances
+
+  - id: the-database-holds-what-the-api-accepted
+    assertionType: row-value
+    targetStep: poll-ledger
+    params:
+      column: amount
+      row: 0
+      equals: "{{steps.requested.body.amount}}"
+    message: The receivable entry carries the amount the API accepted
+
+  - id: nothing-is-left-unpublished
+    assertionType: row-count
+    targetStep: read-outbox
+    params:
+      equals: 0
+    message: >-
+      The outbox has nothing left for this payment. A row still sitting there
+      would mean the relay had fallen behind rather than that the event was
+      lost, and the two failures deserve different sentences.

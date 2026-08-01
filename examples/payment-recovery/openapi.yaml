@@ -1,0 +1,86 @@
+openapi: "3.0.3"
+info:
+  title: Payment Recovery API
+  description: >-
+    The command side of the reference system. A payment and the outbox row that
+    becomes its settle command are written in one transaction, so a caller that
+    receives 201 has been promised both — which is the promise the gate
+    scenarios check the far side of.
+  version: "1.0.0"
+servers:
+  - url: http://localhost:{port}
+    variables:
+      port:
+        default: "8080"
+paths:
+  /payments:
+    post:
+      operationId: request-payment
+      summary: Ask for a payment to be taken and settled
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - paymentId
+                - amount
+              properties:
+                paymentId:
+                  type: string
+                  description: Business identifier; requesting it twice is one payment
+                  minLength: 1
+                  maxLength: 64
+                amount:
+                  type: integer
+                  description: Amount in minor units
+                  minimum: 1
+                  maximum: 1000000
+                currency:
+                  type: string
+                  enum: [EUR, USD, GBP]
+      responses:
+        "201":
+          description: The payment was recorded and its settle command enqueued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+        "400":
+          description: The request named no payment or no amount
+  /payments/{paymentId}:
+    get:
+      operationId: read-payment
+      summary: What the system currently believes about a payment
+      parameters:
+        - name: paymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The payment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+        "404":
+          description: No such payment
+components:
+  schemas:
+    Payment:
+      type: object
+      required: [paymentId, amount, status]
+      properties:
+        paymentId:
+          type: string
+        amount:
+          type: integer
+        currency:
+          type: string
+        status:
+          type: string
+          description: requested until settled, unknown while a provider outcome is missing
+          enum: [requested, settled, unknown]

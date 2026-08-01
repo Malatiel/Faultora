@@ -8,10 +8,10 @@ across HTTP and Kafka, checks technical and business invariants, and produces
 console, JSON, HTML, and JUnit reports. Execution stays inside your
 infrastructure and does not require a hosted control plane or telemetry.
 
-Version 0.7.2 is a runnable technical preview. It targets local
+Version 0.8.0 is a runnable technical preview. It targets local
 development and CI use on Java 21.
 
-## What 0.7.2 includes
+## What 0.8.0 includes
 
 Scenario execution:
 
@@ -35,9 +35,17 @@ Scenario execution:
 - Kafka operations: publish a command, observe the events it caused, within a
   window bounded below by the run's own start and above by a wait the execution
   policy caps;
+- database observations: read-only queries an operator declares in an
+  observation catalog, parameterized, bounded at the driver, and named by a
+  scenario the way any other operation is;
 - status, header, response-schema, JSONPath, and duration assertions;
 - event assertions: count, uniqueness, correlation continuity, and ordered or
   unordered sequences;
+- tabular assertions: row count, row value, numeric balance, and uniqueness —
+  the ledger invariant among them;
+- assertion parameters are expressions, so an assertion compares a value one
+  step produced against a value another one did. That is what makes a
+  cross-component invariant expressible without a compound assertion type;
 - console, JSON, HTML, and JUnit reports.
 
 Fault injection:
@@ -65,10 +73,10 @@ It never touches the target system, its infrastructure, or other traffic, so
 no extra privileges are needed. Network faults require a Toxiproxy you already
 operate on the traffic path.
 
-Database observations, distributed workers, Kubernetes orchestration, and the
-web interface are not part of this release. Scenarios that request unsupported
-execution features are rejected during validation or plan compilation rather
-than being silently accepted.
+Distributed workers, Kubernetes orchestration, and the web interface are not
+part of this release. Scenarios that request unsupported execution features are
+rejected during validation or plan compilation rather than being silently
+accepted.
 
 ## Requirements
 
@@ -80,7 +88,7 @@ than being silently accepted.
 Download the release JAR and its checksums:
 
 ```bash
-FAULTORA_VERSION=0.7.2
+FAULTORA_VERSION=0.8.0
 RELEASE_URL="https://github.com/Malatiel/Faultora/releases/download/v${FAULTORA_VERSION}"
 
 curl --fail --location --retry 3 \
@@ -108,7 +116,7 @@ Every release also includes a CycloneDX SBOM and the Apache 2.0 license.
 The executable artifact is written to:
 
 ```text
-faultora-cli/target/faultora-0.7.2.jar
+faultora-cli/target/faultora-0.8.0.jar
 ```
 
 The regular CI build can run without repository secrets. Configure the
@@ -121,9 +129,9 @@ missing.
 Check the executable and validate the example scenario:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.7.2.jar --version
+java -jar faultora-cli/target/faultora-0.8.0.jar --version
 
-java -jar faultora-cli/target/faultora-0.7.2.jar \
+java -jar faultora-cli/target/faultora-0.8.0.jar \
   validate \
   --scenario examples/payment-service/scenarios/passing.yaml
 ```
@@ -131,7 +139,7 @@ java -jar faultora-cli/target/faultora-0.7.2.jar \
 Generate a starter scenario from an OpenAPI document:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.7.2.jar \
+java -jar faultora-cli/target/faultora-0.8.0.jar \
   init \
   --from-openapi examples/payment-service/openapi.yaml \
   --output ./generated
@@ -140,7 +148,7 @@ java -jar faultora-cli/target/faultora-0.7.2.jar \
 Run a scenario against an API:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.7.2.jar \
+java -jar faultora-cli/target/faultora-0.8.0.jar \
   test \
   --scenario examples/payment-service/scenarios/passing.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -192,7 +200,7 @@ race window, then asserts the business invariant that exactly one payment
 exists:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.7.2.jar \
+java -jar faultora-cli/target/faultora-0.8.0.jar \
   test \
   --scenario examples/payment-service/scenarios/fault-concurrent-duplicate.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -301,7 +309,7 @@ An AsyncAPI 3.0 description brings Kafka channels into the same catalog as the
 HTTP operations, and `--openapi` and `--asyncapi` can be given together:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.7.2.jar \
+java -jar faultora-cli/target/faultora-0.8.0.jar \
   test \
   --scenario examples/payment-worker/scenarios/duplicate-delivery.yaml \
   --asyncapi examples/payment-worker/asyncapi.yaml \
@@ -376,6 +384,92 @@ Against a consumer that is not idempotent, the same scenario says so:
 The worker both variants run against lives in
 [`examples/payment-worker`](examples/payment-worker), with its AsyncAPI
 description and the scenario above.
+
+## Database observations
+
+A run reads a database through observations an **operator** declares, not
+through SQL written in a scenario. A scenario names an observation; what any
+run may read is reviewable in one file that lives beside the deployment.
+
+```yaml
+# observations.yaml
+apiVersion: faultora.dev/v1alpha1
+kind: Observations
+
+servers:
+  ledger:
+    url: jdbc:postgresql://localhost:5432/payments
+
+observations:
+  ledger-entries-for:
+    server: ledger
+    sql: >-
+      SELECT account, amount FROM ledger_entries
+      WHERE payment_id = :paymentId ORDER BY id
+    parameters:
+      paymentId:
+        type: string
+        required: true
+```
+
+```bash
+java -jar faultora-cli/target/faultora-0.8.0.jar \
+  test \
+  --scenario examples/payment-recovery/scenarios/settlement-invariant.yaml \
+  --openapi examples/payment-recovery/openapi.yaml \
+  --asyncapi examples/payment-recovery/asyncapi.yaml \
+  --observations examples/payment-recovery/observations.yaml \
+  --target http://localhost:8080 \
+  --target broker=kafka://localhost:9092 \
+  --target ledger=jdbc:postgresql://localhost:5432/payments \
+  --db-user faultora_readonly \
+  --db-secret-id ledger-password \
+  --allow-private
+```
+
+An observation can only read. A statement that does not begin `SELECT` or
+`WITH` is refused before a connection opens, and so is one that contains a word
+that writes anywhere in it — a common table expression can `DELETE`, and
+`SELECT … INTO` creates a table. The connection is set read-only on top of
+that. **Give Faultora read-only credentials as well**: those two rules are
+code, and code is one defect away from being wrong; a grant is not.
+
+## Proving a distributed invariant
+
+Three protocols in one run is the point of the previous three sections. This is
+what it looks like when they are used together:
+
+```yaml
+assertions:
+  - id: the-ledger-balances
+    assertionType: row-balance
+    targetStep: read-ledger
+    params:
+      column: amount
+      equals: 0
+
+  - id: the-database-holds-what-the-api-accepted
+    assertionType: row-value
+    targetStep: read-ledger
+    params:
+      column: amount
+      row: 0
+      equals: "{{steps.requested.body.amount}}"
+```
+
+The first is an invariant no single request can show: a ledger whose entries do
+not sum to zero has lost or invented money. The second compares two components
+directly — the amount the API accepted, read back out of the database — and it
+needs no assertion type of its own, because assertion parameters are
+expressions.
+
+The system these run against lives in
+[`examples/payment-recovery`](examples/payment-recovery): a transactional
+outbox, an idempotent consumer, a double-entry ledger, a provider that can take
+a charge and lose the response, and a reconciliation worker. It ships with four
+known-broken variants, and every gate scenario is run against the correct system
+and against the variant that removes the property it checks — because a
+reliability test that has never failed proves nothing.
 
 ## Generated requests
 
@@ -456,7 +550,7 @@ handle is mapped to an environment variable with the `FAULTORA_SECRET_` prefix:
 ```bash
 export FAULTORA_SECRET_PAYMENTS_API='replace-with-a-real-token'
 
-java -jar faultora-cli/target/faultora-0.7.2.jar \
+java -jar faultora-cli/target/faultora-0.8.0.jar \
   test \
   --scenario scenario.yaml \
   --openapi openapi.yaml \

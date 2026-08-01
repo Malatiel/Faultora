@@ -74,7 +74,11 @@ The obvious place is the step that makes the observation. That place is wrong.
   0.1 and enforced nowhere until now — becomes `setMaxRows` with a matching
   fetch size, so rows that are not kept are not fetched. This tool causes load
   on a system somebody else operates, and fetching ten thousand to report a
-  hundred is load they pay for.
+  hundred is load they pay for. The connection does not autocommit, which reads
+  oddly for one that never writes and is what makes the sentence true:
+  PostgreSQL opens the server-side cursor a fetch size depends on only inside a
+  transaction, and in autocommit the driver materializes the whole result set.
+  The connection belongs to one observation and is closed with it.
 - **A truncated result says so.** One row past the limit is read to learn that
   the result was cut, and `TableEvidence.truncated` carries it. An assertion
   that counts rows against a truncated result is counting the limit, so the

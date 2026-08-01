@@ -13,6 +13,7 @@ import dev.faultora.model.identifier.OperationId;
 import dev.faultora.model.identifier.ProtocolId;
 import dev.faultora.model.identifier.SchemaId;
 import dev.faultora.model.identifier.TargetId;
+import dev.faultora.model.security.ContentDigest;
 import dev.faultora.model.security.ExtensionPolicy;
 import dev.faultora.spec.model.ScenarioDocument;
 import dev.faultora.spec.model.ScenarioStep;
@@ -108,7 +109,6 @@ final class CatalogLoader {
         Map<SchemaId, DataSchema> schemas = new LinkedHashMap<>();
         Map<AuthSchemeId, AuthSchemeDefinition> authentication = new LinkedHashMap<>();
         List<WorkflowDefinition> workflows = new ArrayList<>();
-        StringBuilder version = new StringBuilder();
 
         for (ApiCatalog catalog : catalogs) {
             catalog.targets().forEach(target ->
@@ -125,16 +125,40 @@ final class CatalogLoader {
             if (catalog.workflows() != null) {
                 workflows.addAll(catalog.workflows());
             }
-            version.append(version.isEmpty() ? "" : "+").append(catalog.version().value());
         }
 
         return new ApiCatalog(
-                new CatalogVersion(version.toString()),
+                versionOf(catalogs),
                 List.copyOf(targets.values()),
                 List.copyOf(operations.values()),
                 Map.copyOf(schemas),
                 Map.copyOf(authentication),
                 List.copyOf(workflows));
+    }
+
+    /**
+     * One version identifying the union, whatever it was built from.
+     * <p>
+     * The versions being merged are content digests, and joining them was the
+     * obvious thing and the wrong one: a catalog version is an identifier, an
+     * identifier is bounded and admits no {@code +}, and a run that imported an
+     * OpenAPI document beside an AsyncAPI one failed before it started. It went
+     * unnoticed because every suite passed exactly one document — which is
+     * precisely the case the cross-component gate does not.
+     * <p>
+     * So several digests become one digest over them, in the order the
+     * documents were named. It is the same length for any number of documents,
+     * it changes when any of them changes, and it stays the document's own
+     * digest when there is only one — which is what a reader of a single-source
+     * run journal expects to see.
+     */
+    private static CatalogVersion versionOf(List<ApiCatalog> catalogs) {
+        if (catalogs.size() == 1) {
+            return catalogs.get(0).version();
+        }
+        StringBuilder digests = new StringBuilder();
+        catalogs.forEach(catalog -> digests.append(catalog.version().value()).append('\n'));
+        return new CatalogVersion(ContentDigest.sha256Uri(digests.toString()));
     }
 
     /**

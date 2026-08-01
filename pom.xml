@@ -84,6 +84,7 @@
         <module>faultora-testkit</module>
         <module>examples/payment-service</module>
         <module>examples/payment-worker</module>
+        <module>examples/payment-recovery</module>
         <module>integration-tests</module>
     </modules>
 
@@ -265,6 +266,13 @@
             <dependency>
                 <groupId>org.testcontainers</groupId>
                 <artifactId>kafka</artifactId>
+                <version>${testcontainers.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <!-- and for the cross-component gate, which needs a real database -->
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>postgresql</artifactId>
                 <version>${testcontainers.version}</version>
                 <scope>test</scope>
             </dependency>
