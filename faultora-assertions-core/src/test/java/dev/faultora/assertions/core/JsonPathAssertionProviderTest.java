@@ -182,6 +182,20 @@ class JsonPathAssertionProviderTest {
         assertThat(result.outcome()).isEqualTo(AssertionResult.Outcome.INDETERMINATE);
     }
 
+    @Test
+    void aCountThatIsNotANumberSaysSoRatherThanThrowing() throws Exception {
+        // The same answer an uncompilable pattern gets. A scenario's typo
+        // reported as the engine falling over sends the reader to the wrong
+        // file.
+        var evidence = jsonEvidence("{\"items\": [1, 2]}");
+
+        AssertionResult result = provider.evaluate("jsonpath",
+                Map.of("path", "items", "count", "two"), evidence, context);
+
+        assertThat(result.outcome()).isEqualTo(AssertionResult.Outcome.INDETERMINATE);
+        assertThat(result.message()).contains("count expects a number");
+    }
+
     private SimpleEvidence jsonEvidence(String json) throws Exception {
         return new SimpleEvidence(200, Map.of(),
                 json.getBytes(), mapper.readTree(json), 0);

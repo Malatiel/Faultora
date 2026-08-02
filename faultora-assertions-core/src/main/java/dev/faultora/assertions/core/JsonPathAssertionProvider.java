@@ -128,7 +128,15 @@ public class JsonPathAssertionProvider implements AssertionProvider {
 
         // Count (for arrays)
         if (params.containsKey("count")) {
-            int expectedCount = toInt(params.get("count"));
+            Integer expectedCount = count(params.get("count"));
+            if (expectedCount == null) {
+                // The same answer a pattern that will not compile gets: a
+                // parameter that is not a number says nothing about the
+                // response, and throwing it out of an assertion provider would
+                // report a scenario's typo as the engine falling over.
+                return AssertionResult.indeterminate(
+                        "count expects a number, and '" + params.get("count") + "' is not one");
+            }
             if (result.isArray()) {
                 int actualCount = result.size();
                 if (actualCount == expectedCount) {
@@ -267,9 +275,18 @@ public class JsonPathAssertionProvider implements AssertionProvider {
         return false;
     }
 
-    private int toInt(Object value) {
-        if (value instanceof Number n) return n.intValue();
-        if (value instanceof String s) return Integer.parseInt(s);
-        throw new IllegalArgumentException("Cannot convert to int: " + value);
+    /** A count as a number, or null when the parameter is not one. */
+    private static Integer count(Object value) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (value instanceof String text) {
+            try {
+                return Integer.valueOf(text.trim());
+            } catch (NumberFormatException notANumber) {
+                return null;
+            }
+        }
+        return null;
     }
 }

@@ -73,25 +73,50 @@ class ProtocolTest {
 
     @Test
     void aLeaseHoldsUntilItDoesNot() {
-        long now = 1_000_000L;
-        Lease lease = new Lease(now + 30_000, 5_000);
+        long now = System.currentTimeMillis();
+        Lease lease = new Lease(now, 30_000, 5_000);
 
+        assertThat(lease.expiresAtEpochMs()).isEqualTo(now + 30_000);
         assertThat(lease.holdsAt(now)).isTrue();
         assertThat(lease.holdsAt(now + 29_999)).isTrue();
         assertThat(lease.holdsAt(now + 30_000)).isFalse();
         assertThat(lease.remainingMs(now + 60_000)).isZero();
-        assertThat(lease.renewedUntil(now + 90_000).holdsAt(now + 60_000)).isTrue();
+        assertThat(lease.renewedAt(now + 20_000).holdsAt(now + 45_000)).isTrue();
     }
 
     @Test
-    void aLeaseThatCannotBeRenewedInTimeIsRefusedWhenItIsBuilt() {
-        // A renewal interval at or past the expiry is a lease that ends before
-        // anything can extend it, which is a configuration mistake rather than
-        // a runtime surprise.
-        assertThatThrownBy(() -> new Lease(1_000, 1_000))
+    void aLeaseThatCannotBeRenewedInTimeIsRefusedWithARealisticClock() {
+        // The check this replaces compared an interval with an epoch
+        // millisecond, so it could never be true and a five-second lease
+        // renewed every minute was accepted in silence. These are the
+        // timestamps a deployment actually has.
+        long now = System.currentTimeMillis();
+
+        assertThatThrownBy(() -> new Lease(now, 5_000, 60_000))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("cannot be renewed every 60000ms");
+        assertThatThrownBy(() -> new Lease(now, 30_000, 30_000))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new Lease(0, 100))
+        assertThatThrownBy(() -> new Lease(now, 0, 100))
                 .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new Lease(0, 30_000, 5_000))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void theRunnerStopsByItsOwnClockRatherThanTheDispatchersExpiry() {
+        // A lease is a bound, and a bound a wrong clock can widen is not one.
+        // The runner is an hour behind here; it still stops thirty seconds
+        // after it received the dispatch.
+        long dispatcherNow = System.currentTimeMillis();
+        long runnerReceivedAt = dispatcherNow - 3_600_000;
+        Lease lease = new Lease(dispatcherNow, 30_000, 5_000);
+
+        assertThat(lease.deadlineFrom(runnerReceivedAt))
+                .isEqualTo(runnerReceivedAt + 30_000);
+        assertThat(lease.deadlineFrom(runnerReceivedAt))
+                .as("a skewed clock cannot buy the run an extra hour")
+                .isLessThan(lease.expiresAtEpochMs());
     }
 
     @Test
@@ -124,6 +149,7 @@ class ProtocolTest {
         assertThat(received.policy().signature()).isEqualTo("c2lnbmF0dXJl");
         assertThat(received.lease().expiresAtEpochMs())
                 .isEqualTo(sent.lease().expiresAtEpochMs());
+        assertThat(received.lease().ttlMs()).isEqualTo(60_000);
     }
 
     @Test
@@ -149,7 +175,7 @@ class ProtocolTest {
                 Map.of("ledger", "jdbc:postgresql://db/x"),
                 88001L,
                 new SignedPolicy("{\"maxConcurrency\":4}", "key-1", "c2lnbmF0dXJl"),
-                new Lease(issuedAt + 60_000, 10_000),
+                new Lease(issuedAt, 60_000, 10_000),
                 "sha256:aaa", "sha256:bbb");
     }
 }
