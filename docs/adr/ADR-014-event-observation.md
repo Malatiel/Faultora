@@ -135,6 +135,22 @@ mistake this record exists to avoid.
   message written just before the run on the same channel can be selected by a
   scenario that does not narrow its window. Naming a correlation value the run
   itself produced removes the possibility.
+- **The fallback when a timestamp finds no offset is ambiguous, and the
+  ambiguity is recorded rather than resolved.** `offsetsForTimes` returning
+  nothing for a partition is read as "nothing that recent exists", and the
+  floor becomes the partition's current end. That is right for a channel whose
+  traffic is all older than the run. It is wrong if the broker's time index has
+  not yet caught up with a record that *is* recent — the floor would then sit
+  above an event the run caused, and every later poll of that channel would
+  observe nothing at all, for the whole run.
+
+  Whether that happens in practice is unproven. It is written down because the
+  symptom is specific and cheap to recognise — `MESSAGES_OBSERVED` with
+  `observed: 0` repeating while the effect demonstrably occurred — and because
+  this is the same shape as the defect this ADR was written about: a floor
+  above the event, invisible to every in-memory test. The events gate now
+  reports the producing side's own count beside the observation, which is what
+  tells the two apart the next time it is seen.
 - The evidence budget is per observation, not per run. A polling block that
   observes twenty times can hold twenty windows' worth of payloads, because each
   poll's evidence belongs to its own node. That is the same accumulation any
