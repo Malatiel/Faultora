@@ -85,18 +85,29 @@ final class AssertionParameters {
     }
 
     /**
-     * The first template that resolved to nothing, described by where it sits.
+     * The first template that resolved to null, described by where it sits.
+     * <p>
+     * A template naming something absent no longer reaches here: it fails
+     * during resolution, in both step inputs and assertion parameters
+     * (ADR-018). What is left is the narrower case — an expression that named
+     * a real field whose value is null — and an assertion is the one place
+     * where that is still refused. Comparing against null is comparing against
+     * the absence of a value, and every provider would have to decide for
+     * itself what that means; {@code exists: false} is how a scenario asks the
+     * question it was reaching for.
      * <p>
      * Declared and resolved are walked together, so a template nested inside a
      * map or a list is checked like a top-level one. A parameter written as a
-     * literal may legitimately be absent; one written as an expression that
-     * resolved to nothing cannot be.
+     * literal null is left alone: it says null on purpose.
      */
     private String firstReferenceResolvingToNothing(
             String path, Object declared, Object resolved) {
         return switch (declared) {
             case String text when text.contains("{{") && resolved == null ->
-                    "Parameter '" + path + "' reads " + text + ", which resolved to nothing";
+                    "Parameter '" + path + "' reads " + text + ", which is null. An "
+                            + "assertion compares against a value, and null is the "
+                            + "absence of one — ask for it with exists: false rather "
+                            + "than comparing to it";
             case Map<?, ?> map -> {
                 Map<?, ?> resolvedMap = resolved instanceof Map<?, ?> other ? other : Map.of();
                 for (Map.Entry<?, ?> entry : map.entrySet()) {

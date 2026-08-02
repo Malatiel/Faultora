@@ -104,6 +104,56 @@ class PaymentServiceE2ETest {
     }
 
     @Test
+    void aStepNamingSomethingUnboundFailsTheRunRatherThanTheRunner()
+            throws IOException {
+        // The scenario is written here rather than shipped as an example: it
+        // is about a defect, and an example is something to copy. What it
+        // proves is the whole path — a template naming nothing, an operation
+        // step refusing to be invoked with it, and the exit code a reader acts
+        // on. A typo in a scenario is a test failure, not a runner failure.
+        Path outputDir = Files.createTempDirectory("faultora-e2e-unbound-");
+        Path scenario = outputDir.resolve("names-a-ghost.yaml");
+        Files.writeString(scenario, """
+                apiVersion: faultora.dev/v1alpha1
+                kind: Scenario
+                metadata:
+                  name: names-a-ghost
+                execute:
+                  - id: create-payment
+                    type: operation
+                    operationId: create-payment
+                    outputAs: created
+                    inputs:
+                      body:
+                        amount: 2500
+                        currency: EUR
+                  - id: read-back
+                    type: operation
+                    operationId: get-payment
+                    dependsOn: [create-payment]
+                    inputs:
+                      paymentId: "{{steps.created.body.reference}}"
+                """);
+
+        int exit = createCli().run(new String[]{
+                "test",
+                "--scenario", scenario.toString(),
+                "--openapi", ExampleFixtures.openApi().toString(),
+                "--target", api.baseUrl(),
+                "--allow-private",
+                "--format", "console,json",
+                "--output", outputDir.toString()
+        });
+
+        assertThat(exit).isEqualTo(FaultoraCli.EXIT_TEST_FAILURE);
+        String journal = Files.readString(outputDir.resolve("events.ndjson"));
+        assertThat(journal).contains("INPUTS_UNRESOLVABLE");
+        assertThat(journal)
+                .as("the message names the input the template sits in")
+                .contains("paymentId");
+    }
+
+    @Test
     void failingScenarioReturnsNonZero() {
         Path scenario = ExampleFixtures.scenario("failing.yaml");
         Path openApi = ExampleFixtures.openApi();

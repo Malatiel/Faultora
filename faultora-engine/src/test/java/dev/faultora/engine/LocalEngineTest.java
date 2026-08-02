@@ -1558,6 +1558,44 @@ class LocalEngineTest {
     }
 
     @Test
+    void anAssertionComparingAgainstNullIsToldToAskForAbsenceInstead() {
+        // A field that exists and is null is a value everywhere else — a step
+        // input takes it. An assertion is the exception: comparing against the
+        // absence of a value leaves every provider to decide what that means.
+        com.fasterxml.jackson.databind.node.ObjectNode created =
+                new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode();
+        created.putObject("body").putNull("reference");
+        ExpressionContext withNull = ExpressionContext.builder()
+                .stepOutput("created", created).build();
+
+        ExecutionPlan plan = ExecutionPlan.builder()
+                .runId(new RunId("run-params-null"))
+                .scenario(buildScenario())
+                .catalog(catalog)
+                .targetPolicy(policy)
+                .seed(42L)
+                .scenarioDigest("sha256:abc")
+                .catalogDigest("sha256:def")
+                .addNode(new PlanNode.OperationNode(
+                        new NodeId("create"), new OperationId("create-payment"),
+                        findOp("create-payment"), Map.of(), null, List.of(),
+                        SafetyClassification.MUTATING, 0, 0))
+                .addNode(new PlanNode.AssertionNode(
+                        new NodeId("compares-with-null"), "status",
+                        Map.of("expected", "{{steps.created.body.reference}}"),
+                        new NodeId("create"), null, List.of(new NodeId("create")),
+                        SafetyClassification.READ_ONLY))
+                .build();
+
+        RunResult result = run(plan, withNull, "params-null-journal.ndjson");
+
+        RunResult.NodeResult assertion =
+                result.nodeResults().get(new NodeId("compares-with-null"));
+        assertThat(assertion.status()).isEqualTo(RunResult.Status.FAILED);
+        assertThat(assertion.error().message()).contains("which is null", "exists: false");
+    }
+
+    @Test
     void anAssertionReadingAnUnboundStepFailsRatherThanComparingAgainstNothing() {
         // The compiler refuses this, but the engine must not pass if one ever
         // reaches it: a comparison against nothing that reads as satisfied is

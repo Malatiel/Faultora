@@ -42,6 +42,13 @@ against a resolver that cannot tell them apart.
   means it; the run reports it rather than refusing it. This is the one half of
   the old inconsistency that stays, because the two positions genuinely differ
   — one carries a JSON value, the other builds text.
+- **An assertion parameter is the exception, and says why.** A template that
+  resolves to null is refused there, because an assertion compares against a
+  value and null is the absence of one: every provider would otherwise decide
+  for itself what comparing to null means, and the answers would differ. The
+  refusal names `exists: false` as the question the author was reaching for. A
+  parameter written as a literal null is left alone — it says null on purpose,
+  and nothing had to resolve for it to.
 - **Only a leading function call goes to JMESPath.** An expression is a dotted
   path unless it begins with an identifier followed by `(`. "Contains a
   parenthesis" made `steps."weird(key)".id` into a JMESPath expression and then
