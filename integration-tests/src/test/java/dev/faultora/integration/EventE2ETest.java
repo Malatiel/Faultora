@@ -95,6 +95,16 @@ class EventE2ETest {
     }
 
     private int run(Path outputDir, String seed) throws IOException {
+        // Emptied rather than reused. A journal left by an earlier run of this
+        // suite would let an assertion about this run's events be satisfied by
+        // the previous one's — an assertion that cannot fail.
+        if (Files.isDirectory(outputDir)) {
+            try (var entries = Files.list(outputDir)) {
+                for (Path leftover : entries.toList()) {
+                    Files.deleteIfExists(leftover);
+                }
+            }
+        }
         Files.createDirectories(outputDir);
         return new FaultoraCli(new PrintWriter(System.out, true), new PrintWriter(System.err, true))
                 .run(new String[]{

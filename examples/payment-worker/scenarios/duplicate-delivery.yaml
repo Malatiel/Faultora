@@ -71,6 +71,15 @@ execute:
   # A second observation reads the same window again from the run's floor, so
   # a duplicate that arrived late is still counted. Asserting on the poll that
   # first saw one event would pass before a second could arrive.
+  #
+  # The wait is deliberately generous. "Exactly one effect" is a claim about a
+  # closed window, so the window has to be longer than the system's worst case
+  # rather than than its usual one — and this observation opens a consumer,
+  # takes its partitions and fetches from the run's floor, all inside the wait.
+  # Two seconds was enough on a developer's machine and not on a loaded CI
+  # runner, where both variants came back one event short: the correct one
+  # observed nothing and the broken one observed a single settlement, so the
+  # scenario failed where it should pass and passed where it should fail.
   - id: read-settlements
     type: operation
     operationId: paymentSettled
@@ -79,7 +88,7 @@ execute:
       match:
         payload:
           paymentId: "pay-{{run.seed}}"
-      waitMs: 2000
+      waitMs: 8000
       maxMessages: 10
 
 assertions:
