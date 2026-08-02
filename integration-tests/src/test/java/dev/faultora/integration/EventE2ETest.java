@@ -15,6 +15,8 @@ import org.testcontainers.utility.DockerImageName;
 
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -106,7 +108,14 @@ class EventE2ETest {
             }
         }
         Files.createDirectories(outputDir);
-        return new FaultoraCli(new PrintWriter(System.out, true), new PrintWriter(System.err, true))
+        // The report is kept as well as printed. When this suite fails on a
+        // machine nobody can attach to, the exit code alone starts a guessing
+        // game — which is how the last CI failure was diagnosed twice and
+        // wrongly once. The assertion carries what the run said.
+        report = new StringWriter();
+        PrintWriter out = new PrintWriter(new TeeWriter(
+                new PrintWriter(System.out, true), report), true);
+        return new FaultoraCli(out, out)
                 .run(new String[]{
                         "test",
                         "--scenario", ExampleFixtures.workerScenario(
@@ -121,6 +130,42 @@ class EventE2ETest {
                 });
     }
 
+    /** What the last run printed, for a failure message that explains itself. */
+    private StringWriter report;
+
+    private String whatTheRunSaid() {
+        return report == null ? "(the run printed nothing)" : "\n" + report;
+    }
+
+    /** Writes to both, so the console keeps its output and the test keeps a copy. */
+    private static final class TeeWriter extends Writer {
+
+        private final Writer console;
+        private final Writer kept;
+
+        private TeeWriter(Writer console, Writer kept) {
+            this.console = console;
+            this.kept = kept;
+        }
+
+        @Override
+        public void write(char[] buffer, int offset, int length) throws IOException {
+            console.write(buffer, offset, length);
+            kept.write(buffer, offset, length);
+        }
+
+        @Override
+        public void flush() throws IOException {
+            console.flush();
+            kept.flush();
+        }
+
+        @Override
+        public void close() throws IOException {
+            flush();
+        }
+    }
+
     @Test
     void aCommandDeliveredTwiceSettlesThePaymentOnce() throws Exception {
         startBroker(true);
@@ -128,7 +173,7 @@ class EventE2ETest {
 
         int exit = run(outputDir, "77001");
 
-        assertThat(exit).isEqualTo(FaultoraCli.EXIT_PASS);
+        assertThat(exit).as(this::whatTheRunSaid).isEqualTo(FaultoraCli.EXIT_PASS);
         String events = Files.readString(outputDir.resolve("events.ndjson"));
         // Two commands were published, and the journal says where each landed.
         assertThat(events.split("MESSAGE_PUBLISHED", -1)).hasSizeGreaterThan(2);
@@ -148,7 +193,7 @@ class EventE2ETest {
 
         int exit = run(outputDir, "77002");
 
-        assertThat(exit).isEqualTo(FaultoraCli.EXIT_TEST_FAILURE);
+        assertThat(exit).as(this::whatTheRunSaid).isEqualTo(FaultoraCli.EXIT_TEST_FAILURE);
         String events = Files.readString(outputDir.resolve("events.ndjson"));
         assertThat(events).contains("one-effect-per-command");
         assertThat(events).contains("observed 2");
@@ -159,7 +204,8 @@ class EventE2ETest {
         startBroker(true);
         Path first = Path.of(System.getProperty("java.io.tmpdir"), "faultora-e2e-events-1");
 
-        assertThat(run(first, "77003")).isEqualTo(FaultoraCli.EXIT_PASS);
+        assertThat(run(first, "77003")).as(this::whatTheRunSaid)
+                .isEqualTo(FaultoraCli.EXIT_PASS);
 
         // The payment id is derived from the seed, so the run names the same
         // exchange every time — which is what makes a failure investigable.
