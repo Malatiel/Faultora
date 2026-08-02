@@ -29,6 +29,20 @@ public final class ExpressionEvaluator {
      */
     private static final Pattern PATH_SEGMENT = Pattern.compile("\"([^\"]+)\"|([^.]+)");
 
+    /**
+     * What sends an expression to JMESPath: a name, then an open parenthesis.
+     * <p>
+     * "Contains a parenthesis" was the old rule, and it made
+     * {@code steps."weird(key)".id} into a JMESPath expression that then failed
+     * to parse — reporting a syntax error about a scenario that was correct.
+     */
+    private static final Pattern FUNCTION_CALL =
+            Pattern.compile("^[A-Za-z_][A-Za-z0-9_]*\\s*\\(");
+
+    /** An unquoted hyphenated name, which JMESPath's grammar has no room for. */
+    private static final Pattern HYPHENATED_NAME =
+            Pattern.compile("(?<![\"\\w])[A-Za-z_][A-Za-z0-9_]*-[A-Za-z0-9_-]+");
+
     private final JmesPath<JsonNode> jmespath;
 
     public ExpressionEvaluator() {
@@ -59,8 +73,7 @@ public final class ExpressionEvaluator {
         String trimmed = expression.trim();
 
         try {
-            // Check if it's a function call (contains parentheses)
-            if (trimmed.contains("(")) {
+            if (FUNCTION_CALL.matcher(trimmed).find()) {
                 return evaluateJmespath(trimmed, context);
             }
             // Otherwise use dotted-path resolution (supports hyphens)
@@ -256,11 +269,29 @@ public final class ExpressionEvaluator {
                     ? MissingNode.getInstance() : result;
         } catch (Exception e) {
             throw new ExpressionEvaluationException(
-                    "Failed to evaluate JMESPath expression: " + expression + ". Cause: " + e.getMessage(),
+                    "Failed to evaluate JMESPath expression: " + expression
+                            + hintAbout(expression) + ". Cause: " + e.getMessage(),
                     expression,
                     e
             );
         }
+    }
+
+    /**
+     * The one thing that goes wrong here often enough to name.
+     * <p>
+     * JMESPath's grammar has no hyphen in an identifier, and every example
+     * scenario names its steps with one: {@code type(steps.create-payment.id)}
+     * does not compile, while {@code type(steps."create-payment".id)} does.
+     * Leaving that to be discovered through a parser's report of a character
+     * position is the same defect as documenting a feature that is not there.
+     */
+    private static String hintAbout(String expression) {
+        return HYPHENATED_NAME.matcher(expression).find()
+                ? ". A function reads a hyphenated name only in quotes — write "
+                        + "type(steps.\"create-payment\".id) rather than "
+                        + "type(steps.create-payment.id)"
+                : "";
     }
 
     /**

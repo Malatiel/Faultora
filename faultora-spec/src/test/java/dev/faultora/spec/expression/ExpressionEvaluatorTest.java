@@ -273,6 +273,33 @@ class ExpressionEvaluatorTest {
     }
 
     @Test
+    void aParenthesisInsideANameIsNotAFunctionCall() {
+        // The old rule was "contains a parenthesis", which turned a correct
+        // path into a JMESPath expression and then reported a syntax error.
+        ObjectMapper mapper = new ObjectMapper();
+        ObjectNode headers = mapper.createObjectNode();
+        headers.put("x-trace(id)", "abc");
+        ExpressionContext weird = ExpressionContext.builder()
+                .stepOutput("read", headers).build();
+
+        assertThat(evaluator.evaluate("steps.read.\"x-trace(id)\"", weird).asText())
+                .isEqualTo("abc");
+    }
+
+    @Test
+    void aFunctionOverAHyphenatedNameSaysHowToWriteIt() {
+        // JMESPath has no hyphen in an identifier and every example scenario
+        // has one in a step name. The parser's answer is a character position;
+        // this one is the fix.
+        assertThatThrownBy(() -> evaluator.evaluate("type(steps.create-payment.id)", context))
+                .isInstanceOf(ExpressionEvaluationException.class)
+                .hasMessageContaining("only in quotes");
+
+        assertThat(evaluator.evaluate("type(steps.\"create-payment\".id)", context).asText())
+                .isEqualTo("string");
+    }
+
+    @Test
     void jmesPathLengthFunction() {
         JsonNode result = evaluator.evaluate("length(inputs.name)", context);
         assertThat(result).isNotNull();
