@@ -133,8 +133,23 @@ class EventE2ETest {
     /** What the last run printed, for a failure message that explains itself. */
     private StringWriter report;
 
+    /**
+     * The run's own report, and what the worker did, in the failure message.
+     * <p>
+     * The worker's count is the half the CLI cannot see, and it splits the
+     * remaining question in two. A settlement count of zero means the command
+     * never became an effect — the worker did not consume it, or could not
+     * publish what it settled. A count of one with nothing observed means the
+     * effect happened and the observation did not see it, which is a defect in
+     * the window rather than in the pipeline. Those are different fixes, and
+     * the exit code alone cannot tell them apart.
+     */
     private String whatTheRunSaid() {
-        return report == null ? "(the run printed nothing)" : "\n" + report;
+        return (report == null ? "(the run printed nothing)" : "\n" + report)
+                + "\nthe worker settled "
+                + (worker == null ? "(no worker)" : worker.settledCount())
+                + " payment(s) — a count of zero means no settlement event was ever"
+                + " produced, so nothing was there to observe";
     }
 
     /** Writes to both, so the console keeps its output and the test keeps a copy. */
