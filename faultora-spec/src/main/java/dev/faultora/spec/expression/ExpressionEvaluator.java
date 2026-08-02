@@ -91,12 +91,22 @@ public final class ExpressionEvaluator {
 
     /**
      * Resolve a template string containing {{expression}} placeholders.
-     * If the entire string is a single {{expression}}, returns the raw evaluated value
-     * (preserving type). Otherwise, performs string interpolation.
+     * <p>
+     * A string that is one template keeps the value's type; a string with a
+     * template inside it interpolates.
+     * <p>
+     * <b>A template naming something that does not exist fails the step</b>,
+     * whichever of the two it was. The old behaviour was null in one position
+     * and an empty string in the other, which is how a scenario passes while
+     * checking nothing: {@code "/payments/{{steps.created.body.id}}"} against a
+     * missing id requested {@code /payments/} and got a 404 that read like the
+     * API's fault. An explicit null is different and is kept: a document that
+     * says a field is null means it, and it interpolates as nothing.
      *
      * @param template the template string (e.g. "Hello {{inputs.name}}")
      * @param context  the evaluation context
      * @return the resolved value
+     * @throws ExpressionEvaluationException when a template names nothing
      */
     public Object resolveTemplate(String template, ExpressionContext context) {
         if (template == null || template.isBlank()) {
@@ -108,8 +118,7 @@ public final class ExpressionEvaluator {
         // Check if the entire string is a single expression (preserve type)
         if (matcher.matches()) {
             String expr = matcher.group(1).trim();
-            JsonNode result = evaluate(expr, context);
-            return jsonNodeToValue(result);
+            return jsonNodeToValue(required(expr, evaluate(expr, context)));
         }
 
         // String interpolation: replace each {{expression}} with its string value
@@ -117,13 +126,24 @@ public final class ExpressionEvaluator {
         matcher.reset();
         while (matcher.find()) {
             String expr = matcher.group(1).trim();
-            JsonNode result = evaluate(expr, context);
-            String replacement = result == null || result.isNull() || result.isMissingNode()
-                    ? "" : result.asText();
+            JsonNode result = required(expr, evaluate(expr, context));
+            String replacement = result.isNull() ? "" : result.asText();
             matcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
         }
         matcher.appendTail(sb);
         return sb.toString();
+    }
+
+    /** The value a template named, or a refusal naming what was not there. */
+    private static JsonNode required(String expression, JsonNode value) {
+        if (!value.isMissingNode()) {
+            return value;
+        }
+        throw new ExpressionEvaluationException(
+                "Nothing is bound at '" + expression + "'. A template that names "
+                        + "something absent is an author's mistake, so it fails the step "
+                        + "rather than becoming an empty value the run then acts on",
+                expression);
     }
 
     /**
@@ -143,26 +163,43 @@ public final class ExpressionEvaluator {
 
         var resolved = new java.util.LinkedHashMap<String, Object>();
         for (var entry : inputs.entrySet()) {
-            resolved.put(entry.getKey(), resolveValue(entry.getValue(), context));
+            resolved.put(entry.getKey(),
+                    resolveValue(entry.getKey(), entry.getValue(), context));
         }
         return resolved;
     }
 
-    private Object resolveValue(Object value, ExpressionContext context) {
+    /**
+     * Resolve one value, naming where it sits if it cannot be resolved.
+     * <p>
+     * The path is carried down so a refusal says {@code body.customer.id}
+     * rather than only naming the expression. A scenario has many templates and
+     * several may read the same name; which one failed is the thing the author
+     * needs.
+     */
+    private Object resolveValue(String path, Object value, ExpressionContext context) {
         if (value instanceof String s) {
-            return resolveTemplate(s, context);
+            try {
+                return resolveTemplate(s, context);
+            } catch (ExpressionEvaluationException unresolvable) {
+                throw new ExpressionEvaluationException(
+                        "'" + path + "' reads " + s + ": " + unresolvable.getMessage(),
+                        unresolvable.expression(), unresolvable);
+            }
         }
         if (value instanceof java.util.Map<?, ?> map) {
             var resolved = new java.util.LinkedHashMap<Object, Object>();
             for (var entry : map.entrySet()) {
-                resolved.put(entry.getKey(), resolveValue(entry.getValue(), context));
+                resolved.put(entry.getKey(), resolveValue(
+                        path + "." + entry.getKey(), entry.getValue(), context));
             }
             return resolved;
         }
         if (value instanceof java.util.List<?> list) {
             var resolved = new java.util.ArrayList<Object>(list.size());
-            for (Object item : list) {
-                resolved.add(resolveValue(item, context));
+            for (int index = 0; index < list.size(); index++) {
+                resolved.add(resolveValue(
+                        path + "[" + index + "]", list.get(index), context));
             }
             return resolved;
         }

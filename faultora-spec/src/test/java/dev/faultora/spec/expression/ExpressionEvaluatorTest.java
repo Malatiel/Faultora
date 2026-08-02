@@ -174,9 +174,32 @@ class ExpressionEvaluatorTest {
     }
 
     @Test
-    void resolveTemplateWithMissingValue() {
-        Object result = evaluator.resolveTemplate("Value: {{inputs.nonexistent}}", context);
-        assertThat(result).isEqualTo("Value: ");
+    void aTemplateNamingNothingFailsRatherThanVanishing() {
+        // This used to interpolate to "Value: ", and a path built that way
+        // requested /payments/ and got a 404 that read like the API's fault.
+        assertThatThrownBy(() ->
+                evaluator.resolveTemplate("Value: {{inputs.nonexistent}}", context))
+                .isInstanceOf(ExpressionEvaluationException.class)
+                .hasMessageContaining("inputs.nonexistent");
+
+        assertThatThrownBy(() ->
+                evaluator.resolveTemplate("{{inputs.nonexistent}}", context))
+                .isInstanceOf(ExpressionEvaluationException.class);
+    }
+
+    @Test
+    void aValueThatIsNullIsStillAValue() {
+        // A document saying a field is null means it. Only a name bound to
+        // nothing is the author's mistake.
+        ObjectNode payment = new ObjectMapper().createObjectNode();
+        payment.putNull("reference");
+        ExpressionContext withNull = ExpressionContext.builder()
+                .stepOutput("created", payment).build();
+
+        assertThat(evaluator.resolveTemplate("{{steps.created.reference}}", withNull))
+                .isNull();
+        assertThat(evaluator.resolveTemplate("ref: {{steps.created.reference}}", withNull))
+                .isEqualTo("ref: ");
     }
 
     @Test

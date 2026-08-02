@@ -2,6 +2,54 @@
 
 All notable changes to Faultora are documented in this file.
 
+## Unreleased — 0.9 in progress
+
+### Changed
+
+- **The semantics 1.0 would otherwise have frozen by accident are decided.**
+  `docs/RELEASE_PLAN.md` listed five; all five are answered on purpose, with
+  ADR-018 and ADR-019 recording why and what was rejected. Each is a change to
+  what a scenario means, which is why they land before the freeze rather than
+  after it.
+- **A template that names something absent fails the step.** It resolved to
+  null on its own and to an empty string inside a sentence, so
+  `"/payments/{{steps.created.body.id}}"` with no id requested `/payments/` and
+  got a 404 that read like the API's fault. The refusal names the input it sits
+  in — `body.customer.id` rather than only the expression — and the failure is
+  a validation error, not the engine reporting that it broke.
+- **A value that is null is still a value**: null on its own, nothing when
+  interpolated. Only a name bound to nothing is an author's mistake, and the
+  resolver can now tell the two apart — which it could not, having answered
+  both with the same Java null.
+- **A dotted path indexes a list.** `steps.read.protocol.messages.0.payload.id`
+  reads the first message a step observed. An object is still addressed by key
+  even when the key looks like a number, and a quoted segment never indexes.
+  `protocol.message` — the binding that existed because this did not work —
+  stays as a documented convenience.
+- **An expression goes to JMESPath only when it begins with a function call.**
+  "Contains a parenthesis" turned `steps."x-trace(id)"` into a JMESPath
+  expression and reported a syntax error in a scenario that was correct.
+  JMESPath's grammar has no hyphen in an identifier, so a function over a
+  hyphenated step name needs quotes — the diagnostic now says that instead of
+  passing along a parser's character position.
+- **`equals` compares values rather than JSON types.** 5 and 5.0 are one
+  number, and `equals: "2500"` matches the amount 2500 — which matters because
+  a template always resolves to text. `type` is what distinguishes 5 from
+  `"5"`. This is the rule the tabular assertions have applied since 0.8.
+
+### Added
+
+- **`matches`** on the `jsonpath` assertion: a regular expression over the
+  selected value, for the generated identifier whose value is unknown and whose
+  shape is not. It was documented and missing; `length` was too, and is gone
+  from the documentation because JMESPath's own `length()` in the path always
+  was the way to ask.
+
+The assertion stays named `jsonpath` while evaluating JMESPath. Renaming means
+two names frozen in the contract forever or breaking every scenario that
+exists; the documentation now says which language it is, which is the half of
+that problem worth fixing.
+
 ## 0.8.0 — 2026-08-01
 
 One scenario now proves a business invariant across HTTP, events and a

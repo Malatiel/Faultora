@@ -1587,7 +1587,7 @@ class LocalEngineTest {
                 result.nodeResults().get(new NodeId("expects-a-ghost"));
         assertThat(assertion.status()).isEqualTo(RunResult.Status.FAILED);
         assertThat(assertion.error().message())
-                .contains("expected", "resolved to nothing");
+                .contains("expected", "steps.never-bound.status", "Nothing is bound");
     }
 
     @Test
@@ -1621,7 +1621,7 @@ class LocalEngineTest {
         assertThat(assertion.status()).isEqualTo(RunResult.Status.FAILED);
         assertThat(assertion.error().message())
                 .as("the message names where the template sits")
-                .contains("match.id", "resolved to nothing");
+                .contains("match.id", "Nothing is bound");
     }
 
     @Test

@@ -7,6 +7,7 @@ import dev.faultora.model.catalog.NormalizedError;
 import dev.faultora.model.catalog.OperationDefinition;
 import dev.faultora.model.identifier.NodeId;
 import dev.faultora.spec.expression.ExpressionContext;
+import dev.faultora.spec.expression.ExpressionEvaluationException;
 import dev.faultora.spi.contract.AssertionProvider;
 import dev.faultora.spi.contract.FaultProvider;
 import dev.faultora.spi.result.OperationResult;
@@ -87,6 +88,21 @@ public final class NodeExecutor {
 
             return report(node, context, evidence, nodeStart);
 
+        } catch (ExpressionEvaluationException unresolvable) {
+            // An author's mistake, not the engine's: a template named something
+            // this run has nothing bound at. Reporting it as INTERNAL would say
+            // the tool broke, and send the reader to the wrong file.
+            long durationMs = System.currentTimeMillis() - nodeStart;
+            NormalizedError error = new NormalizedError(
+                    NormalizedError.ErrorCategory.VALIDATION,
+                    "INPUTS_UNRESOLVABLE",
+                    "Cannot resolve what this step is invoked with: "
+                            + unresolvable.getMessage(),
+                    false, Map.of());
+            context.journal().nodeFailed(nodeId, error, durationMs);
+            return new RunResult.NodeResult(
+                    nodeId, NodeResults.typeOf(node), RunResult.Status.FAILED,
+                    -1, durationMs, List.of(), error);
         } catch (Exception e) {
             long durationMs = System.currentTimeMillis() - nodeStart;
             NormalizedError error = new NormalizedError(

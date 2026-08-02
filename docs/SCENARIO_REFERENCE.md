@@ -250,7 +250,15 @@ Rules:
 - outputs of failed steps are not bound;
 - children of a parallel group are bound only after the whole group finishes,
   in declaration order — children never observe each other's outputs;
-- expressions are read-only and never render secret-derived values.
+- expressions are read-only and never render secret-derived values;
+- **a template that names something absent fails the step**, in both positions,
+  and the message names the input it sits in. It used to resolve to null on its
+  own and to an empty string inside a sentence, which is how
+  `"/payments/{{steps.created.body.id}}"` with no id requested `/payments/` and
+  got a 404 that read like the API's fault;
+- **a value that is null is a value**: it stays null on its own and
+  interpolates as nothing. Only a name bound to nothing is refused. ADR-018
+  records both.
 
 ## Parallel steps
 

@@ -325,16 +325,29 @@ named refusal, never undefined behaviour.
   matrix (M6-01). The internal step model becomes a sealed hierarchy here: it
   is the one moment when reshaping the parsed document costs nothing extra.
 - **Semantics nobody has decided are decided before they are frozen.** A freeze
-  inherits whatever the code happens to do, including what was never a choice:
-  a lone `{{expr}}` resolving to null while the same expression interpolated
-  yields an empty string; any parenthesis routing an expression to JMESPath; an
-  assertion named `jsonpath` that evaluates JMESPath and documents a `matches`
-  check it does not implement; `equals` distinguishing 5 from 5.0; a dotted path
-  being unable to index a list, which is why the first observed message is bound
-  beside the list rather than reached into. Each is small, and each becomes
-  permanent on the day `v1` is declared. (Assertion `params` being literal while
-  step `inputs` are templates was on this list and is settled — see ADR-016 and
-  the 0.8 notes below.)
+  inherits whatever the code happens to do, including what was never a choice.
+  Everything that was on this list is now decided, each with the ADR that says
+  why and what was rejected:
+  - a lone `{{expr}}` resolving to null while the same expression interpolated
+    yielded an empty string — **decided in 0.9**: a name bound to nothing fails
+    the step in both positions, and a value that is null stays a value
+    (ADR-018);
+  - any parenthesis routing an expression to JMESPath — **decided in 0.9**:
+    only a leading function call goes there, and the hyphen limitation JMESPath
+    imposes is stated rather than discovered (ADR-018);
+  - a dotted path unable to index a list — **decided in 0.9**: a numeric
+    segment indexes, a quoted one is always a key, and `protocol.message` stays
+    as a documented convenience (ADR-018);
+  - an assertion named `jsonpath` that evaluates JMESPath and documented a
+    `matches` check it did not implement — **decided in 0.9**: `matches` is
+    implemented, the documented list is exactly what the code does, and the
+    name stays rather than freezing two names or breaking every scenario
+    (ADR-019);
+  - `equals` distinguishing 5 from 5.0 — **decided in 0.9**: numbers compare as
+    decimals, everything else as text, and `type` is what distinguishes 5 from
+    `"5"` (ADR-019);
+  - assertion `params` being literal while step `inputs` are templates —
+    decided in 0.8 (ADR-016).
 - Out-of-process extension protocol, manifests, capability validation, SDK,
   reference extension, process isolation and resource limits (M6-02).
 - Supply chain: multi-architecture images, signed artifacts, SBOM, SLSA
