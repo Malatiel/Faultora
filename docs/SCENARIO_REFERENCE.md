@@ -1,6 +1,6 @@
 # Scenario reference
 
-This page documents the scenario format implemented by Faultora 0.7.2. The
+This page documents the scenario format implemented by Faultora 0.9.0. The
 format is versioned independently from the application:
 
 ```yaml
@@ -10,7 +10,7 @@ kind: Scenario
 
 Faultora rejects unsupported versions, missing required fields, duplicate step
 IDs, unknown references, dependency cycles, and execution features that are not
-available in 0.7.2.
+available in 0.9.0.
 
 ## Complete example
 
@@ -74,7 +74,7 @@ cleanup:
 Validate a document before running it:
 
 ```bash
-java -jar faultora-0.7.2.jar validate --scenario scenario.yaml
+java -jar faultora-0.9.0.jar validate --scenario scenario.yaml
 ```
 
 ## Top-level fields
@@ -203,6 +203,16 @@ String values in step `inputs` may contain `{{expression}}` templates,
 including inside nested maps and lists (`body`, `headers`). A value that is a
 single template keeps its original type; mixed strings interpolate.
 
+A path addresses an object by key and a list by position, so
+`{{steps.read.protocol.messages.0.payload.paymentId}}` reads the first message a
+step observed. A quoted segment is always a key: `"0"` never indexes.
+
+An expression goes to [JMESPath](https://jmespath.org/) only when it begins with
+a function call, such as `{{length(steps.read.protocol.messages)}}`. JMESPath's
+grammar has no hyphen in an identifier, so a function over a hyphenated name
+needs quotes — `type(steps."create-payment".id)` — and the diagnostic says so
+when it is missing.
+
 The expression context contains:
 
 | Path | Content |
@@ -211,7 +221,7 @@ The expression context contains:
 | `steps.<name>.status` | HTTP status of the step bound with `outputAs: <name>`. |
 | `steps.<name>.body` | Parsed JSON response body (present only when the evidence policy captures bodies). |
 | `steps.<name>.headers` | Response headers, filtered by the evidence policy. |
-| `steps.<name>.protocol` | What the protocol contributed: for events, `published` (topic, partition, offset), `messages`, and `message` — the first observed message, bound because expressions address objects rather than list positions. |
+| `steps.<name>.protocol` | What the protocol contributed: for events, `published` (topic, partition, offset), `messages`, and `message` — the first observed message, kept as a convenience now that a path can index the list itself. |
 | `repeat.index`, `repeat.item` | Current iteration inside a [repeat step](#repeat-steps). |
 | `run.seed`, `run.target` | Run metadata. |
 
@@ -648,7 +658,7 @@ Every assertion has this common shape:
 | `params` | yes | Parameters documented for the selected assertion type. |
 | `targetStep` | no | Operation evidence to inspect; defaults to the last `execute` step. A grouping step holds no evidence of its own, so name one of its children. |
 | `dependsOn` | no | Additional dependencies that must pass first. |
-| `message` | no | Reserved; 0.7.2 reports the assertion provider's evaluated message. |
+| `message` | no | Reserved; 0.9.0 reports the assertion provider's evaluated message. |
 | `metadata` | no | Arbitrary assertion metadata. |
 
 An assertion that cannot be evaluated is treated as a failed node rather than
@@ -816,12 +826,23 @@ Available checks:
 |---|---|
 | `exists: true/false` | Checks whether the expression returns a non-null value. |
 | `equals: value` | Compares the selected JSON value with the YAML value. |
+| `matches: regex` | Requires the selected value to contain a match for the pattern. |
 | `count: n` | Requires the selected value to be an array of exactly `n` elements. |
 | `type: value` | Requires `object`, `array`, `string`, `number`, or `boolean`. |
 | `unique: true/false` | Checks whether all values in the selected array are unique. |
 
 Provide one check per assertion. Evaluation precedence is `exists`, `equals`,
-`count`, `type`, then `unique`.
+`matches`, `count`, `type`, then `unique`.
+
+**`equals` compares values, not JSON types.** Numbers compare as decimals, so
+5 and 5.0 are one number and `equals: "2500"` matches the amount 2500 — which
+matters because a template always resolves to text. `type` is what
+distinguishes 5 from `"5"`. This is the rule the tabular assertions apply too;
+ADR-019 records it.
+
+A pattern that is not a valid regular expression makes the assertion
+**indeterminate** rather than failed: an unusable pattern says nothing about
+the response.
 
 Examples:
 

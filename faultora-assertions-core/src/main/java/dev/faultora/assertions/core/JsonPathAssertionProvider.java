@@ -9,11 +9,24 @@ import dev.faultora.spi.context.AssertionContext;
 import dev.faultora.spi.context.EvidenceView;
 import dev.faultora.spi.result.AssertionResult;
 
+import java.math.BigDecimal;
 import java.util.*;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 /**
- * Asserts values in the JSON response body using JMESPath expressions.
- * Supports: equals, exists, count, type, length, matches (regex).
+ * Asserts values in the JSON response body.
+ * <p>
+ * <b>The {@code path} is a JMESPath expression</b>, not JSONPath, and has been
+ * since this was written. The type is named {@code jsonpath} and stays named
+ * that: renaming it means either two names frozen in the scenario contract at
+ * 1.0 or breaking every scenario that exists, and a wart with a signpost is
+ * cheaper than either. ADR-019 records the decision.
+ * <p>
+ * Supports exactly: {@code exists}, {@code equals}, {@code count},
+ * {@code type}, {@code unique}, and {@code matches}. The list used to name
+ * {@code length} as well, which was never implemented — JMESPath's own
+ * {@code length()} in the path is how a scenario asks for that.
  */
 public class JsonPathAssertionProvider implements AssertionProvider {
 
@@ -75,29 +88,42 @@ public class JsonPathAssertionProvider implements AssertionProvider {
 
         // Equals
         if (params.containsKey("equals")) {
-            Object expected = params.get("equals");
-            JsonNode expectedNode = MAPPER.valueToTree(expected);
+            JsonNode expectedNode = MAPPER.valueToTree(params.get("equals"));
 
-            // Handle template expressions: if expected is a string that looks like a number/bool, compare directly
-            if (expected instanceof String s && result.isTextual()) {
-                if (result.asText().equals(s)) {
-                    return AssertionResult.pass("Path '" + path + "' equals '" + s + "'");
-                } else {
-                    return AssertionResult.fail(
-                            "Path '" + path + "' expected '" + s + "' but got '" + result.asText() + "'",
-                            Map.of("path", path, "expected", s, "actual", result.asText())
-                    );
-                }
+            if (sameValue(result, expectedNode)) {
+                return AssertionResult.pass(
+                        "Path '" + path + "' equals " + display(expectedNode));
             }
+            return AssertionResult.fail(
+                    "Path '" + path + "' expected " + display(expectedNode)
+                            + " but got " + display(result),
+                    Map.of("path", path, "expected", sanitize(expectedNode),
+                            "actual", sanitize(result))
+            );
+        }
 
-            if (result.equals(expectedNode)) {
-                return AssertionResult.pass("Path '" + path + "' equals expected value");
-            } else {
-                return AssertionResult.fail(
-                        "Path '" + path + "' expected " + expectedNode + " but got " + result,
-                        Map.of("path", path, "expected", sanitize(expectedNode), "actual", sanitize(result))
-                );
+        // Regex
+        if (params.containsKey("matches")) {
+            String pattern = toString(params.get("matches"));
+            Pattern compiled;
+            try {
+                compiled = Pattern.compile(pattern);
+            } catch (PatternSyntaxException unusable) {
+                // A pattern that does not compile says nothing about the
+                // response, so it is indeterminate rather than a failure.
+                return AssertionResult.indeterminate(
+                        "'" + pattern + "' is not a regular expression: "
+                                + unusable.getDescription());
             }
+            String actual = textOf(result);
+            if (compiled.matcher(actual).find()) {
+                return AssertionResult.pass(
+                        "Path '" + path + "' matches /" + pattern + "/");
+            }
+            return AssertionResult.fail(
+                    "Path '" + path + "' is '" + actual + "', which does not match /"
+                            + pattern + "/",
+                    Map.of("path", path, "pattern", pattern, "actual", actual));
         }
 
         // Count (for arrays)
@@ -159,7 +185,58 @@ public class JsonPathAssertionProvider implements AssertionProvider {
             }
         }
 
-        return AssertionResult.indeterminate("No valid assertion parameters provided (exists, equals, count, type, unique)");
+        return AssertionResult.indeterminate(
+                "No valid assertion parameters provided "
+                        + "(exists, equals, matches, count, type, unique)");
+    }
+
+    /**
+     * Whether two values are the same value.
+     * <p>
+     * Numbers compare as decimals, so 5 and 5.0 are one number and a
+     * template-resolved {@code "2500"} is the amount the API returned rather
+     * than a different kind of thing. That is the rule the tabular assertions
+     * already apply, and an assertion language with two answers to "is this
+     * equal" has one answer too many.
+     * <p>
+     * A number and a string that spells it are also equal here, because a
+     * scenario writes {@code equals: "2500"} whenever the value came through a
+     * template — and {@code type} is the assertion that distinguishes 5 from
+     * "5" for anyone who needs the distinction.
+     */
+    private static boolean sameValue(JsonNode actual, JsonNode expected) {
+        BigDecimal actualNumber = numberOf(actual);
+        BigDecimal expectedNumber = numberOf(expected);
+        if (actualNumber != null && expectedNumber != null) {
+            return actualNumber.compareTo(expectedNumber) == 0;
+        }
+        if (actual.isTextual() || expected.isTextual()) {
+            return textOf(actual).equals(textOf(expected));
+        }
+        return actual.equals(expected);
+    }
+
+    /** A node as a decimal, or null when it does not spell a number. */
+    private static BigDecimal numberOf(JsonNode node) {
+        if (node.isNumber()) {
+            return node.decimalValue();
+        }
+        if (!node.isTextual()) {
+            return null;
+        }
+        try {
+            return new BigDecimal(node.asText().trim());
+        } catch (NumberFormatException notANumber) {
+            return null;
+        }
+    }
+
+    private static String textOf(JsonNode node) {
+        return node.isTextual() ? node.asText() : node.toString();
+    }
+
+    private static String display(JsonNode node) {
+        return node.isTextual() ? "'" + node.asText() + "'" : node.toString();
     }
 
     private String getJsonType(JsonNode node) {
