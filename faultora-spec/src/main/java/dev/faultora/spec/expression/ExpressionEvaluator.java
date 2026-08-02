@@ -1,6 +1,7 @@
 package dev.faultora.spec.expression;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.MissingNode;
 import io.burt.jmespath.JmesPath;
 import io.burt.jmespath.jackson.JacksonRuntime;
 
@@ -39,14 +40,20 @@ public final class ExpressionEvaluator {
      * Supports dotted path access (inputs.name, steps.create-payment.id)
      * and JMESPath function calls (type(inputs.name), length(inputs.name)).
      *
+     * <p>
+     * Never returns Java null. A path that matches nothing gives a
+     * {@link MissingNode} and a path whose value is null gives a null node,
+     * because a caller that has to tell an author's mistake from a document's
+     * null cannot do it against one answer used for both.
+     *
      * @param expression the expression string
      * @param context    the evaluation context
-     * @return the evaluated result as a JsonNode, or null if expression is null/blank/missing
+     * @return the evaluated node, missing when the expression matches nothing
      * @throws ExpressionEvaluationException if evaluation fails
      */
     public JsonNode evaluate(String expression, ExpressionContext context) {
         if (expression == null || expression.isBlank()) {
-            return null;
+            return MissingNode.getInstance();
         }
 
         String trimmed = expression.trim();
@@ -98,7 +105,8 @@ public final class ExpressionEvaluator {
         while (matcher.find()) {
             String expr = matcher.group(1).trim();
             JsonNode result = evaluate(expr, context);
-            String replacement = (result == null || result.isNull()) ? "" : result.asText();
+            String replacement = result == null || result.isNull() || result.isMissingNode()
+                    ? "" : result.asText();
             matcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
         }
         matcher.appendTail(sb);
@@ -170,44 +178,69 @@ public final class ExpressionEvaluator {
 
     /**
      * Resolve a dotted path against a JSON tree.
-     * Supports hyphenated identifiers and quoted segments.
+     * <p>
+     * Supports hyphenated identifiers, quoted segments, and indexing a list by
+     * position: {@code steps.read.messages.0.payload.paymentId} reads the first
+     * message a step observed.
+     * <p>
+     * An object is addressed by key and a list by position, including when the
+     * key looks like a number — a key is a name and an index is a place, and a
+     * document with a {@code "0"} field means the field. A quoted segment is
+     * always a key, so {@code "0"} never indexes.
      *
      * @param path the dotted path (e.g. "steps.create-payment.id")
      * @param tree the JSON tree to navigate
-     * @return the resolved JsonNode, or null if not found
+     * @return the resolved node, {@link MissingNode} when the path matches
+     *         nothing, and a null node when it matches a value that is null
      */
     JsonNode resolvePath(String path, JsonNode tree) {
         if (path == null || path.isBlank() || tree == null) {
-            return null;
+            return MissingNode.getInstance();
         }
 
         JsonNode current = tree;
         Matcher matcher = PATH_SEGMENT.matcher(path);
 
         while (matcher.find()) {
-            String segment;
-            if (matcher.group(1) != null) {
-                // Quoted segment
-                segment = matcher.group(1);
-            } else {
-                segment = matcher.group(2);
+            boolean quoted = matcher.group(1) != null;
+            String segment = quoted ? matcher.group(1) : matcher.group(2);
+            current = descend(current, segment, quoted);
+            if (current.isMissingNode()) {
+                return current;
             }
-
-            if (current == null || current.isNull() || current.isMissingNode()) {
-                return null;
-            }
-
-            if (current.isObject()) {
-                current = current.get(segment);
-            } else {
-                return null;
-            }
-        }
-
-        if (current == null || current.isMissingNode() || current.isNull()) {
-            return null;
         }
         return current;
+    }
+
+    /** One step along a path: a key of an object, or a place in a list. */
+    private static JsonNode descend(JsonNode current, String segment, boolean quoted) {
+        if (current == null || current.isMissingNode() || current.isNull()) {
+            // Nothing to descend into. A path through a null is not a null
+            // value at the end of a path — it is a path that matches nothing.
+            return MissingNode.getInstance();
+        }
+        if (current.isObject()) {
+            JsonNode next = current.get(segment);
+            return next == null ? MissingNode.getInstance() : next;
+        }
+        if (current.isArray() && !quoted && isIndex(segment)) {
+            JsonNode next = current.get(Integer.parseInt(segment));
+            return next == null ? MissingNode.getInstance() : next;
+        }
+        return MissingNode.getInstance();
+    }
+
+    /** Whether a segment names a position rather than a key. */
+    private static boolean isIndex(String segment) {
+        if (segment.isEmpty() || segment.length() > 9) {
+            return false;
+        }
+        for (int index = 0; index < segment.length(); index++) {
+            if (!Character.isDigit(segment.charAt(index))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -217,10 +250,10 @@ public final class ExpressionEvaluator {
         try {
             io.burt.jmespath.Expression<JsonNode> compiled = jmespath.compile(expression);
             JsonNode result = compiled.search(context.tree());
-            if (result == null || result.isMissingNode() || result.isNull()) {
-                return null;
-            }
-            return result;
+            // JMESPath answers a query that matched nothing with null, so a
+            // null from it is "no match" rather than a document's own null.
+            return result == null || result.isNull()
+                    ? MissingNode.getInstance() : result;
         } catch (Exception e) {
             throw new ExpressionEvaluationException(
                     "Failed to evaluate JMESPath expression: " + expression + ". Cause: " + e.getMessage(),
@@ -234,7 +267,7 @@ public final class ExpressionEvaluator {
      * Convert a JsonNode to a plain Java value.
      */
     private Object jsonNodeToValue(JsonNode node) {
-        if (node == null || node.isNull()) return null;
+        if (node == null || node.isNull() || node.isMissingNode()) return null;
         if (node.isBoolean()) return node.asBoolean();
         if (node.isInt()) return node.asInt();
         if (node.isLong()) return node.asLong();

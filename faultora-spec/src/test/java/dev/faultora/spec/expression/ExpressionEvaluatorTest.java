@@ -81,22 +81,70 @@ class ExpressionEvaluatorTest {
     }
 
     @Test
-    void evaluateMissingPathReturnsNull() {
-        JsonNode result = evaluator.evaluate("inputs.nonexistent", context);
-        assertThat(result).isNull();
+    void aMissingPathIsMissingRatherThanNull() {
+        // The distinction every rule about unresolvable templates rests on: a
+        // path that matches nothing is an author's mistake, and a path holding
+        // null is a document saying null. One answer for both cannot tell them
+        // apart, which is what this used to return.
+        assertThat(evaluator.evaluate("inputs.nonexistent", context).isMissingNode()).isTrue();
+        assertThat(evaluator.evaluate("inputs.nonexistent.deep", context).isMissingNode())
+                .isTrue();
     }
 
     @Test
-    void evaluateDeepMissingPathReturnsNull() {
-        JsonNode result = evaluator.evaluate("inputs.nonexistent.deep", context);
-        assertThat(result).isNull();
+    void aValueThatIsNullIsANullNode() {
+        ObjectNode tree = new ObjectMapper().createObjectNode();
+        tree.putObject("body").putNull("reference");
+
+        JsonNode resolved = evaluator.resolvePath("body.reference", tree);
+
+        assertThat(resolved.isNull()).isTrue();
+        assertThat(resolved.isMissingNode()).isFalse();
     }
 
     @Test
-    void evaluateNullExpressionReturnsNull() {
-        assertThat(evaluator.evaluate(null, context)).isNull();
-        assertThat(evaluator.evaluate("", context)).isNull();
-        assertThat(evaluator.evaluate("  ", context)).isNull();
+    void aPathThroughANullMatchesNothing() {
+        ObjectNode tree = new ObjectMapper().createObjectNode();
+        tree.putObject("body").putNull("customer");
+
+        assertThat(evaluator.resolvePath("body.customer.name", tree).isMissingNode()).isTrue();
+    }
+
+    @Test
+    void anAbsentExpressionIsMissing() {
+        assertThat(evaluator.evaluate(null, context).isMissingNode()).isTrue();
+        assertThat(evaluator.evaluate("", context).isMissingNode()).isTrue();
+        assertThat(evaluator.evaluate("  ", context).isMissingNode()).isTrue();
+    }
+
+    @Test
+    void aPathIndexesAList() {
+        // Why the first observed message had to be bound beside the list: a
+        // path could not reach into one.
+        ObjectMapper mapper = new ObjectMapper();
+        ObjectNode tree = mapper.createObjectNode();
+        var messages = tree.putObject("steps").putObject("read").putArray("messages");
+        messages.addObject().putObject("payload").put("paymentId", "pay-1");
+        messages.addObject().putObject("payload").put("paymentId", "pay-2");
+
+        assertThat(evaluator.resolvePath("steps.read.messages.1.payload.paymentId", tree)
+                .asText()).isEqualTo("pay-2");
+        assertThat(evaluator.resolvePath("steps.read.messages.9", tree).isMissingNode())
+                .isTrue();
+    }
+
+    @Test
+    void aQuotedSegmentIsAlwaysAKey() {
+        // An object's key is a name and a list's index is a place. A document
+        // with a "0" field means the field, and a quoted segment never indexes.
+        ObjectMapper mapper = new ObjectMapper();
+        ObjectNode tree = mapper.createObjectNode();
+        tree.putObject("byPosition").put("0", "a key that looks like an index");
+        tree.putArray("byIndex").add("first");
+
+        assertThat(evaluator.resolvePath("byPosition.0", tree).asText())
+                .isEqualTo("a key that looks like an index");
+        assertThat(evaluator.resolvePath("byIndex.\"0\"", tree).isMissingNode()).isTrue();
     }
 
     @Test
