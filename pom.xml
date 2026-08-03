@@ -81,6 +81,7 @@
         <module>faultora-assertions-core</module>
         <module>faultora-reporting</module>
         <module>faultora-runner-protocol</module>
+        <module>faultora-runner</module>
         <module>faultora-cli</module>
         <module>faultora-testkit</module>
         <module>examples/payment-service</module>
@@ -170,6 +171,11 @@
             <dependency>
                 <groupId>dev.faultora</groupId>
                 <artifactId>faultora-runner-protocol</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.faultora</groupId>
+                <artifactId>faultora-runner</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

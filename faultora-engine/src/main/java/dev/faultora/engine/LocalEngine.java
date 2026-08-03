@@ -150,8 +150,22 @@ public class LocalEngine {
                 tally.record(nodeResults.get(node.nodeId()));
             }
 
-            if (!cancellation.get()) {
-                runCleanup(cleanupNodes, nodeContext, currentContext, nodeResults, tally);
+            // Cleanup runs whatever stopped the run, which is what the
+            // obligations were collected for. It runs against a cancellation
+            // of its own, because the run's flag is set and every node checks
+            // it — discharging an obligation through a context that says
+            // "stop" would report each cleanup step as cancelled and delete
+            // nothing.
+            //
+            // A cancelled run doing a little more work is not the run
+            // continuing. A lease that expired stops the scenario; what the
+            // scenario created is still the scenario's to remove, and leaving
+            // rows and records behind on a network nobody can reach into is
+            // the failure mode a private-network runner can least afford.
+            // Faults are rolled back either way, by the session's close below.
+            if (!cleanupNodes.isEmpty()) {
+                runCleanup(cleanupNodes, nodeContext.withCancellation(new AtomicBoolean(false)),
+                        currentContext, nodeResults, tally);
             }
         } finally {
             faultSession.close();

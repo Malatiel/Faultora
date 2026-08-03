@@ -43,6 +43,19 @@ public record NodeContext(
                 plan, journal, connectorContext, otherEvidence, faults, schemas, cancellation);
     }
 
+    /**
+     * The same context under a different cancellation.
+     * <p>
+     * Used for cleanup, which has to run after the thing that stopped the run —
+     * a spent deadline, an expired lease, an operator pressing Ctrl-C. Every
+     * node checks the flag it is given, so an obligation discharged through the
+     * run's own flag would report itself cancelled and delete nothing.
+     */
+    public NodeContext withCancellation(AtomicBoolean otherCancellation) {
+        return new NodeContext(
+                plan, journal, connectorContext, evidence, faults, schemas, otherCancellation);
+    }
+
     public boolean cancelled() {
         return cancellation.get();
     }
