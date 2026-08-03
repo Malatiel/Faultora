@@ -3,6 +3,7 @@ package dev.faultora.runner;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.faultora.model.catalog.SafetyClassification;
 import dev.faultora.model.security.ContentDigest;
+import dev.faultora.model.identifier.TargetId;
 import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.runner.protocol.Dispatch;
 import dev.faultora.runner.protocol.DispatchedDocument;
@@ -36,16 +37,25 @@ class DispatchVerifierTest {
             """;
 
     private static final LocalLimits LIMITS = new LocalLimits(
-            Set.of("http-latency", "http-error"), 4, 60_000, 100);
+            Set.of("payments", "ledger"), Set.of(SafetyClassification.READ_ONLY,
+            SafetyClassification.MUTATING), Set.of("staging"),
+            Set.of("http-latency", "http-error"), 4, 60_000, 100, 1_048_576);
 
     private final DispatchVerifier verifier =
             new DispatchVerifier(LIMITS, policy -> "trusted".equals(policy.keyId()));
 
     private static TargetPolicy policyAsking(
             int concurrency, long durationMs, Set<String> faults) {
+        return policyAsking(Set.of(new TargetId("payments")), concurrency, durationMs,
+                faults, 1024, Set.of("staging"));
+    }
+
+    private static TargetPolicy policyAsking(
+            Set<TargetId> targets, int concurrency, long durationMs,
+            Set<String> faults, long payloadBytes, Set<String> environments) {
         return new TargetPolicy(
-                Set.of(), Set.of(SafetyClassification.READ_ONLY),
-                50, concurrency, durationMs, 1024, faults, Set.of());
+                targets, Set.of(SafetyClassification.READ_ONLY),
+                50, concurrency, durationMs, payloadBytes, faults, environments);
     }
 
     private static SignedPolicy signed(TargetPolicy policy, String keyId) {
@@ -71,10 +81,7 @@ class DispatchVerifierTest {
     }
 
     private static String digestOf(List<DispatchedDocument> documents) {
-        StringBuilder digests = new StringBuilder();
-        documents.forEach(document ->
-                digests.append(ContentDigest.sha256Uri(document.content())).append('\n'));
-        return ContentDigest.sha256Uri(digests.toString());
+        return Dispatch.digestOfDocuments(documents);
     }
 
     private static Dispatch wellFormed(String runId, long issuedAt) {
@@ -148,6 +155,102 @@ class DispatchVerifierTest {
                 signed(policyAsking(2, 30_000, Set.of("network-reset")), "trusted"),
                 SCENARIO, null, null), now).refusal().describe())
                 .contains("network-reset");
+    }
+
+    @Test
+    void aPolicyNamingAHostThisDeploymentDoesNotAllowIsRefused() {
+        // "Which hosts" is the first thing ADR-021 says a runner's own
+        // configuration states, and it was the dimension the comparison did not
+        // have: a signed policy could point the run at anything.
+        long now = System.currentTimeMillis();
+
+        DispatchVerifier.Verdict elsewhere = verifier.verify(dispatch("run-12", now,
+                signed(policyAsking(Set.of(new TargetId("someone-elses-database")),
+                        2, 30_000, Set.of(), 1024, Set.of("staging")), "trusted"),
+                SCENARIO, null, null), now);
+
+        assertThat(elsewhere.refusal().reason())
+                .isEqualTo(Refusal.Reason.POLICY_EXCEEDS_LOCAL_LIMITS);
+        assertThat(elsewhere.refusal().describe()).contains("someone-elses-database");
+    }
+
+    @Test
+    void aPolicyRestrictingNothingIsAskingForEverything() {
+        // An empty allowlist means "any" in this policy, so an unrestricted
+        // dispatch against a restricted runner is the widest possible ask, not
+        // the narrowest. Comparing it like the other fields is how a narrowing
+        // widens something.
+        long now = System.currentTimeMillis();
+
+        DispatchVerifier.Verdict anyTarget = verifier.verify(dispatch("run-13", now,
+                signed(policyAsking(Set.of(), 2, 30_000, Set.of(), 1024, Set.of("staging")),
+                        "trusted"),
+                SCENARIO, null, null), now);
+
+        assertThat(anyTarget.refusal().reason())
+                .isEqualTo(Refusal.Reason.POLICY_EXCEEDS_LOCAL_LIMITS);
+        assertThat(anyTarget.refusal().describe()).contains("any targets at all");
+    }
+
+    @Test
+    void aPolicyWantingBiggerPayloadsOrAnotherEnvironmentIsRefused() {
+        long now = System.currentTimeMillis();
+
+        assertThat(verifier.verify(dispatch("run-14", now,
+                signed(policyAsking(Set.of(new TargetId("payments")), 2, 30_000,
+                        Set.of(), 64L * 1024 * 1024, Set.of("staging")), "trusted"),
+                SCENARIO, null, null), now).refusal().describe())
+                .contains("payloads of");
+
+        assertThat(verifier.verify(dispatch("run-15", now,
+                signed(policyAsking(Set.of(new TargetId("payments")), 2, 30_000,
+                        Set.of(), 1024, Set.of("production")), "trusted"),
+                SCENARIO, null, null), now).refusal().describe())
+                .contains("production");
+    }
+
+    @Test
+    void aRefusedDispatchDoesNotBurnItsRunId() {
+        // A dispatch turned away for a signature the operator then fixes has to
+        // be able to come back. Claiming the run id on arrival made the second,
+        // correct attempt look like a replay — true of nothing and useful to
+        // nobody.
+        long now = System.currentTimeMillis();
+        Dispatch wrongKey = dispatch("run-16", now,
+                signed(policyAsking(2, 30_000, Set.of()), "some-other-key"),
+                SCENARIO, null, null);
+
+        assertThat(verifier.verify(wrongKey, now).refusal().reason())
+                .isEqualTo(Refusal.Reason.UNVERIFIED_POLICY);
+
+        DispatchVerifier.Verdict afterTheKeyWasFixed = verifier.verify(
+                dispatch("run-16", now, signed(policyAsking(2, 30_000, Set.of()), "trusted"),
+                        SCENARIO, null, null), now);
+
+        assertThat(afterTheKeyWasFixed.isAccepted()).isTrue();
+    }
+
+    @Test
+    void oneDocumentHashesTheSameWayAsSeveral() {
+        // The failure ADR-020 predicted: a dispatcher passing a single
+        // document's own digest through — the rule the catalog loader uses for
+        // a catalog version — while the runner takes the list form. It would
+        // refuse correct dispatches, and only single-document ones.
+        long now = System.currentTimeMillis();
+        List<DispatchedDocument> one = List.of(
+                new DispatchedDocument("openapi", "openapi: 3.0.3"));
+
+        Dispatch single = new Dispatch(
+                "run-17", now, "nonce", SCENARIO, one, Map.of(), Map.of(), 42L,
+                signed(policyAsking(2, 30_000, Set.of()), "trusted"),
+                new Lease(now, 60_000, 10_000),
+                ContentDigest.sha256Uri(SCENARIO), Dispatch.digestOfDocuments(one));
+
+        assertThat(verifier.verify(single, now).isAccepted()).isTrue();
+        assertThat(Dispatch.digestOfDocuments(one))
+                .as("not the document's own digest, which is the trap")
+                .isNotEqualTo(ContentDigest.sha256Uri(one.get(0).content()));
+        assertThat(Dispatch.digestOfDocuments(List.of())).isNotBlank();
     }
 
     @Test

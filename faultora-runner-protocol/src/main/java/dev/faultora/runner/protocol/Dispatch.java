@@ -1,5 +1,7 @@
 package dev.faultora.runner.protocol;
 
+import dev.faultora.model.security.ContentDigest;
+
 import java.util.List;
 import java.util.Map;
 
@@ -60,6 +62,33 @@ public record Dispatch(
         documents = documents == null ? List.of() : List.copyOf(documents);
         inputs = inputs == null ? Map.of() : Map.copyOf(inputs);
         targetRedirects = targetRedirects == null ? Map.of() : Map.copyOf(targetRedirects);
+    }
+
+    /**
+     * The digest a dispatch's {@link #catalogDigest} is, defined once.
+     * <p>
+     * Over each document's digest, in the order they were named, <b>always in
+     * that list form — including for one document and for none</b>. The
+     * temptation is to pass a single document's digest through unchanged, which
+     * is what the catalog loader does for a catalog <em>version</em>; a
+     * dispatcher that borrowed that rule while the runner used this one would
+     * refuse correct single-document dispatches, and only those. ADR-020 named
+     * that failure shape before it existed, so it is closed by there being one
+     * function rather than two rules that agree today.
+     * <p>
+     * This is deliberately not the catalog version the loader computes. That
+     * one is taken over imported catalogs' versions; this one over the bytes
+     * that travelled. They answer different questions and are allowed to
+     * differ — what is not allowed is two answers to <em>this</em> question.
+     */
+    public static String digestOfDocuments(List<DispatchedDocument> documents) {
+        StringBuilder digests = new StringBuilder();
+        if (documents != null) {
+            for (DispatchedDocument document : documents) {
+                digests.append(ContentDigest.sha256Uri(document.content())).append('\n');
+            }
+        }
+        return ContentDigest.sha256Uri(digests.toString());
     }
 
     /**

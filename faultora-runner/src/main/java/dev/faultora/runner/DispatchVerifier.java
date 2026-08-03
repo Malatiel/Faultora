@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.faultora.model.security.ContentDigest;
 import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.runner.protocol.Dispatch;
-import dev.faultora.runner.protocol.DispatchedDocument;
 import dev.faultora.runner.protocol.Refusal;
 import dev.faultora.runner.protocol.SignedPolicy;
 
@@ -74,7 +73,7 @@ public final class DispatchVerifier {
                             + " here; a dispatch is acted on within "
                             + Dispatch.CLOCK_SKEW_ALLOWANCE_MS + "ms of being issued"));
         }
-        if (!accepted.add(dispatch.runId())) {
+        if (accepted.contains(dispatch.runId())) {
             return Verdict.refused(Refusal.of(Refusal.Reason.REPLAYED_DISPATCH,
                     "run '" + dispatch.runId() + "' has been dispatched here before"));
         }
@@ -109,28 +108,25 @@ public final class DispatchVerifier {
                     "the scenario hashes to " + scenarioDigest + " and the dispatch says "
                             + dispatch.scenarioDigest()));
         }
-        String catalogDigest = digestOfDocuments(dispatch);
+        String catalogDigest = Dispatch.digestOfDocuments(dispatch.documents());
         if (!catalogDigest.equals(dispatch.catalogDigest())) {
             return Verdict.refused(Refusal.of(Refusal.Reason.DIGEST_MISMATCH,
                     "the documents hash to " + catalogDigest + " and the dispatch says "
                             + dispatch.catalogDigest()));
         }
 
-        return Verdict.accepted(limits.narrow(dispatched));
-    }
-
-    /**
-     * The documents' digest, taken the way the loader takes it.
-     * <p>
-     * Over each document's digest, in the order they were named. The order is
-     * part of the answer, which is why a dispatch carries them as a list.
-     */
-    private static String digestOfDocuments(Dispatch dispatch) {
-        StringBuilder digests = new StringBuilder();
-        for (DispatchedDocument document : dispatch.documents()) {
-            digests.append(ContentDigest.sha256Uri(document.content())).append('\n');
+        // Claimed last, and only by a dispatch that will actually run. Marking
+        // it on arrival made every refusal burn the run id: a dispatch refused
+        // for a signature the operator then fixed would come back and be turned
+        // away as a replay, which is neither true nor useful. The add is still
+        // what decides between two identical dispatches racing each other —
+        // whoever claims it first is the one that runs.
+        if (!accepted.add(dispatch.runId())) {
+            return Verdict.refused(Refusal.of(Refusal.Reason.REPLAYED_DISPATCH,
+                    "run '" + dispatch.runId() + "' was claimed by another dispatch "
+                            + "of the same run"));
         }
-        return ContentDigest.sha256Uri(digests.toString());
+        return Verdict.accepted(limits.narrow(dispatched));
     }
 
     /**
