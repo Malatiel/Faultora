@@ -35,6 +35,9 @@ import java.util.Map;
  * @param inputs          runtime input values, by declared name
  * @param targetRedirects target id to base URL, with the empty key holding the
  *                        protocol-scoped global redirect
+ * @param credentials     which handles the connectors resolve their
+ *                        credentials from, and the user names that are not
+ *                        secret — <b>names only, never values</b>
  * @param seed            the run seed, which every derived value comes from
  * @param policy          the effective policy, signed
  * @param lease           how long this run may take before it must stop
@@ -49,6 +52,7 @@ public record Dispatch(
         List<DispatchedDocument> documents,
         Map<String, String> inputs,
         Map<String, String> targetRedirects,
+        Credentials credentials,
         long seed,
         SignedPolicy policy,
         Lease lease,
@@ -62,6 +66,34 @@ public record Dispatch(
         documents = documents == null ? List.of() : List.copyOf(documents);
         inputs = inputs == null ? Map.of() : Map.copyOf(inputs);
         targetRedirects = targetRedirects == null ? Map.of() : Map.copyOf(targetRedirects);
+        credentials = credentials == null ? Credentials.none() : credentials;
+    }
+
+    /**
+     * How a run authenticates, said without saying anything secret.
+     * <p>
+     * ADR-021 promised this and the dispatch did not carry it, so a runner
+     * connected to an API without its bearer token and to a database with no
+     * user at all — the same scenario passing locally and failing remotely for
+     * a reason that looked like the target's fault.
+     * <p>
+     * What travels is <b>the name of a handle</b>, resolved on the runner from
+     * its own environment, and a database user name, which is not a secret and
+     * is useless without the password that stays there. Nothing that has been a
+     * credential crosses this wire, which is why these are three named fields
+     * rather than a map somebody could put a password in.
+     *
+     * @param authSecretId     handle the bearer token is resolved from
+     * @param databaseUser     user database observations connect as
+     * @param databaseSecretId handle that user's password is resolved from
+     */
+    public record Credentials(
+            String authSecretId, String databaseUser, String databaseSecretId) {
+
+        /** A run that authenticates to nothing. */
+        public static Credentials none() {
+            return new Credentials(null, null, null);
+        }
     }
 
     /**

@@ -5,6 +5,7 @@ import dev.faultora.faults.local.LocalFaultProvider;
 import dev.faultora.faults.toxiproxy.ToxiproxyFaultProvider;
 import dev.faultora.model.catalog.SafetyClassification;
 import dev.faultora.model.security.EvidencePolicy;
+import dev.faultora.runtime.RunEvidence;
 import dev.faultora.model.security.ExtensionPolicy;
 import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.spi.contract.FaultProvider;
@@ -97,10 +98,9 @@ final class RunPolicies {
      * credentials never are.
      */
     static EvidencePolicy evidencePolicy() {
-        return new EvidencePolicy(
-                true, true,
-                Set.of("authorization", "cookie", "set-cookie", "proxy-authorization"),
-                10 * 1024 * 1024, 1000, List.of(), Set.of(), "session");
+        // Shared with the runner. Two copies of this is a scenario that passes
+        // here and comes back indeterminate from a private network.
+        return RunEvidence.defaultPolicy();
     }
 
     /**

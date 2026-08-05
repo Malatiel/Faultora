@@ -74,7 +74,7 @@ class DispatchVerifierTest {
                 new DispatchedDocument("asyncapi", "asyncapi: 3.0.0"));
         return new Dispatch(
                 runId, issuedAt, "nonce", scenario, documents,
-                Map.of("currency", "EUR"), Map.of(), 42L, policy,
+                Map.of("currency", "EUR"), Map.of(), Dispatch.Credentials.none(), 42L, policy,
                 new Lease(issuedAt, 60_000, 10_000),
                 scenarioDigest != null ? scenarioDigest : ContentDigest.sha256Uri(scenario),
                 catalogDigest != null ? catalogDigest : digestOf(documents));
@@ -241,7 +241,8 @@ class DispatchVerifierTest {
                 new DispatchedDocument("openapi", "openapi: 3.0.3"));
 
         Dispatch single = new Dispatch(
-                "run-17", now, "nonce", SCENARIO, one, Map.of(), Map.of(), 42L,
+                "run-17", now, "nonce", SCENARIO, one, Map.of(), Map.of(),
+                Dispatch.Credentials.none(), 42L,
                 signed(policyAsking(2, 30_000, Set.of()), "trusted"),
                 new Lease(now, 60_000, 10_000),
                 ContentDigest.sha256Uri(SCENARIO), Dispatch.digestOfDocuments(one));
@@ -292,7 +293,8 @@ class DispatchVerifierTest {
                 new DispatchedDocument("asyncapi", "asyncapi: 3.0.0"),
                 new DispatchedDocument("openapi", "openapi: 3.0.3"));
         Dispatch reordered = new Dispatch(
-                "run-10", now, "nonce", SCENARIO, reversed, Map.of(), Map.of(), 42L,
+                "run-10", now, "nonce", SCENARIO, reversed, Map.of(), Map.of(),
+                Dispatch.Credentials.none(), 42L,
                 signed(policyAsking(2, 30_000, Set.of()), "trusted"),
                 new Lease(now, 60_000, 10_000),
                 ContentDigest.sha256Uri(SCENARIO),
@@ -308,7 +310,8 @@ class DispatchVerifierTest {
     void aDispatchCarryingNoPolicyIsRefusedRatherThanRunUnprotected() {
         long now = System.currentTimeMillis();
         Dispatch unsigned = new Dispatch(
-                "run-11", now, "nonce", SCENARIO, List.of(), Map.of(), Map.of(), 42L,
+                "run-11", now, "nonce", SCENARIO, List.of(), Map.of(), Map.of(),
+                Dispatch.Credentials.none(), 42L,
                 null, new Lease(now, 60_000, 10_000),
                 ContentDigest.sha256Uri(SCENARIO), digestOf(List.of()));
 

@@ -31,6 +31,14 @@ public record Refusal(Reason reason, String detail) {
         DIGEST_MISMATCH,
         /** The runner has no extension the scenario needs. */
         MISSING_CAPABILITY,
+        /**
+         * The scenario arrived intact and cannot become a run here — it does
+         * not parse, or it does not compile. Distinct from a digest mismatch,
+         * which says the bytes are not the ones that were sent: reporting a
+         * parse error as a hash failure sends the reader to look for tampering
+         * that did not happen.
+         */
+        SCENARIO_INVALID,
         /** The runner is already executing a run and takes one at a time. */
         ALREADY_RUNNING,
         /** The lease was already expired when the dispatch arrived. */

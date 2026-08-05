@@ -124,6 +124,19 @@ shard-level leases.
 - **A lease renewed by the runner rather than granted.** Self-renewal makes the
   lease a comment. The deadline has to come from the side that can revoke it.
 
+## What this does not yet carry
+
+- **An evidence policy.** The signed policy is a `TargetPolicy`, which has no
+  evidence dimension, so a dispatch cannot say how much of what a run sees may
+  be kept. The runner uses the same default the CLI does, in one place both
+  read, because the alternative was found the hard way: it started on the
+  strictest possible policy, and every `row-balance` and every `jsonpath` over
+  a response body would have come back indeterminate from a runner while
+  passing on the machine the scenario was written on. **How much evidence a run
+  may hold is a limit an operator should be able to state**, so this has to
+  reach the protocol before 1.0 freezes it — as part of the signed policy,
+  where a runner can narrow it like everything else.
+
 ## Consequences
 
 - The runner needs the importers and the compiler, so it is not a thin agent.

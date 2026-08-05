@@ -1,11 +1,12 @@
 package dev.faultora.runner;
 
+import dev.faultora.connector.jdbc.JdbcConnector;
+import dev.faultora.engine.exec.TargetResolver;
 import dev.faultora.engine.journal.RunJournal;
 import dev.faultora.engine.plan.PlanCompilationResult;
 import dev.faultora.engine.plan.PlanCompiler;
 import dev.faultora.engine.run.RunResult;
 import dev.faultora.model.identifier.RunId;
-import dev.faultora.model.security.EvidencePolicy;
 import dev.faultora.model.security.ExtensionPolicy;
 import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.runner.protocol.Dispatch;
@@ -13,6 +14,7 @@ import dev.faultora.runner.protocol.DispatchedDocument;
 import dev.faultora.runner.protocol.Refusal;
 import dev.faultora.runtime.CatalogAssembly;
 import dev.faultora.runtime.RunEnvironment;
+import dev.faultora.runtime.RunEvidence;
 import dev.faultora.spec.expression.ExpressionContext;
 import dev.faultora.spec.model.ScenarioDocument;
 import dev.faultora.spec.parser.ParseResult;
@@ -90,8 +92,8 @@ public final class DispatchedRun {
 
         ParseResult<ScenarioDocument> parsed = new ScenarioParser().parse(dispatch.scenario());
         if (!parsed.isSuccess() || parsed.document() == null) {
-            return Outcome.refused(Refusal.of(Refusal.Reason.DIGEST_MISMATCH,
-                    "the scenario hashed correctly and did not parse: "
+            return Outcome.refused(Refusal.of(Refusal.Reason.SCENARIO_INVALID,
+                    "the scenario arrived intact and does not parse: "
                             + firstProblem(parsed)));
         }
         ScenarioDocument scenario = parsed.document();
@@ -102,10 +104,27 @@ public final class DispatchedRun {
         } catch (CatalogAssembly.AssemblyException cannotAssemble) {
             return Outcome.refused(Refusal.of(Refusal.Reason.MISSING_CAPABILITY,
                     cannotAssemble.getMessage()));
-        } catch (Exception failed) {
+        } catch (StartupFailure notStarted) {
             return Outcome.refused(Refusal.of(Refusal.Reason.MISSING_CAPABILITY,
-                    "run '" + dispatch.runId() + "' could not be executed here: "
-                            + failed.getMessage()));
+                    "run '" + dispatch.runId() + "' could not be started here: "
+                            + notStarted.getMessage()));
+        } catch (Exception broke) {
+            // The run had begun, so there is a journal, and whoever is waiting
+            // for this run needs to be told where it is. Reporting this as a
+            // refusal would say nothing happened while a partial journal sat on
+            // disk — the events a run produced before it broke are the most
+            // useful thing it produced.
+            return Outcome.broke(
+                    workingDirectory.resolve(dispatch.runId() + ".ndjson"),
+                    "run '" + dispatch.runId() + "' stopped part-way: "
+                            + broke.getMessage());
+        }
+    }
+
+    /** Thrown when a run could not be started, as opposed to breaking once it had. */
+    private static final class StartupFailure extends RuntimeException {
+        private StartupFailure(String message, Throwable cause) {
+            super(message, cause);
         }
     }
 
@@ -136,12 +155,19 @@ public final class DispatchedRun {
             compilation.diagnostics().forEach(
                     diagnostic -> why.append("\n  ").append(diagnostic.message()));
             return Outcome.refused(
-                    Refusal.of(Refusal.Reason.MISSING_CAPABILITY, why.toString()));
+                    Refusal.of(Refusal.Reason.SCENARIO_INVALID, why.toString()));
         }
 
-        Files.createDirectories(workingDirectory);
-        Path journalPath = workingDirectory.resolve(dispatch.runId() + ".ndjson");
-        Files.deleteIfExists(journalPath);
+        Path journalPath;
+        try {
+            Files.createDirectories(workingDirectory);
+            journalPath = workingDirectory.resolve(dispatch.runId() + ".ndjson");
+            Files.deleteIfExists(journalPath);
+        } catch (Exception noWhereToWrite) {
+            throw new StartupFailure(
+                    "the working directory is not writable: " + workingDirectory,
+                    noWhereToWrite);
+        }
 
         AtomicBoolean cancellation = new AtomicBoolean(false);
         try (LeaseWatch lease = new LeaseWatch(dispatch.lease(), receivedAt, cancellation);
@@ -181,16 +207,29 @@ public final class DispatchedRun {
      */
     private ConnectorContext connectorContext(Dispatch dispatch, TargetPolicy policy) {
         Map<String, Object> config = new LinkedHashMap<>();
-        dispatch.targetRedirects().forEach((targetId, url) -> {
-            if (targetId.isEmpty()) {
-                config.put("baseUrl", url);
-            } else {
-                config.put("baseUrl." + targetId, url);
-            }
-        });
+        dispatch.targetRedirects().forEach((targetId, url) -> config.put(
+                targetId.isEmpty()
+                        ? TargetResolver.BASE_URL : TargetResolver.BASE_URL_PREFIX + targetId,
+                url));
         config.put("maxResponseBytes", policy.maxPayloadBytes());
+
+        Dispatch.Credentials credentials = dispatch.credentials();
+        if (credentials.authSecretId() != null) {
+            config.put("authSecretId", credentials.authSecretId());
+        }
+        if (credentials.databaseUser() != null) {
+            config.put(JdbcConnector.USER, credentials.databaseUser());
+        }
+        if (credentials.databaseSecretId() != null) {
+            config.put(JdbcConnector.SECRET_ID, credentials.databaseSecretId());
+        }
+
+        // The same evidence a local run keeps. It was MINIMAL here, which
+        // captures no bodies and no rows — so a row-balance assertion that
+        // passes on the machine the scenario was written on came back
+        // indeterminate from a runner, for no reason the author could see.
         return new ConnectorContext(
-                EvidencePolicy.MINIMAL, secrets::apply, 5000, 30000, 60000, config);
+                RunEvidence.defaultPolicy(), secrets::apply, 5000, 30000, 60000, config);
     }
 
     private static String firstProblem(ParseResult<ScenarioDocument> parsed) {
@@ -207,18 +246,31 @@ public final class DispatchedRun {
      * @param refusal      why it did not run, null when it did
      */
     public record Outcome(
-            RunResult result, Path journalPath, boolean leaseExpired, Refusal refusal) {
+            RunResult result, Path journalPath, boolean leaseExpired,
+            Refusal refusal, String failure) {
 
         static Outcome ran(RunResult result, Path journalPath, boolean leaseExpired) {
-            return new Outcome(result, journalPath, leaseExpired, null);
+            return new Outcome(result, journalPath, leaseExpired, null, null);
         }
 
+        /** Never started: no journal exists, and the reason is a rule. */
         static Outcome refused(Refusal refusal) {
-            return new Outcome(null, null, false, refusal);
+            return new Outcome(null, null, false, refusal, null);
         }
 
+        /** Started and stopped part-way: the journal holds what it managed. */
+        static Outcome broke(Path journalPath, String failure) {
+            return new Outcome(null, journalPath, false, null, failure);
+        }
+
+        /** Whether the engine was reached at all. */
         public boolean didRun() {
             return refusal == null;
+        }
+
+        /** Whether a result came back, as opposed to the run breaking part-way. */
+        public boolean completed() {
+            return result != null;
         }
     }
 }

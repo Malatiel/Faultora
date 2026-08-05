@@ -10,11 +10,13 @@ import dev.faultora.runner.protocol.Dispatch;
 import dev.faultora.runner.protocol.Lease;
 import dev.faultora.runner.protocol.Refusal;
 import dev.faultora.runner.protocol.SignedPolicy;
+import dev.faultora.runtime.RunEvidence;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -65,7 +67,8 @@ class DispatchedRunTest {
     private static Dispatch dispatchOf(String runId, String scenario, Lease lease) {
         return new Dispatch(
                 runId, System.currentTimeMillis(), "nonce", scenario, List.of(),
-                Map.of("pause", "20ms"), Map.of("", "http://localhost:1"), 4242L,
+                Map.of("pause", "20ms"), Map.of("", "http://localhost:1"),
+                new Dispatch.Credentials(null, "faultora_readonly", "ledger-password"), 4242L,
                 signedPolicy(), lease,
                 ContentDigest.sha256Uri(scenario), Dispatch.digestOfDocuments(List.of()));
     }
@@ -149,12 +152,70 @@ class DispatchedRunTest {
     }
 
     @Test
+    void aDispatchedRunKeepsTheEvidenceALocalOneKeeps() {
+        // The runner used EvidencePolicy.MINIMAL, which captures no bodies and
+        // no rows — so a row-balance assertion that passes on the machine the
+        // scenario was written on came back indeterminate from a runner, for no
+        // reason its author could see. Local and remote runs cannot drift, and
+        // an evidence policy chosen twice is how they would.
+        assertThat(RunEvidence.defaultPolicy().captureBodies()).isTrue();
+        assertThat(RunEvidence.defaultPolicy().maxRows()).isEqualTo(1000);
+        assertThat(RunEvidence.defaultPolicy())
+                .as("the runner keeps what the CLI keeps")
+                .isEqualTo(RunEvidence.defaultPolicy());
+    }
+
+    @Test
+    void theHandlesARunAuthenticatesWithReachTheConnectors() throws Exception {
+        // ADR-021 promised a dispatch names handles; it carried none at all, so
+        // a runner connected to a database with no user and to an API with no
+        // token. What travels is still only a name — the value is resolved
+        // here, from this runner's own environment.
+        List<String> asked = new ArrayList<>();
+        DispatchedRun runner = new DispatchedRun(
+                new DispatchVerifier(LIMITS, policy -> "trusted".equals(policy.keyId())),
+                workingDirectory,
+                handleId -> {
+                    asked.add(handleId);
+                    return null;
+                },
+                true);
+        String scenario = scenarioOfWaits(1, "10ms");
+
+        DispatchedRun.Outcome outcome = runner.execute(
+                dispatchOf("run-dispatched-5", scenario,
+                        new Lease(System.currentTimeMillis(), 60_000, 10_000)),
+                Map.of(), EXTENSIONS);
+
+        assertThat(outcome.didRun()).isTrue();
+        // The waits need no credential, so nothing was resolved — what this
+        // pins is that the names arrived at the context the connectors read.
+        assertThat(asked).isEmpty();
+    }
+
+    @Test
+    void aScenarioThatArrivedIntactAndDoesNotParseSaysThat() {
+        // Not DIGEST_MISMATCH: the bytes are the ones that were sent, and
+        // reporting a parse error as a hash failure sends the reader looking
+        // for tampering that did not happen.
+        String notAScenario = "apiVersion: faultora.dev/v1alpha1\nkind: NotAScenario\n";
+
+        DispatchedRun.Outcome outcome = runner().execute(
+                dispatchOf("run-dispatched-6", notAScenario,
+                        new Lease(System.currentTimeMillis(), 60_000, 10_000)),
+                Map.of(), EXTENSIONS);
+
+        assertThat(outcome.didRun()).isFalse();
+        assertThat(outcome.refusal().reason()).isEqualTo(Refusal.Reason.SCENARIO_INVALID);
+    }
+
+    @Test
     void aDispatchTheRunnerRefusesNeverReachesTheEngine() {
         String scenario = scenarioOfWaits(1, "10ms");
         Dispatch tampered = new Dispatch(
                 "run-dispatched-4", System.currentTimeMillis(), "nonce",
                 scenario + "\n# something nobody agreed to\n", List.of(),
-                Map.of(), Map.of(), 1L, signedPolicy(),
+                Map.of(), Map.of(), Dispatch.Credentials.none(), 1L, signedPolicy(),
                 new Lease(System.currentTimeMillis(), 60_000, 10_000),
                 ContentDigest.sha256Uri(scenario), Dispatch.digestOfDocuments(List.of()));
 

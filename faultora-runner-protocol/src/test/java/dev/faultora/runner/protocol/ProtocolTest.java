@@ -150,6 +150,23 @@ class ProtocolTest {
         assertThat(received.lease().expiresAtEpochMs())
                 .isEqualTo(sent.lease().expiresAtEpochMs());
         assertThat(received.lease().ttlMs()).isEqualTo(60_000);
+        // Handle names, and a user name that is useless without the password
+        // it does not travel with.
+        assertThat(received.credentials().authSecretId()).isEqualTo("api-token");
+        assertThat(received.credentials().databaseUser()).isEqualTo("faultora_readonly");
+        assertThat(received.credentials().databaseSecretId()).isEqualTo("ledger-password");
+    }
+
+    @Test
+    void aDispatchThatAuthenticatesToNothingSaysSoRatherThanCarryingNull() {
+        Dispatch anonymous = new Dispatch(
+                "run-1", System.currentTimeMillis(), "nonce", "kind: Scenario",
+                List.of(), Map.of(), Map.of(), null, 1L,
+                new SignedPolicy("{}", "key", "sig"),
+                new Lease(System.currentTimeMillis(), 1_000, 100),
+                "sha256:a", "sha256:b");
+
+        assertThat(anonymous.credentials()).isEqualTo(Dispatch.Credentials.none());
     }
 
     @Test
@@ -173,6 +190,7 @@ class ProtocolTest {
                         new DispatchedDocument("observations", "kind: Observations")),
                 Map.of("currency", "EUR"),
                 Map.of("ledger", "jdbc:postgresql://db/x"),
+                new Dispatch.Credentials("api-token", "faultora_readonly", "ledger-password"),
                 88001L,
                 new SignedPolicy("{\"maxConcurrency\":4}", "key-1", "c2lnbmF0dXJl"),
                 new Lease(issuedAt, 60_000, 10_000),
