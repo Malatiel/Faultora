@@ -29,6 +29,10 @@
             <artifactId>faultora-engine</artifactId>
         </dependency>
         <dependency>
+            <groupId>dev.faultora</groupId>
+            <artifactId>faultora-runtime</artifactId>
+        </dependency>
+        <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
         </dependency>
