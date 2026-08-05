@@ -15,6 +15,7 @@ import dev.faultora.model.identifier.SchemaId;
 import dev.faultora.model.identifier.TargetId;
 import dev.faultora.model.security.ContentDigest;
 import dev.faultora.model.security.ExtensionPolicy;
+import dev.faultora.runtime.ExtensionRegistry;
 import dev.faultora.spec.model.ScenarioDocument;
 import dev.faultora.spec.model.ScenarioStep;
 import dev.faultora.spi.context.ImportContext;

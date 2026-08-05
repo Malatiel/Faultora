@@ -1,4 +1,4 @@
-package dev.faultora.cli;
+package dev.faultora.runtime;
 
 import dev.faultora.model.security.ExtensionPolicy;
 import dev.faultora.spi.contract.AssertionProvider;
@@ -29,7 +29,7 @@ import java.util.ServiceLoader;
  * does not allow is refused and named, rather than joining the run because it
  * happened to be on the classpath.
  */
-final class ExtensionRegistry {
+public final class ExtensionRegistry {
 
     /** Package the built-in extensions live in. */
     private static final String BUILT_IN_PACKAGE = "dev.faultora.";
@@ -38,7 +38,7 @@ final class ExtensionRegistry {
     }
 
     /** Assertion providers, keyed by the assertion type they evaluate. */
-    static Map<String, AssertionProvider> assertionProviders(ExtensionPolicy policy) {
+    public static Map<String, AssertionProvider> assertionProviders(ExtensionPolicy policy) {
         Map<String, AssertionProvider> providers = new LinkedHashMap<>();
         for (AssertionProvider provider : ServiceLoader.load(AssertionProvider.class)) {
             if (isAllowed(provider, policy, "assertion provider")) {
@@ -49,7 +49,7 @@ final class ExtensionRegistry {
     }
 
     /** Report renderers, keyed by the {@code --format} value that selects them. */
-    static Map<String, ReportRenderer> renderers(ExtensionPolicy policy) {
+    public static Map<String, ReportRenderer> renderers(ExtensionPolicy policy) {
         Map<String, ReportRenderer> renderers = new LinkedHashMap<>();
         for (ReportRenderer renderer : ServiceLoader.load(ReportRenderer.class)) {
             if (isAllowed(renderer, policy, "report renderer")) {
@@ -89,7 +89,7 @@ final class ExtensionRegistry {
      * a document — {@code openapi-3.0} or {@code openapi-3.1} — is known only
      * after the importer has read it.
      */
-    static SourceImporter importerFor(String sourceFamily, ExtensionPolicy policy) {
+    public static SourceImporter importerFor(String sourceFamily, ExtensionPolicy policy) {
         for (SourceImporter importer : ServiceLoader.load(SourceImporter.class)) {
             if (!isAllowed(importer, policy, "source importer")) {
                 continue;

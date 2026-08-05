@@ -17,6 +17,10 @@
     <dependencies>
         <dependency>
             <groupId>dev.faultora</groupId>
+            <artifactId>faultora-runtime</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.faultora</groupId>
             <artifactId>faultora-model</artifactId>
         </dependency>
         <dependency>

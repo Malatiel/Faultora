@@ -1,18 +1,18 @@
 package dev.faultora.cli;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.faultora.connector.http.DestinationPolicy;
-import dev.faultora.connector.http.HttpConnector;
-import dev.faultora.connector.jdbc.JdbcConnector;
-import dev.faultora.connector.kafka.KafkaConnector;
+
+
+
+
 import dev.faultora.engine.LocalEngine;
 import dev.faultora.engine.journal.RunJournal;
 import dev.faultora.engine.plan.PlanCompilationResult;
 import dev.faultora.engine.plan.PlanCompiler;
 import dev.faultora.engine.plan.PlanDiagnostic;
 import dev.faultora.engine.run.RunResult;
-import dev.faultora.faults.local.FaultInjectingConnector;
-import dev.faultora.faults.local.LocalFaultProvider;
+
+
 import dev.faultora.model.catalog.ApiCatalog;
 import dev.faultora.model.events.RunEvent;
 import dev.faultora.model.identifier.RunId;
@@ -22,12 +22,14 @@ import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.net.HostPolicy;
 import dev.faultora.spec.expression.ExpressionContext;
 import dev.faultora.spec.model.InputDeclaration;
+import dev.faultora.runtime.ExtensionRegistry;
+import dev.faultora.runtime.RunEnvironment;
 import dev.faultora.spec.model.ScenarioDocument;
 import dev.faultora.spec.parser.ParseResult;
 import dev.faultora.spec.parser.ScenarioParser;
 import dev.faultora.spec.validator.ScenarioValidator;
 import dev.faultora.spi.contract.AssertionProvider;
-import dev.faultora.spi.contract.Connector;
+
 import dev.faultora.spi.contract.FaultProvider;
 import dev.faultora.spi.contract.ReportRenderer;
 import dev.faultora.spi.context.ConnectorContext;
@@ -169,80 +171,26 @@ public class TestCommand implements Command {
             ScenarioDocument scenario,
             ExtensionPolicy extensionPolicy
     ) throws IOException {
-        Map<String, AssertionProvider> assertionProviders =
-                ExtensionRegistry.assertionProviders(extensionPolicy);
-        LocalFaultProvider localFaults = (LocalFaultProvider) faultProviders.get("local");
+        // Which clients a plan needs, and the engine over them, is the same
+        // question however a run was started — so it is answered in one place
+        // that the runner asks too, rather than here where only the CLI can see
+        // it. What stays here is what belongs to a command line: what to print.
+        try (RunEnvironment environment = RunEnvironment.open(
+                compilation.plan(), faultProviders, extensionPolicy, options.allowPrivate());
+             RunJournal journal = new RunJournal(journalPath, true)) {
+            System.out.println("Running scenario: " + scenario.metadata().name());
+            System.out.println("Target: " + options.targetUrl());
+            System.out.println("Seed: " + options.seed());
+            System.out.println();
 
-        try (HttpConnector httpConnector = options.allowPrivate()
-                ? new HttpConnector(DestinationPolicy.permissive())
-                : new HttpConnector();
-             KafkaConnector kafkaConnector = kafkaConnectorFor(compilation, options);
-             JdbcConnector jdbcConnector = jdbcConnectorFor(compilation, options)) {
-            Connector faultAwareConnector =
-                    new FaultInjectingConnector(httpConnector, localFaults);
-            Map<String, Connector> connectors = new LinkedHashMap<>();
-            connectors.put("http", faultAwareConnector);
-            if (kafkaConnector != null) {
-                connectors.put(KafkaConnector.PROTOCOL, kafkaConnector);
-            }
-            if (jdbcConnector != null) {
-                connectors.put(JdbcConnector.PROTOCOL, jdbcConnector);
-            }
-            LocalEngine engine = new LocalEngine(
-                    connectors, assertionProviders, faultProviders);
-
-            try (RunJournal journal = new RunJournal(journalPath, true)) {
-                System.out.println("Running scenario: " + scenario.metadata().name());
-                System.out.println("Target: " + options.targetUrl());
-                System.out.println("Seed: " + options.seed());
-                System.out.println();
-
-                return executeCancellably(
-                        engine, compilation, journal, expressionContext, connectorContext);
-            }
+            return executeCancellably(
+                    environment.engine(), compilation, journal,
+                    expressionContext, connectorContext);
         }
     }
 
-    /**
-     * A Kafka connector when the run needs one, and null when it does not.
-     * <p>
-     * Opening a broker client for an HTTP-only run would make every such run
-     * pay for a connection it never uses — and fail when there is no broker to
-     * connect to. The catalog already says whether any target speaks Kafka,
-     * which is the same question.
-     */
-    private KafkaConnector kafkaConnectorFor(
-            PlanCompilationResult compilation, TestOptions options) {
-        if (!speaks(compilation, KafkaConnector.PROTOCOL)) {
-            return null;
-        }
-        return new KafkaConnector(options.allowPrivate()
-                ? HostPolicy.permissive() : HostPolicy.defaultPolicy());
-    }
 
-    /**
-     * A JDBC connector when the run needs one, and null when it does not.
-     * <p>
-     * The credentials travel as a user name and a secret handle in the
-     * connector context, and the password is resolved where it is used. Nothing
-     * in this composition root ever holds the value — the same shape the HTTP
-     * connector's bearer token has, for the same reason.
-     */
-    private JdbcConnector jdbcConnectorFor(
-            PlanCompilationResult compilation, TestOptions options) {
-        if (!speaks(compilation, JdbcConnector.PROTOCOL)) {
-            return null;
-        }
-        return new JdbcConnector(options.allowPrivate()
-                ? HostPolicy.permissive() : HostPolicy.defaultPolicy());
-    }
 
-    /** Whether any target in the compiled catalog speaks a protocol. */
-    private boolean speaks(PlanCompilationResult compilation, String protocol) {
-        return compilation.plan().catalog().targets().stream()
-                .flatMap(target -> target.protocols().stream())
-                .anyMatch(declared -> protocol.equals(declared.value()));
-    }
 
     /**
      * Execute the plan, letting an interrupted process end its own run.

@@ -1,5 +1,7 @@
 package dev.faultora.cli;
 
+import dev.faultora.runtime.ExtensionRegistry;
+
 import dev.faultora.spi.contract.SourceImporter;
 import dev.faultora.model.catalog.ApiCatalog;
 import dev.faultora.model.catalog.OperationDefinition;

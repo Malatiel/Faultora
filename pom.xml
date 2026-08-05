@@ -80,6 +80,7 @@
         <module>faultora-faults-toxiproxy</module>
         <module>faultora-assertions-core</module>
         <module>faultora-reporting</module>
+        <module>faultora-runtime</module>
         <module>faultora-runner-protocol</module>
         <module>faultora-runner</module>
         <module>faultora-cli</module>
@@ -166,6 +167,11 @@
             <dependency>
                 <groupId>dev.faultora</groupId>
                 <artifactId>faultora-faults-toxiproxy</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.faultora</groupId>
+                <artifactId>faultora-runtime</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
