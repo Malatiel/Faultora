@@ -101,6 +101,16 @@ shard-level leases.
   reason a run is bounded is so its findings survive, not so they end tidily.
   This is why the runner needs a writable working directory, which its
   packaging must provide.
+- **A position that overlaps is dropped; a position that skips is refused.**
+  Those are the two halves of the same rule, and only the first is obvious. A
+  batch starting before what the far side holds is an ordinary re-send after a
+  disconnection and its overlap is discarded — that is what makes at-least-once
+  delivery safe. A batch starting *beyond* it would leave a hole nobody will
+  ever fill, and a journal silently missing its middle reads as a complete
+  account of a run that did something else, so it is refused and the runner
+  learns that it was. **A controller implementing this protocol has to do
+  both**, which is why the rule is here and not only in the scaffolding that
+  currently demonstrates it.
 - **The counterpart in 0.9 is qualification scaffolding, and is named so.** It
   lives in the test kit, not in a module called controller, and this ADR says
   plainly which half is frozen: **the runner-facing protocol is contract; the

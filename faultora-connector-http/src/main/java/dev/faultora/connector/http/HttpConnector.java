@@ -54,6 +54,17 @@ import java.util.function.Function;
  */
 public class HttpConnector implements Connector {
 
+    /**
+     * Config key naming the secret handle a bearer token is resolved from.
+     * <p>
+     * Named here, where it is read, as the JDBC connector names its own. It was
+     * a string literal in three places — this one, the CLI's composition and
+     * the runner's — which is how a key ends up spelled one way in the writer
+     * and another in the reader, and hours are spent on an authentication
+     * failure that is a typo.
+     */
+    public static final String AUTH_SECRET_ID = "authSecretId";
+
     private static final Logger LOG = LoggerFactory.getLogger(HttpConnector.class);
 
     private static final ProtocolId PROTOCOL = new ProtocolId("http");
@@ -465,7 +476,7 @@ public class HttpConnector implements Connector {
         }
         builder.addHeader("Accept", "application/json");
 
-        Object authSecretId = context.config().get("authSecretId");
+        Object authSecretId = context.config().get(AUTH_SECRET_ID);
         if (authSecretId instanceof String secretId && !secretId.isBlank()) {
             Function<String, SecretHandle> secretResolver = context.secretResolver();
             if (secretResolver == null) {

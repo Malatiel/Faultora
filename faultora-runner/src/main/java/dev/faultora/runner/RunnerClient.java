@@ -84,7 +84,7 @@ public final class RunnerClient {
     public Optional<Dispatch> pollForWork(String sessionId)
             throws IOException, InterruptedException {
         HttpResponse<String> response = send(
-                "/runner/work?session=" + sessionId, null, POLL.plusSeconds(5));
+                "/runner/work?session=" + encoded(sessionId), null, POLL.plusSeconds(5));
         if (response.statusCode() == 204 || response.body() == null
                 || response.body().isBlank()) {
             return Optional.empty();
@@ -104,6 +104,10 @@ public final class RunnerClient {
         Progress progress = new Progress(runId, fromPosition, eventLines);
         HttpResponse<String> response = send("/runner/progress",
                 MAPPER.writeValueAsString(progress), Duration.ofSeconds(30));
+        if (response.statusCode() != 200) {
+            throw new IOException("The far side refused progress for run '" + runId
+                    + "': " + response.statusCode() + " " + response.body());
+        }
         String acknowledged = response.body();
         return acknowledged == null || acknowledged.isBlank()
                 ? fromPosition : Long.parseLong(acknowledged.trim());
@@ -112,7 +116,19 @@ public final class RunnerClient {
     /** Report how a run ended, or why it never started. */
     public void sendOutcome(String runId, String outcomeJson)
             throws IOException, InterruptedException {
-        send("/runner/result?run=" + runId, outcomeJson, Duration.ofSeconds(30));
+        send("/runner/result?run=" + encoded(runId), outcomeJson, Duration.ofSeconds(30));
+    }
+
+    /**
+     * A value as it may appear in a query string.
+     * <p>
+     * Session ids are UUIDs today and run ids are chosen by whoever dispatches,
+     * which is exactly the argument for encoding both: this is protocol code,
+     * and the day an id carries an ampersand is not the day to discover that it
+     * was pasted in raw.
+     */
+    private static String encoded(String value) {
+        return java.net.URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 
     /**

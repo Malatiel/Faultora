@@ -1,6 +1,9 @@
 package dev.faultora.runner;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.faultora.connector.http.HttpConnector;
+import dev.faultora.connector.jdbc.JdbcConnector;
+import dev.faultora.engine.exec.TargetResolver;
 import dev.faultora.model.catalog.SafetyClassification;
 import dev.faultora.model.identifier.TargetId;
 import dev.faultora.model.security.ContentDigest;
@@ -51,6 +54,15 @@ class DispatchedRunTest {
         return new DispatchedRun(
                 new DispatchVerifier(LIMITS, policy -> "trusted".equals(policy.keyId())),
                 workingDirectory, handleId -> null, true);
+    }
+
+    /** The policy a dispatch carries, as the verifier would hand it over. */
+    private static TargetPolicy policyOf(Dispatch dispatch) {
+        try {
+            return MAPPER.readValue(dispatch.policy().policyJson(), TargetPolicy.class);
+        } catch (Exception impossible) {
+            throw new AssertionError(impossible);
+        }
     }
 
     private static SignedPolicy signedPolicy() {
@@ -166,31 +178,47 @@ class DispatchedRunTest {
     }
 
     @Test
-    void theHandlesARunAuthenticatesWithReachTheConnectors() throws Exception {
+    void theHandlesARunAuthenticatesWithReachTheConnectors() {
         // ADR-021 promised a dispatch names handles; it carried none at all, so
         // a runner connected to a database with no user and to an API with no
-        // token. What travels is still only a name — the value is resolved
-        // here, from this runner's own environment.
-        List<String> asked = new ArrayList<>();
-        DispatchedRun runner = new DispatchedRun(
-                new DispatchVerifier(LIMITS, policy -> "trusted".equals(policy.keyId())),
-                workingDirectory,
-                handleId -> {
-                    asked.add(handleId);
-                    return null;
-                },
-                true);
-        String scenario = scenarioOfWaits(1, "10ms");
+        // token. The map the connectors are handed is what this reads — a run
+        // that happened not to need a credential would pass whatever was in it.
+        Dispatch dispatch = new Dispatch(
+                "run-credentials", System.currentTimeMillis(), "nonce",
+                scenarioOfWaits(1, "10ms"), List.of(), Map.of(),
+                Map.of("", "http://localhost:1", "ledger", "jdbc:postgresql://db/x"),
+                new Dispatch.Credentials("api-token", "faultora_readonly", "ledger-password"),
+                1L, signedPolicy(), new Lease(System.currentTimeMillis(), 60_000, 10_000),
+                ContentDigest.sha256Uri(scenarioOfWaits(1, "10ms")),
+                Dispatch.digestOfDocuments(List.of()));
 
-        DispatchedRun.Outcome outcome = runner.execute(
-                dispatchOf("run-dispatched-5", scenario,
-                        new Lease(System.currentTimeMillis(), 60_000, 10_000)),
-                Map.of(), EXTENSIONS);
+        Map<String, Object> config = runner()
+                .connectorContext(dispatch, policyOf(dispatch)).config();
 
-        assertThat(outcome.didRun()).isTrue();
-        // The waits need no credential, so nothing was resolved — what this
-        // pins is that the names arrived at the context the connectors read.
-        assertThat(asked).isEmpty();
+        assertThat(config).containsEntry(HttpConnector.AUTH_SECRET_ID, "api-token");
+        assertThat(config).containsEntry(JdbcConnector.USER, "faultora_readonly");
+        assertThat(config).containsEntry(JdbcConnector.SECRET_ID, "ledger-password");
+        assertThat(config).containsEntry(TargetResolver.BASE_URL, "http://localhost:1");
+        assertThat(config).containsEntry(
+                TargetResolver.BASE_URL_PREFIX + "ledger", "jdbc:postgresql://db/x");
+    }
+
+    @Test
+    void aDispatchThatNamesNoCredentialsHandsTheConnectorsNone() {
+        Dispatch anonymous = dispatchOf("run-anonymous", scenarioOfWaits(1, "10ms"),
+                new Lease(System.currentTimeMillis(), 60_000, 10_000));
+        Dispatch withoutAny = new Dispatch(
+                anonymous.runId(), anonymous.issuedAtEpochMs(), anonymous.nonce(),
+                anonymous.scenario(), anonymous.documents(), anonymous.inputs(),
+                anonymous.targetRedirects(), Dispatch.Credentials.none(),
+                anonymous.seed(), anonymous.policy(), anonymous.lease(),
+                anonymous.scenarioDigest(), anonymous.catalogDigest());
+
+        Map<String, Object> config = runner()
+                .connectorContext(withoutAny, policyOf(withoutAny)).config();
+
+        assertThat(config).doesNotContainKeys(
+                HttpConnector.AUTH_SECRET_ID, JdbcConnector.USER, JdbcConnector.SECRET_ID);
     }
 
     @Test

@@ -229,6 +229,28 @@ class RunnerTransportTest {
     }
 
     @Test
+    void aBatchThatWouldLeaveAHoleIsRefusedRatherThanClosedUp() throws Exception {
+        // Re-sending is safe and skipping is not. A journal quietly missing its
+        // middle reads as a complete account of a run that did something else,
+        // so the far side says no and the runner learns it did.
+        Pair tls = trustingEachOther();
+
+        try (QualificationDispatcher dispatcher =
+                     new QualificationDispatcher(tls.dispatcher().sslContext())) {
+            RunnerClient client = clientFor(dispatcher, tls.runner());
+            client.register();
+
+            client.sendProgress("run-wire-3", 0, List.of("{\"one\":1}"));
+
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    client.sendProgress("run-wire-3", 5, List.of("{\"six\":6}")))
+                    .isInstanceOf(IOException.class)
+                    .hasMessageContaining("would be lost");
+            assertThat(dispatcher.journalOf("run-wire-3")).hasSize(1);
+        }
+    }
+
+    @Test
     void aRunnerNobodyTrustsCannotEvenRegister() throws Exception {
         Pair tls = trustingEachOther();
         Certificates.Identity stranger = Certificates.issue(directory, "stranger", 1);

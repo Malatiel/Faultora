@@ -128,9 +128,14 @@ public final class QualificationDispatcher implements AutoCloseable {
     /**
      * Take journal lines and answer with the position now held.
      * <p>
-     * A batch that starts before what is already here is a re-send after a
+     * Two rules, and the second is the one worth writing down. A batch that
+     * starts <em>before</em> what is already here is a re-send after a
      * disconnection: the overlap is dropped rather than appended, which is what
-     * makes at-least-once delivery safe to rely on.
+     * makes at-least-once delivery safe to rely on. A batch that starts
+     * <em>beyond</em> it is a hole — lines nobody will ever send again — and it
+     * is refused rather than closed up, because a journal silently missing its
+     * middle is worse than a delivery that failed loudly. ADR-020 records both,
+     * since a real controller has to implement the same pair.
      */
     private void progress(HttpExchange exchange) throws IOException {
         Progress progress = MAPPER.readValue(exchange.getRequestBody(), Progress.class);
@@ -138,6 +143,12 @@ public final class QualificationDispatcher implements AutoCloseable {
                 progress.runId(), runId -> java.util.Collections.synchronizedList(
                         new ArrayList<>()));
         synchronized (journal) {
+            if (progress.fromPosition() > journal.size()) {
+                respond(exchange, 409, "run '" + progress.runId() + "' is at "
+                        + journal.size() + " here and this batch starts at "
+                        + progress.fromPosition() + "; the lines between would be lost");
+                return;
+            }
             long position = progress.fromPosition();
             for (String line : progress.eventLines()) {
                 if (position >= journal.size()) {

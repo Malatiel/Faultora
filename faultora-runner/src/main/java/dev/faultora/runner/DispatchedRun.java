@@ -1,5 +1,6 @@
 package dev.faultora.runner;
 
+import dev.faultora.connector.http.HttpConnector;
 import dev.faultora.connector.jdbc.JdbcConnector;
 import dev.faultora.engine.exec.TargetResolver;
 import dev.faultora.engine.journal.RunJournal;
@@ -205,7 +206,10 @@ public final class DispatchedRun {
      * runner's own environment, which is the property ADR-021 states: nothing
      * that has ever been a credential crosses the wire.
      */
-    private ConnectorContext connectorContext(Dispatch dispatch, TargetPolicy policy) {
+    // Package-private so a test can read the map rather than infer it from a
+    // run that happened not to need a credential. What keys the connectors
+    // are handed is the thing that drifts, so it is the thing asserted.
+    ConnectorContext connectorContext(Dispatch dispatch, TargetPolicy policy) {
         Map<String, Object> config = new LinkedHashMap<>();
         dispatch.targetRedirects().forEach((targetId, url) -> config.put(
                 targetId.isEmpty()
@@ -215,7 +219,7 @@ public final class DispatchedRun {
 
         Dispatch.Credentials credentials = dispatch.credentials();
         if (credentials.authSecretId() != null) {
-            config.put("authSecretId", credentials.authSecretId());
+            config.put(HttpConnector.AUTH_SECRET_ID, credentials.authSecretId());
         }
         if (credentials.databaseUser() != null) {
             config.put(JdbcConnector.USER, credentials.databaseUser());
