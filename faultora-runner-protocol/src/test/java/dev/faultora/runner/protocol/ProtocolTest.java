@@ -170,6 +170,51 @@ class ProtocolTest {
     }
 
     @Test
+    void aSessionSurvivesTheWireBothWays() throws Exception {
+        // It did not. A derived isAccepted() was serialized as a field the
+        // record has no component for, so a session could be sent and not
+        // read back — found by the first test that put one on a socket, which
+        // is later than a protocol module should find such a thing.
+        Session accepted = Session.answer(speaking(ProtocolVersion.CURRENT), "session-1");
+        Session refused = Session.answer(speaking("99"), "session-2");
+
+        Session receivedAccepted = mapper.readValue(
+                mapper.writeValueAsString(accepted), Session.class);
+        Session receivedRefusal = mapper.readValue(
+                mapper.writeValueAsString(refused), Session.class);
+
+        assertThat(receivedAccepted.isAccepted()).isTrue();
+        assertThat(receivedAccepted.sessionId()).isEqualTo("session-1");
+        assertThat(receivedRefusal.isAccepted()).isFalse();
+        assertThat(receivedRefusal.refusal().reason())
+                .isEqualTo(Refusal.Reason.UNSUPPORTED_PROTOCOL_VERSION);
+    }
+
+    @Test
+    void everyMessageThisProtocolSendsCanBeReadBack() throws Exception {
+        // One test that says the rule rather than the instance: a message with
+        // a derived accessor Jackson mistakes for a property is a message that
+        // cannot make the return trip.
+        Object[] messages = {
+                new Registration("r", "0.9.0", List.of("1"), Set.of("http")),
+                Session.accepted("1", "s"),
+                Session.refused(Refusal.of(Refusal.Reason.UNTRUSTED_PEER, "no")),
+                new Refusal(Refusal.Reason.LEASE_EXPIRED, "gone"),
+                new Lease(System.currentTimeMillis(), 1_000, 100),
+                new SignedPolicy("{}", "key", "sig"),
+                new DispatchedDocument("openapi", "openapi: 3.0.3"),
+                new Progress("run", 0, List.of("{}")),
+                dispatchIssuedAt(System.currentTimeMillis())
+        };
+        for (Object message : messages) {
+            String json = mapper.writeValueAsString(message);
+            assertThat(mapper.readValue(json, message.getClass()))
+                    .as(message.getClass().getSimpleName())
+                    .isEqualTo(message);
+        }
+    }
+
+    @Test
     void progressKnowsWhereTheNextBatchStarts() throws Exception {
         Progress progress = new Progress("run-1", 12,
                 List.of("{\"type\":\"NODE_STARTED\"}", "{\"type\":\"NODE_COMPLETED\"}"));

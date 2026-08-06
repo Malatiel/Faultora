@@ -17,7 +17,15 @@
     <dependencies>
         <dependency>
             <groupId>dev.faultora</groupId>
+            <artifactId>faultora-runner-protocol</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.faultora</groupId>
             <artifactId>faultora-spi</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
         </dependency>
         <dependency>
             <groupId>dev.faultora</groupId>

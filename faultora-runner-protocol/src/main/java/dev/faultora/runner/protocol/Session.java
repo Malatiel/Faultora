@@ -1,5 +1,7 @@
 package dev.faultora.runner.protocol;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 /**
  * The answer to a registration: a session, or a reason there is none.
  * <p>
@@ -24,6 +26,15 @@ public record Session(String protocolVersion, String sessionId, Refusal refusal)
         return new Session(null, null, refusal);
     }
 
+    /**
+     * Whether there is a session.
+     * <p>
+     * Not part of the wire. Jackson reads a boolean {@code isX()} as a
+     * property, so without this a session serialized an {@code accepted} field
+     * that it then refused to read back — a message that could be sent and not
+     * received, which is the one thing a protocol may not do.
+     */
+    @JsonIgnore
     public boolean isAccepted() {
         return refusal == null;
     }
