@@ -75,15 +75,45 @@ public final class DispatchedRun {
     }
 
     /**
-     * Execute a dispatch, or say why it will not be.
-     *
-     * @param faultProviders the providers this deployment offers
-     * @param extensions     which extensions are permitted here
+     * Told once, when a run has begun and before it has finished.
+     * <p>
+     * Everything that has to happen <em>while</em> a run runs hangs off this:
+     * renewing the lease, and sending the journal as it grows. Neither belongs
+     * in here — this class executes a run, and what talks to the far side is
+     * the far side's business — but both need the two things this hands over.
      */
+    public interface WhileRunning {
+
+        /**
+         * @param lease       the run's permission, which something has to keep
+         *                    renewing or the run will stop
+         * @param journalPath the file the run is writing as it goes
+         */
+        void started(LeaseWatch lease, Path journalPath);
+    }
+
+    /** Execute a dispatch with nothing watching it. */
     public Outcome execute(
             Dispatch dispatch,
             Map<String, FaultProvider> faultProviders,
             ExtensionPolicy extensions
+    ) {
+        return execute(dispatch, faultProviders, extensions, (lease, journal) -> { });
+    }
+
+    /**
+     * Execute a dispatch, or say why it will not be.
+     *
+     * @param faultProviders the providers this deployment offers
+     * @param extensions     which extensions are permitted here
+     * @param whileRunning   told once the run has begun, so a lease can be
+     *                       renewed and a journal streamed
+     */
+    public Outcome execute(
+            Dispatch dispatch,
+            Map<String, FaultProvider> faultProviders,
+            ExtensionPolicy extensions,
+            WhileRunning whileRunning
     ) {
         long receivedAt = System.currentTimeMillis();
         DispatchVerifier.Verdict verdict = verifier.verify(dispatch, receivedAt);
@@ -101,7 +131,7 @@ public final class DispatchedRun {
 
         try {
             return run(dispatch, scenario, verdict.policy(), faultProviders,
-                    extensions, receivedAt);
+                    extensions, receivedAt, whileRunning);
         } catch (CatalogAssembly.AssemblyException cannotAssemble) {
             return Outcome.refused(Refusal.of(Refusal.Reason.MISSING_CAPABILITY,
                     cannotAssemble.getMessage()));
@@ -135,7 +165,8 @@ public final class DispatchedRun {
             TargetPolicy policy,
             Map<String, FaultProvider> faultProviders,
             ExtensionPolicy extensions,
-            long receivedAt
+            long receivedAt,
+            WhileRunning whileRunning
     ) throws Exception {
         List<CatalogAssembly.Document> documents = new ArrayList<>();
         for (DispatchedDocument document : dispatch.documents()) {
@@ -176,6 +207,7 @@ public final class DispatchedRun {
                      compilation.plan(), faultProviders, extensions, allowPrivate);
              RunJournal journal = new RunJournal(journalPath, true)) {
             lease.start();
+            whileRunning.started(lease, journalPath);
             RunResult result = environment.engine().execute(
                     compilation.plan(), journal,
                     expressionContext(dispatch), connectorContext(dispatch, policy),

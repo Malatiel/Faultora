@@ -6,6 +6,7 @@ import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsParameters;
 import com.sun.net.httpserver.HttpsServer;
 import dev.faultora.runner.protocol.Dispatch;
+import dev.faultora.runner.protocol.Lease;
 import dev.faultora.runner.protocol.Progress;
 import dev.faultora.runner.protocol.Registration;
 import dev.faultora.runner.protocol.Session;
@@ -48,6 +49,8 @@ public final class QualificationDispatcher implements AutoCloseable {
     private final ConcurrentMap<String, String> outcomes = new ConcurrentHashMap<>();
     private final List<Registration> registrations =
             java.util.Collections.synchronizedList(new ArrayList<>());
+    private volatile boolean extending = true;
+    private volatile long leaseTtlMs = 5_000;
 
     /**
      * Listen on a free port, requiring a client certificate.
@@ -68,6 +71,7 @@ public final class QualificationDispatcher implements AutoCloseable {
         server.createContext("/runner/register", this::register);
         server.createContext("/runner/work", this::work);
         server.createContext("/runner/progress", this::progress);
+        server.createContext("/runner/heartbeat", this::heartbeat);
         server.createContext("/runner/result", this::result);
         server.setExecutor(Executors.newFixedThreadPool(4));
         server.start();
@@ -158,6 +162,33 @@ public final class QualificationDispatcher implements AutoCloseable {
             }
             respond(exchange, 200, String.valueOf(journal.size()));
         }
+    }
+
+    /**
+     * Extend a run's permission, while this side is willing.
+     * <p>
+     * Willingness is a switch a test can throw, because the interesting
+     * question is not what happens when a dispatcher says yes — it is what
+     * happens when it stops saying anything at all, which a test arranges by
+     * closing this server outright.
+     */
+    private void heartbeat(HttpExchange exchange) throws IOException {
+        if (!extending) {
+            respond(exchange, 410, "");
+            return;
+        }
+        respond(exchange, 200, MAPPER.writeValueAsString(
+                new Lease(System.currentTimeMillis(), leaseTtlMs, leaseTtlMs / 4)));
+    }
+
+    /** Stop granting extensions, without closing the connection. */
+    public void stopExtendingLeases() {
+        extending = false;
+    }
+
+    /** How long each extension is worth. */
+    public void grantLeasesOf(long ttlMs) {
+        leaseTtlMs = ttlMs;
     }
 
     private void result(HttpExchange exchange) throws IOException {

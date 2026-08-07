@@ -2,6 +2,7 @@ package dev.faultora.runner;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.faultora.runner.protocol.Dispatch;
+import dev.faultora.runner.protocol.Lease;
 import dev.faultora.runner.protocol.Progress;
 import dev.faultora.runner.protocol.ProtocolVersion;
 import dev.faultora.runner.protocol.Registration;
@@ -111,6 +112,30 @@ public final class RunnerClient {
         String acknowledged = response.body();
         return acknowledged == null || acknowledged.isBlank()
                 ? fromPosition : Long.parseLong(acknowledged.trim());
+    }
+
+    /**
+     * Ask for the run's permission to be extended.
+     * <p>
+     * This is the only thing standing between a long run and its own lease, and
+     * it is deliberately a request the runner makes: a lease it could extend by
+     * itself would be a comment. When this cannot be reached — the far side is
+     * gone, the network is not there — nothing is renewed, the lease runs out,
+     * and the run stops on the runner's own clock. That is not the failure
+     * path; it is the mechanism.
+     *
+     * @return the lease as re-granted, or empty when the far side is no longer
+     *         willing to extend it
+     */
+    public Optional<Lease> heartbeat(String runId)
+            throws IOException, InterruptedException {
+        HttpResponse<String> response = send(
+                "/runner/heartbeat?run=" + encoded(runId), "", Duration.ofSeconds(10));
+        if (response.statusCode() != 200 || response.body() == null
+                || response.body().isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.of(MAPPER.readValue(response.body(), Lease.class));
     }
 
     /** Report how a run ended, or why it never started. */
