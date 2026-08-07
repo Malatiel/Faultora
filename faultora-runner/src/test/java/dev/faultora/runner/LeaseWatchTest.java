@@ -160,4 +160,26 @@ class LeaseWatchTest {
             Thread.currentThread().interrupt();
         }
     }
+
+    @Test
+    void theRenewalIntervalComesFromTheLeaseAndNotFromTheRunner() {
+        // The runner used to invent one — a third of what was left, capped at a
+        // second — while the lease already said how often to ask. Two rules for
+        // one number are free to disagree about how many renewals fit inside a
+        // lease, which is the whole of whether a lost heartbeat is survivable.
+        AtomicBoolean cancellation = new AtomicBoolean();
+        try (LeaseWatch watch = new LeaseWatch(
+                new Lease(System.currentTimeMillis(), 10_000, 2_500),
+                System.currentTimeMillis(), cancellation)) {
+
+            assertThat(watch.renewEveryMs()).isEqualTo(2_500);
+
+            watch.renew(new Lease(System.currentTimeMillis(), 30_000, 400),
+                    System.currentTimeMillis());
+
+            assertThat(watch.renewEveryMs())
+                    .as("a renewal may change the rhythm as well as the deadline")
+                    .isEqualTo(400);
+        }
+    }
 }

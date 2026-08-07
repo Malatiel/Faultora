@@ -1,17 +1,15 @@
 package dev.faultora.runner;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.faultora.model.security.ExtensionPolicy;
 import dev.faultora.runner.protocol.Dispatch;
 import dev.faultora.runner.protocol.Lease;
 import dev.faultora.spi.contract.FaultProvider;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * The runner as a thing that runs: ask for work, do it, keep saying so.
@@ -34,6 +32,18 @@ import java.util.concurrent.atomic.AtomicLong;
  * delivered when somebody can be reached again.
  */
 public final class RunnerAgent {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    /**
+     * The shortest a renewal interval is honoured at.
+     * <p>
+     * The interval itself comes from the lease. This only keeps a dispatcher
+     * that asks to be asked every millisecond from turning the heartbeat into
+     * a spin — a floor on the runner's own resources, not a second opinion
+     * about the lease.
+     */
+    private static final long SHORTEST_HEARTBEAT_MS = 50;
 
     private final RunnerClient client;
     private final DispatchedRun runs;
@@ -65,13 +75,14 @@ public final class RunnerAgent {
         }
         Dispatch dispatch = work.get();
 
-        AtomicLong delivered = new AtomicLong();
+        JournalTail[] tail = new JournalTail[1];
         Thread[] keepingAlive = new Thread[1];
         DispatchedRun.Outcome outcome = runs.execute(
                 dispatch, faultProviders, extensions,
                 (lease, journalPath) -> {
+                    tail[0] = new JournalTail(journalPath);
                     keepingAlive[0] = new Thread(
-                            () -> keepAlive(dispatch.runId(), lease, journalPath, delivered),
+                            () -> keepAlive(dispatch.runId(), lease, tail[0]),
                             "runner-heartbeat-" + dispatch.runId());
                     keepingAlive[0].setDaemon(true);
                     keepingAlive[0].start();
@@ -81,7 +92,7 @@ public final class RunnerAgent {
             keepingAlive[0].join(2_000);
         }
 
-        deliverWhatIsLeft(dispatch.runId(), outcome, delivered);
+        deliverWhatIsLeft(dispatch.runId(), outcome, tail[0]);
         return Optional.of(outcome);
     }
 
@@ -92,15 +103,14 @@ public final class RunnerAgent {
      * the case this whole arrangement exists for, and the answer to it is to
      * stop renewing — not to raise something. The lease does the rest.
      */
-    private void keepAlive(
-            String runId, LeaseWatch lease, Path journalPath, AtomicLong delivered) {
+    private void keepAlive(String runId, LeaseWatch lease, JournalTail tail) {
         while (!Thread.currentThread().isInterrupted() && !lease.hasExpired()) {
             try {
                 Optional<Lease> renewed = client.heartbeat(runId);
                 if (renewed.isPresent()) {
                     lease.renew(renewed.get(), System.currentTimeMillis());
                 }
-                sendWhateverIsNew(runId, journalPath, delivered);
+                sendWhateverIsFinished(runId, tail);
             } catch (InterruptedException stopping) {
                 Thread.currentThread().interrupt();
                 return;
@@ -108,7 +118,7 @@ public final class RunnerAgent {
                 // Nothing is renewed, which is what makes the run stop.
             }
             try {
-                Thread.sleep(heartbeatInterval(lease));
+                Thread.sleep(Math.max(SHORTEST_HEARTBEAT_MS, lease.renewEveryMs()));
             } catch (InterruptedException stopping) {
                 Thread.currentThread().interrupt();
                 return;
@@ -116,21 +126,19 @@ public final class RunnerAgent {
         }
     }
 
-    /** Often enough that one lost heartbeat is survivable. */
-    private static long heartbeatInterval(LeaseWatch lease) {
-        return Math.max(50, Math.min(1_000, lease.remainingMs() / 3));
-    }
-
-    private void sendWhateverIsNew(String runId, Path journalPath, AtomicLong delivered)
+    /**
+     * Send the part of the journal that is finished being written.
+     * <p>
+     * Finished, not merely present: the tail hands over whole lines only, so a
+     * half-written event stays here until it is an event. Delivering it would
+     * move the far side's position past a fragment that no re-send can repair.
+     */
+    private void sendWhateverIsFinished(String runId, JournalTail tail)
             throws IOException, InterruptedException {
-        if (!Files.exists(journalPath)) {
-            return;
-        }
-        List<String> lines = Files.readAllLines(journalPath);
-        long from = delivered.get();
-        if (lines.size() > from) {
-            delivered.set(client.sendProgress(
-                    runId, from, lines.subList((int) from, lines.size())));
+        JournalTail.Batch batch = tail.next();
+        if (!batch.isEmpty()) {
+            tail.delivered(batch, client.sendProgress(
+                    runId, batch.fromPosition(), batch.lines()));
         }
     }
 
@@ -142,10 +150,12 @@ public final class RunnerAgent {
      * arrived has failed the gate from the other side.
      */
     private void deliverWhatIsLeft(
-            String runId, DispatchedRun.Outcome outcome, AtomicLong delivered) {
+            String runId, DispatchedRun.Outcome outcome, JournalTail tail) {
         try {
-            if (outcome.journalPath() != null) {
-                sendWhateverIsNew(runId, outcome.journalPath(), delivered);
+            if (tail != null) {
+                sendWhateverIsFinished(runId, tail);
+            } else if (outcome.journalPath() != null) {
+                sendWhateverIsFinished(runId, new JournalTail(outcome.journalPath()));
             }
             client.sendOutcome(runId, describe(outcome));
         } catch (InterruptedException stopping) {
@@ -156,14 +166,29 @@ public final class RunnerAgent {
         }
     }
 
-    private static String describe(DispatchedRun.Outcome outcome) {
+    /**
+     * What became of the run, as the far side is told it.
+     * <p>
+     * A run that broke says why. It used to say only that it had, which left
+     * the one case with no diagnosis at all the only case that needed one —
+     * a refusal already names its reason, and a run that finished has a whole
+     * journal behind it.
+     */
+    // Package-private so the shape of what the far side is told can be
+    // asserted directly. A run that broke is the case with no other
+    // diagnosis, and it is the one that was empty.
+    static String describe(DispatchedRun.Outcome outcome) {
+        ObjectNode described = MAPPER.createObjectNode();
         if (outcome.refusal() != null) {
-            return "{\"refused\":\"" + outcome.refusal().reason() + "\"}";
+            described.put("refused", outcome.refusal().reason().toString());
+            described.put("why", outcome.refusal().describe());
+        } else if (outcome.failure() != null) {
+            described.put("broke", true);
+            described.put("why", outcome.failure());
+        } else {
+            described.put("status", outcome.result().status().toString());
+            described.put("leaseExpired", outcome.leaseExpired());
         }
-        if (outcome.failure() != null) {
-            return "{\"broke\":true}";
-        }
-        return "{\"status\":\"" + outcome.result().status()
-                + "\",\"leaseExpired\":" + outcome.leaseExpired() + "}";
+        return described.toString();
     }
 }

@@ -36,6 +36,7 @@ public final class LeaseWatch implements AutoCloseable {
 
     private final AtomicBoolean cancellation;
     private final AtomicLong deadlineMs;
+    private final AtomicLong renewEveryMs;
     private final AtomicBoolean expired = new AtomicBoolean();
     private volatile boolean watching;
     private Thread watcher;
@@ -48,6 +49,7 @@ public final class LeaseWatch implements AutoCloseable {
     public LeaseWatch(Lease lease, long receivedAtMs, AtomicBoolean cancellation) {
         this.cancellation = cancellation;
         this.deadlineMs = new AtomicLong(lease.deadlineFrom(receivedAtMs));
+        this.renewEveryMs = new AtomicLong(lease.renewEveryMs());
     }
 
     /** Start watching. */
@@ -83,7 +85,21 @@ public final class LeaseWatch implements AutoCloseable {
     public void renew(Lease renewed, long receivedAtMs) {
         if (!expired.get()) {
             deadlineMs.set(renewed.deadlineFrom(receivedAtMs));
+            renewEveryMs.set(renewed.renewEveryMs());
         }
+    }
+
+    /**
+     * How often the granting side asked to be asked again.
+     * <p>
+     * It comes from the lease for the same reason the deadline does. A runner
+     * that picked its own interval would be a second rule beside the one the
+     * protocol already carries, and the two would be free to disagree — about
+     * how many renewals fit inside a lease, which is the whole of whether a
+     * lost heartbeat is survivable.
+     */
+    public long renewEveryMs() {
+        return renewEveryMs.get();
     }
 
     /** Whether the lease ran out while this was watching. */
