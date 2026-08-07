@@ -29,6 +29,12 @@ import java.util.List;
  * The events are compared as a multiset rather than a sequence, because
  * independent steps run concurrently and their interleaving is not a promise
  * the engine makes.
+ * <p>
+ * One thing it cannot tell apart, said plainly: an evaluated assertion is
+ * recorded with its type and its outcome and no id, so two assertions of the
+ * same type on the same step are one signature here. Distinguishing them would
+ * mean comparing their messages, and a message carries observed durations and
+ * values — which is a fact about the day, not about the run.
  */
 record NormalizedRun(List<String> events) {
 

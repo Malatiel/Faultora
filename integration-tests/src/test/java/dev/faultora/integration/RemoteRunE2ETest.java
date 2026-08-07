@@ -14,6 +14,7 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -121,6 +122,29 @@ class RemoteRunE2ETest {
     }
 
     @Test
+    void theComparisonNoticesADifferenceOfOneField() throws Exception {
+        // The two comparisons above assert equality, and equality is what a
+        // broken comparison hands out for free: a signature built from field
+        // names matching nothing is empty for every event, and both tests
+        // still pass while measuring nothing.
+        //
+        // Two different scenarios would not settle it either — their journals
+        // differ in length, so even empty signatures compare unequal. What
+        // settles it is one journal against a copy of itself with a single
+        // field changed: same events, same order, one assertion that passed
+        // now recorded as failed.
+        List<String> journal = Files.readAllLines(locally("passing.yaml", "1"));
+        List<String> doctored = journal.stream()
+                .map(line -> line.replace("\"outcome\":\"PASS\"", "\"outcome\":\"FAIL\""))
+                .toList();
+
+        assertThat(doctored).hasSameSizeAs(journal).isNotEqualTo(journal);
+        assertThat(NormalizedRun.of(journal))
+                .as("an assertion outcome is part of what is compared")
+                .isNotEqualTo(NormalizedRun.of(doctored));
+    }
+
+    @Test
     void aFaultDoesNotOutliveTheRunItsLeaseEnded() throws Exception {
         // A fault good for a minute, work that would take half of one, and a
         // dispatcher that stops answering part-way through. The lease is not
@@ -189,6 +213,17 @@ class RemoteRunE2ETest {
                     .isZero();
             String journal = Files.readString(outcome.journalPath());
             assertThat(journal).contains("FAULT_INJECTED", "FAULT_ROLLED_BACK");
+
+            // And it said so. Only the heartbeat went unanswered, so the run
+            // that stopped for want of permission still had somewhere to
+            // deliver what it had found — which is the half of the gate that
+            // says stopping tidily and telling nobody is also a failure.
+            assertThat(runner.journalDelivered("run-remote-fault"))
+                    .as("what the run learned before it stopped reached the far side")
+                    .isNotEmpty();
+            assertThat(runner.outcomeDelivered("run-remote-fault"))
+                    .as("and the far side was told why it stopped")
+                    .contains("leaseExpired\":true");
         }
     }
 }

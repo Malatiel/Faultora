@@ -17,7 +17,6 @@ import dev.faultora.runner.protocol.Dispatch;
 import dev.faultora.runner.protocol.DispatchedDocument;
 import dev.faultora.runner.protocol.Lease;
 import dev.faultora.runner.protocol.SignedPolicy;
-import dev.faultora.spi.contract.FaultProvider;
 import dev.faultora.testkit.Certificates;
 import dev.faultora.testkit.QualificationDispatcher;
 
