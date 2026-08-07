@@ -42,15 +42,36 @@ public final class Certificates {
      * @param validityDays how long it is good for — a test can issue an expired
      *                     one by asking for none
      */
-    public static Identity issue(Path directory, String name, int validityDays) throws Exception {
+    public static Identity issue(Path directory, String name, int validityDays)
+            throws Exception {
+        return issue(directory, name, validityDays, new String[0]);
+    }
+
+    /**
+     * Issue an identity reachable under more names than localhost.
+     * <p>
+     * A container reaches its host under a name of the platform's choosing, and
+     * a certificate that does not carry that name fails the handshake — which
+     * looks like a broken runner rather than a missing SAN.
+     *
+     * @param extraSubjectNames further {@code SAN=} entries, as keytool spells
+     *                          them: {@code dns:host.docker.internal}
+     */
+    public static Identity issue(
+            Path directory, String name, int validityDays, String... extraSubjectNames)
+            throws Exception {
         Path keystore = directory.resolve(name + ".p12");
         Path certificate = directory.resolve(name + ".crt");
         Files.deleteIfExists(keystore);
         Files.deleteIfExists(certificate);
 
+        StringBuilder subjectNames = new StringBuilder("SAN=dns:localhost,ip:127.0.0.1");
+        for (String extra : extraSubjectNames) {
+            subjectNames.append(',').append(extra);
+        }
         keytool("-genkeypair", "-alias", name, "-keyalg", "RSA", "-keysize", "2048",
                 "-dname", "CN=" + name, "-validity", String.valueOf(validityDays),
-                "-ext", "SAN=dns:localhost,ip:127.0.0.1",
+                "-ext", subjectNames.toString(),
                 "-keystore", keystore.toString(), "-storetype", "PKCS12",
                 "-storepass", PASSWORD, "-keypass", PASSWORD);
         keytool("-exportcert", "-alias", name, "-keystore", keystore.toString(),

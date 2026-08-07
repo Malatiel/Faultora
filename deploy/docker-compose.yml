@@ -1,0 +1,82 @@
+# A runner beside the system it tests, on a network that reaches nothing else.
+#
+#   ./mvnw -o package -DskipTests
+#   docker build --build-arg JAR=faultora-cli/target/faultora-0.9.0-SNAPSHOT.jar \
+#                -t faultora/runner:0.9.0 .
+#   FAULTORA_SECRET_RUNNER_TLS=... docker compose -f deploy/docker-compose.yml up
+#
+# Nothing here publishes a port. The runner dials the control plane; there is
+# no path into this network from outside it, which is the property the whole
+# arrangement exists for and is visible as the absence of a `ports:` key.
+
+services:
+  runner:
+    image: faultora/runner:0.9.0
+    command:
+      - runner
+      - --dispatcher
+      - ${FAULTORA_DISPATCHER:?the control plane this runner asks for work}
+      - --keystore
+      - /etc/faultora/tls/runner.p12
+      - --truststore
+      - /etc/faultora/tls/trusted.p12
+      - --tls-secret-id
+      - runner-tls
+      - --policy-key
+      - control-2026=/etc/faultora/keys/control-2026.crt
+      - --work-dir
+      - /var/faultora
+      # This deployment breaks nothing. Naming a fault type is what grants the
+      # ability to inject one, and there is no --toxiproxy-url either: the two
+      # have to agree, because a fault provider nobody may use is a provider
+      # somebody will eventually be told to enable.
+      - --allow-operation-class
+      - READ_ONLY
+      - --allow-operation-class
+      - MUTATING
+    environment:
+      # Resolved from this runner's own environment, never from a dispatch.
+      # In a real deployment this comes from the secret store the platform
+      # provides rather than from a shell variable.
+      FAULTORA_SECRET_RUNNER_TLS: ${FAULTORA_SECRET_RUNNER_TLS:?the key material's password}
+    volumes:
+      - ./tls:/etc/faultora/tls:ro
+      - ./keys:/etc/faultora/keys:ro
+      - runner-work:/var/faultora
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      # A command rather than a request: the runner has no port, and giving it
+      # one so that a probe could connect would give up the property above.
+      test:
+        - CMD
+        - java
+        - -jar
+        - /opt/faultora/faultora.jar
+        - health
+        - --file
+        - /var/faultora/health.json
+      interval: 15s
+      timeout: 10s
+      # Long enough to dial out and register before anything judges it.
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - runner
+
+volumes:
+  # Named rather than tmpfs: a journal the runner still holds when the
+  # container stops is not re-delivered when it starts again (ADR-020), so
+  # discarding it on every restart discards findings nobody has seen.
+  runner-work:
+
+networks:
+  runner:
+    # Reaches the control plane and the system under test, and nothing reaches
+    # in. `internal: true` would cut the outbound path the runner needs, so the
+    # deny-by-default work belongs in the platform's egress rules — the
+    # Kubernetes example states them, because Compose has nowhere to.
+    driver: bridge

@@ -59,7 +59,20 @@ public final class QualificationDispatcher implements AutoCloseable {
      * private network, which is the whole point of the arrangement.
      */
     public QualificationDispatcher(SSLContext context) throws IOException {
-        server = HttpsServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        this(context, "127.0.0.1");
+    }
+
+    /**
+     * Listen on a free port of a named interface.
+     * <p>
+     * Loopback everywhere except one case: a runner inside a container reaches
+     * its host from another network namespace, and a dispatcher bound to
+     * loopback is unreachable from there. Nothing about the arrangement
+     * changes — the runner still dials out — only which interface the far side
+     * happens to be listening on.
+     */
+    public QualificationDispatcher(SSLContext context, String bindHost) throws IOException {
+        server = HttpsServer.create(new InetSocketAddress(bindHost, 0), 0);
         server.setHttpsConfigurator(new HttpsConfigurator(context) {
             @Override
             public void configure(HttpsParameters parameters) {
@@ -80,6 +93,11 @@ public final class QualificationDispatcher implements AutoCloseable {
     /** Where a runner dials. */
     public String address() {
         return "https://127.0.0.1:" + server.getAddress().getPort();
+    }
+
+    /** The port, for a runner that reaches this host under another name. */
+    public int port() {
+        return server.getAddress().getPort();
     }
 
     /** Offer this dispatch to the next runner that asks. */

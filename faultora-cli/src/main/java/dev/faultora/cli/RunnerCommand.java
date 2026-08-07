@@ -95,7 +95,13 @@ final class RunnerCommand implements Command {
                         Set.copyOf(options.allowedExtensions()), false, 0, Set.of(), Set.of()));
 
         announce(options);
-        return serve(client, agent, options.once(), options.shutdownGraceMs());
+        try (RunnerHealth health = RunnerHealth.reporting(
+                options.healthFile(), options.runnerId())) {
+            return serve(client, agent, health, options.once(), options.shutdownGraceMs());
+        } catch (java.io.IOException cannotReport) {
+            err.println("The working directory is not writable: " + cannotReport.getMessage());
+            return FaultoraCli.EXIT_INVALID_CONFIG;
+        }
     }
 
     /**
@@ -114,11 +120,13 @@ final class RunnerCommand implements Command {
      * runner still holds when it stops is not re-delivered when it starts
      * again</b> — that is recorded as a gap rather than implied away here.
      */
-    private int serve(RunnerClient client, RunnerAgent agent, boolean once, long graceMs) {
+    private int serve(RunnerClient client, RunnerAgent agent, RunnerHealth health,
+            boolean once, long graceMs) {
         AtomicBoolean serving = new AtomicBoolean(true);
         CountDownLatch finished = new CountDownLatch(1);
         Thread stopping = new Thread(() -> {
             serving.set(false);
+            health.stopping();
             try {
                 finished.await(graceMs, TimeUnit.MILLISECONDS);
             } catch (InterruptedException interrupted) {
@@ -130,6 +138,7 @@ final class RunnerCommand implements Command {
             String sessionId = null;
             while (serving.get()) {
                 if (sessionId == null) {
+                    health.registering();
                     sessionId = openSession(client);
                     if (sessionId == null) {
                         if (once || !pause(serving, RECONNECT_DELAY_MS)) {
@@ -137,14 +146,18 @@ final class RunnerCommand implements Command {
                         }
                         continue;
                     }
+                    health.waiting();
                 }
                 try {
-                    Optional<DispatchedRun.Outcome> outcome = agent.takeOneDispatch(sessionId);
+                    Optional<DispatchedRun.Outcome> outcome =
+                            agent.takeOneDispatch(sessionId, health::running);
+                    health.served();
                     if (outcome.isPresent()) {
                         int served = report(outcome.get());
                         if (once) {
                             return served;
                         }
+                        health.waiting();
                     } else if (!pause(serving, IDLE_PAUSE_MS)) {
                         return FaultoraCli.EXIT_PASS;
                     }

@@ -37,3 +37,6 @@ Thumbs.db
 
 # Faultora run artifacts
 .faultora/
+
+# Offline installation bundles, built by deploy/offline-bundle.sh
+dist/

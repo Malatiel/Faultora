@@ -10,6 +10,7 @@ import dev.faultora.spi.contract.FaultProvider;
 import java.io.IOException;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Consumer;
 
 /**
  * The runner as a thing that runs: ask for work, do it, keep saying so.
@@ -63,17 +64,34 @@ public final class RunnerAgent {
     }
 
     /**
-     * Take one dispatch and see it through.
+     * Take one dispatch and see it through, with nobody watching.
      *
      * @return what became of it, or empty when there was nothing to do
      */
     public Optional<DispatchedRun.Outcome> takeOneDispatch(String sessionId)
+            throws IOException, InterruptedException {
+        return takeOneDispatch(sessionId, runId -> { });
+    }
+
+    /**
+     * Take one dispatch and see it through.
+     *
+     * @param tookDispatch told the run id the moment there is work, before any
+     *                     of it is done — a poll can be answered at any time and
+     *                     a run can take minutes, so this is the only moment
+     *                     anything outside can learn the difference between
+     *                     waiting and working
+     * @return what became of it, or empty when there was nothing to do
+     */
+    public Optional<DispatchedRun.Outcome> takeOneDispatch(
+            String sessionId, Consumer<String> tookDispatch)
             throws IOException, InterruptedException {
         Optional<Dispatch> work = client.pollForWork(sessionId);
         if (work.isEmpty()) {
             return Optional.empty();
         }
         Dispatch dispatch = work.get();
+        tookDispatch.accept(dispatch.runId());
 
         JournalTail[] tail = new JournalTail[1];
         Thread[] keepingAlive = new Thread[1];

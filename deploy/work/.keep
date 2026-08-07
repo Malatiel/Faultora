@@ -1,0 +1,5 @@
+This file exists so the image can carry a writable working directory.
+
+The base image has no shell, so `RUN mkdir` is not available; copying this
+directory in with the right owner is how the runner gets somewhere to write
+its journals and its status file.

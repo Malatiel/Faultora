@@ -1,0 +1,66 @@
+# Deny everything, then allow the two things a runner does.
+#
+# The first policy is the one that matters and the one that is easy to leave
+# out: without it, "allow" rules are additions to a namespace that already
+# permits everything, and the deployment reads as locked down while being open.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: faultora-runner-deny-all
+  namespace: faultora
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: faultora-runner
+  policyTypes:
+    - Ingress
+    - Egress
+  # No rules at all. Nothing in, nothing out, until something below says so.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: faultora-runner-egress
+  namespace: faultora
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: faultora-runner
+  policyTypes:
+    - Egress
+  egress:
+    # DNS, or none of the rest resolves.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # The control plane the runner asks for work. Replace the block with the
+    # address your control plane actually has; a rule that allows the internet
+    # because nobody narrowed it is the failure this file exists to prevent.
+    - to:
+        - ipBlock:
+            cidr: 203.0.113.10/32
+      ports:
+        - protocol: TCP
+          port: 8443
+    # The system under test. Named by label rather than by address, so a
+    # redeployed target does not silently stop being reachable — and so that
+    # everything else in the namespace stays unreachable.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: system-under-test
+  # No ingress rule anywhere in this file. Nothing connects to a runner: not
+  # the control plane, which the runner dials; not a probe, which runs a
+  # command inside the container; not a scrape. That absence is the release
+  # gate, and it is enforced by the deny-all policy above rather than by this
+  # comment.

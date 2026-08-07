@@ -1,0 +1,173 @@
+# A runner in a namespace that may reach two things and be reached by nothing.
+#
+# Read with deploy/kubernetes/network-policy.yaml, which is where the second
+# half of that sentence is actually enforced.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: faultora-runner
+  namespace: faultora
+automountServiceAccountToken: false
+# A runner talks to a control plane over its own mutually authenticated
+# connection. It has no business with the Kubernetes API, and a token it never
+# uses is a credential in a container for no reason.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: faultora-runner
+  namespace: faultora
+spec:
+  # One runner executes one plan at a time. More replicas means more
+  # concurrent dispatches, not a faster one.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: faultora-runner
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: faultora-runner
+    spec:
+      serviceAccountName: faultora-runner
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        # So the emptyDir below is writable by the user the image runs as.
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      # The signal path this depends on: SIGTERM stops the runner asking for
+      # work and gives the run in flight until --shutdown-grace to finish and
+      # report. Keep this at or above that grace, or Kubernetes will kill a run
+      # the runner was about to deliver.
+      terminationGracePeriodSeconds: 40
+      containers:
+        - name: runner
+          image: faultora/runner:0.9.0
+          args:
+            - runner
+            - --dispatcher
+            - https://control.example.internal:8443
+            - --keystore
+            - /etc/faultora/tls/runner.p12
+            - --truststore
+            - /etc/faultora/tls/trusted.p12
+            - --tls-secret-id
+            - runner-tls
+            - --policy-key
+            - control-2026=/etc/faultora/keys/control-2026.crt
+            - --work-dir
+            - /var/faultora
+            - --shutdown-grace
+            - 30s
+            # No --allow-fault and no --toxiproxy-url. Both halves of "without
+            # infrastructure fault permissions" have to agree: the pod below
+            # drops every capability, and this line is why nothing would ask
+            # for one. Granting NET_ADMIN and forbidding network faults, or the
+            # reverse, is one fact written in two places that will disagree.
+            - --allow-operation-class
+            - READ_ONLY
+            - --allow-operation-class
+            - MUTATING
+          env:
+            # Resolved from this runner's own environment. The dispatch names
+            # handles and never values, so this is the only place the password
+            # exists.
+            - name: FAULTORA_SECRET_RUNNER_TLS
+              valueFrom:
+                secretKeyRef:
+                  name: faultora-runner-tls
+                  key: password
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/faultora/tls
+              readOnly: true
+            - name: policy-keys
+              mountPath: /etc/faultora/keys
+              readOnly: true
+            - name: work
+              mountPath: /var/faultora
+          # Both probes run a command, because the runner has no port. Giving
+          # it one so a probe could connect would give up the property this
+          # deployment exists for.
+          startupProbe:
+            exec:
+              command:
+                - java
+                - -jar
+                - /opt/faultora/faultora.jar
+                - health
+                - --file
+                - /var/faultora/health.json
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            # Freshness only. A runner that cannot reach its control plane is
+            # NOT unhealthy here on purpose: restarting does not make a control
+            # plane reachable, and this probe restarting on it would take out
+            # every runner in the fleet at the same moment.
+            exec:
+              command:
+                - java
+                - -jar
+                - /opt/faultora/faultora.jar
+                - health
+                - --file
+                - /var/faultora/health.json
+            periodSeconds: 20
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            # This one does ask about the control plane. It is information —
+            # nothing routes traffic to a runner — and it is the signal an
+            # operator wants when a fleet has quietly stopped being dispatched
+            # to.
+            exec:
+              command:
+                - java
+                - -jar
+                - /opt/faultora/faultora.jar
+                - health
+                - --file
+                - /var/faultora/health.json
+                - --require-registered
+            periodSeconds: 20
+            timeoutSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: tls
+          secret:
+            secretName: faultora-runner-tls
+            items:
+              - key: runner.p12
+                path: runner.p12
+              - key: trusted.p12
+                path: trusted.p12
+        - name: policy-keys
+          configMap:
+            # A public key, so a ConfigMap rather than a Secret — and its own
+            # object rather than part of the TLS secret, because terminating
+            # TLS is something an infrastructure component may legitimately be
+            # given and issuing a policy is not (ADR-021).
+            name: faultora-policy-keys
+        - name: work
+          # WHAT THIS GIVES UP, stated rather than discovered: an emptyDir dies
+          # with the pod. A journal the runner still holds when the pod goes is
+          # not re-delivered when a new one starts (ADR-020), so those findings
+          # are gone rather than merely late. Use a PersistentVolumeClaim where
+          # losing a run's findings matters more than a simpler deployment.
+          emptyDir: {}

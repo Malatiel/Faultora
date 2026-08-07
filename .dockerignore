@@ -1,0 +1,3 @@
+*
+!deploy/work
+!faultora-cli/target/*.jar

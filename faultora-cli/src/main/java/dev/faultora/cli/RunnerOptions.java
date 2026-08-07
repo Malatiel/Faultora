@@ -49,6 +49,8 @@ import java.util.Set;
  * @param limits             everything this runner permits, whatever it is told
  * @param toxiproxyUrl       admin endpoint enabling network faults, or null
  * @param allowedExtensions  classes of non-built-in extensions permitted here
+ * @param healthFile         where the runner writes what it is doing, for a
+ *                           probe to read with {@code faultora health}
  * @param shutdownGraceMs    how long a signal waits for the run in flight to
  *                           finish and report before the process goes
  * @param once               take one dispatch and stop, rather than serving
@@ -66,6 +68,7 @@ record RunnerOptions(
         LocalLimits limits,
         String toxiproxyUrl,
         List<String> allowedExtensions,
+        Path healthFile,
         long shutdownGraceMs,
         boolean once,
         boolean helpRequested
@@ -121,6 +124,7 @@ record RunnerOptions(
         long maxPayloadBytes = DEFAULT_MAX_PAYLOAD_BYTES;
         String toxiproxyUrl = null;
         List<String> allowedExtensions = new java.util.ArrayList<>();
+        Path healthFile = null;
         long shutdownGraceMs = DEFAULT_SHUTDOWN_GRACE_MS;
         boolean once = false;
 
@@ -168,6 +172,7 @@ record RunnerOptions(
                 case "--max-evidence-rows" ->
                         maxEvidenceRows = (int) positive(value(remaining, option), option);
                 case "--redact" -> redactPaths.add(value(remaining, option));
+                case "--health-file" -> healthFile = Path.of(value(remaining, option));
                 case "--shutdown-grace" ->
                         shutdownGraceMs = duration(value(remaining, option), option);
                 case "--once" -> once = true;
@@ -204,12 +209,15 @@ record RunnerOptions(
                                 captureBodies, captureHeaders, keeps.headerDenylist(),
                                 maxEvidenceBytes, maxEvidenceRows, redactPaths,
                                 keeps.contentTypeAllowlist(), keeps.retentionClass())),
-                toxiproxyUrl, List.copyOf(allowedExtensions), shutdownGraceMs, once, false);
+                toxiproxyUrl, List.copyOf(allowedExtensions),
+                healthFile == null ? workDirectory.resolve("health.json") : healthFile,
+                shutdownGraceMs, once, false);
     }
 
     private static RunnerOptions help() {
         return new RunnerOptions(null, null, null, null, Map.of(), DEFAULT_WORK_DIRECTORY,
                 null, false, null, null, List.of(),
+                DEFAULT_WORK_DIRECTORY.resolve("health.json"),
                 DEFAULT_SHUTDOWN_GRACE_MS, false, true);
     }
 

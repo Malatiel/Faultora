@@ -14,6 +14,8 @@ import java.util.*;
  *   <li>{@code test --scenario <file> [--target <url>] [--format <fmt>]} — run scenario</li>
  *   <li>{@code runner --dispatcher <url>} — serve a control plane from inside a
  *       private network, dialling out for work</li>
+ *   <li>{@code health --file <status file>} — read what a runner says about
+ *       itself, for a probe that cannot connect to one</li>
  * </ul>
  * <p>
  * Exit codes: 0 = pass, 1 = test failure, 2 = invalid configuration, 3 = runner failure.
@@ -45,6 +47,7 @@ public class FaultoraCli {
         commands.put("discover", new DiscoverCommand());
         commands.put("test", new TestCommand());
         commands.put("runner", new RunnerCommand(out, err));
+        commands.put("health", new HealthCommand(out, err));
     }
 
     /**
@@ -111,6 +114,7 @@ public class FaultoraCli {
         out.println("  discover   --from-openapi <file>                    List operations from OpenAPI");
         out.println("  test       --scenario <file> [options]              Run scenario against target");
         out.println("  runner     --dispatcher <url> [options]             Serve a control plane, dialling out");
+        out.println("  health     --file <status file>                     Is the runner in this container all right?");
         out.println();
         out.println("Options:");
         out.println("  -v, --version   Show version");
