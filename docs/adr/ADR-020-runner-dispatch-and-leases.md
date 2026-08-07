@@ -146,6 +146,15 @@ shard-level leases.
   may hold is a limit an operator should be able to state**, so this has to
   reach the protocol before 1.0 freezes it — as part of the signed policy,
   where a runner can narrow it like everything else.
+- **Delivery that outlives the process.** Events survive a disconnection and
+  are re-sent on reconnect — within the life of the runner. A journal the
+  runner still holds when the process stops is on disk and is **not**
+  re-delivered when it starts again: nothing reads the working directory at
+  startup and offers what is there. Shutdown gives the run in flight a bounded
+  grace to finish and report, which covers the ordinary stop; it does not cover
+  a kill, a crash, or a run longer than the grace. The journal is not lost, but
+  collecting it is a person with shell access rather than the protocol — and
+  the protocol is what the promise was made about.
 
 ## Consequences
 

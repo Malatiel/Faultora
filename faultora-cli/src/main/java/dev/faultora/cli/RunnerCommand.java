@@ -16,6 +16,8 @@ import java.io.PrintWriter;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -93,22 +95,36 @@ final class RunnerCommand implements Command {
                         Set.copyOf(options.allowedExtensions()), false, 0, Set.of(), Set.of()));
 
         announce(options);
-        return serve(client, agent, options.once());
+        return serve(client, agent, options.once(), options.shutdownGraceMs());
     }
 
     /**
      * Ask for work until told to stop.
      * <p>
-     * Two things are worth stating. A session is re-established rather than
-     * held: a dispatcher restart is the ordinary way one dies, and a runner
-     * that kept asking on a dead session would look like a hang to somebody who
-     * cannot reach it. And shutdown lets the dispatch in flight finish — a
-     * journal abandoned mid-run is exactly what the lease exists to avoid
-     * producing.
+     * A session is re-established rather than held: a dispatcher restart is the
+     * ordinary way one dies, and a runner that kept asking on a dead session
+     * would look like a hang to somebody who cannot reach it.
+     * <p>
+     * Shutdown is where the exact wording matters. A signal stops this asking
+     * for more work, and then <b>waits up to the grace period</b> for the run in
+     * flight to finish and deliver what it found — a hook that only set a flag
+     * would let the JVM exit mid-run, which is the "stopped and told nobody"
+     * failure ADR-020 names. It is a bound and not a guarantee: a run longer
+     * than the grace is cut off, and its journal is on disk. <b>A journal a
+     * runner still holds when it stops is not re-delivered when it starts
+     * again</b> — that is recorded as a gap rather than implied away here.
      */
-    private int serve(RunnerClient client, RunnerAgent agent, boolean once) {
+    private int serve(RunnerClient client, RunnerAgent agent, boolean once, long graceMs) {
         AtomicBoolean serving = new AtomicBoolean(true);
-        Thread stopping = new Thread(() -> serving.set(false), "runner-shutdown");
+        CountDownLatch finished = new CountDownLatch(1);
+        Thread stopping = new Thread(() -> {
+            serving.set(false);
+            try {
+                finished.await(graceMs, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }, "runner-shutdown");
         Runtime.getRuntime().addShutdownHook(stopping);
         try {
             String sessionId = null;
@@ -149,6 +165,7 @@ final class RunnerCommand implements Command {
             }
             return FaultoraCli.EXIT_PASS;
         } finally {
+            finished.countDown();
             removeQuietly(stopping);
         }
     }
@@ -228,16 +245,13 @@ final class RunnerCommand implements Command {
      * re-reads the files on every connection so that rotation is a file swap —
      * and a password cached here would make the one thing that must not need a
      * restart need one.
+     * <p>
+     * A handle that resolves to nothing throws from the resolver, naming the
+     * environment variable it looked for, and that reaches the operator as the
+     * reason the runner could not register.
      */
     private static char[] passwordOf(EnvironmentSecretResolver secrets, String handleId) {
-        SecretHandle handle = secrets.resolve(handleId);
-        if (handle == null) {
-            throw new CliException(
-                    "No secret is bound to '" + handleId + "': the key material's password "
-                            + "is resolved from this runner's environment, never from a "
-                            + "dispatch", FaultoraCli.EXIT_INVALID_CONFIG);
-        }
-        return handle.secretValue();
+        return secrets.resolve(handleId).secretValue();
     }
 
     /**
@@ -265,6 +279,9 @@ final class RunnerCommand implements Command {
                 new java.util.TreeSet<>(RunEnvironment.PROTOCOLS_SPOKEN)));
         out.println("  policy keys   " + String.join(", ",
                 new java.util.TreeSet<>(options.policyKeys().keySet())));
+        out.println("  operations    " + String.join(", ",
+                options.limits().allowedOperationClasses().stream()
+                        .map(Enum::name).sorted().toList()));
         out.println("  faults        " + (options.limits().allowedFaultTypes().isEmpty()
                 ? "none" : String.join(", ",
                         new java.util.TreeSet<>(options.limits().allowedFaultTypes()))));
@@ -299,9 +316,10 @@ final class RunnerCommand implements Command {
         out.println("                              something is granted deliberately");
         out.println("  --allow-target <id>         Repeatable. Empty means ANY target");
         out.println("  --allow-environment <name>  Repeatable. Empty means ANY environment");
-        out.println("  --allow-operation-class <c> Repeatable. READ_ONLY and MUTATING"
-                + " by default;");
-        out.println("                              DESTRUCTIVE only when named");
+        out.println("  --allow-operation-class <c> Repeatable, and naming any REPLACES the");
+        out.println("                              default READ_ONLY,MUTATING — so a runner");
+        out.println("                              can be narrowed to reads alone. Name every");
+        out.println("                              class you want; they are printed on start");
         out.println("  --allow-private             Permit private and loopback destinations");
         out.println("  --allow-extension <class>   Permit a non-built-in extension");
         out.println("  --max-concurrency <n>       Default 10");
@@ -314,6 +332,8 @@ final class RunnerCommand implements Command {
         out.println("  --work-dir <dir>            Where journals are written"
                 + " (default faultora-runner-work)");
         out.println("  --runner-id <id>            Name at registration (default: hostname)");
+        out.println("  --shutdown-grace <duration> How long a signal waits for the run in");
+        out.println("                              flight to finish and report (default 30s)");
         out.println("  --once                      Take one dispatch and stop");
     }
 }

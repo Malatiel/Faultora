@@ -26,9 +26,9 @@ import java.util.Set;
  * <b>An empty allowlist does not mean the same thing in every dimension</b>,
  * and the difference is deliberate rather than an oversight to paper over:
  * <ul>
- *   <li>targets, environments and operation classes — empty means <em>no
- *       restriction</em>. A deployment that has not thought about which target
- *       ids exist should not thereby refuse every dispatch.</li>
+ *   <li>targets and environments — empty means <em>no restriction</em>. A
+ *       deployment that has not thought about which target ids exist should not
+ *       thereby refuse every dispatch.</li>
  *   <li>fault types — empty means <em>none at all</em>. Breaking something is
  *       the capability that has to be granted deliberately, and a runner that
  *       injected faults because nobody had listed any would have the rule
@@ -47,6 +47,8 @@ import java.util.Set;
  * @param limits             everything this runner permits, whatever it is told
  * @param toxiproxyUrl       admin endpoint enabling network faults, or null
  * @param allowedExtensions  classes of non-built-in extensions permitted here
+ * @param shutdownGraceMs    how long a signal waits for the run in flight to
+ *                           finish and report before the process goes
  * @param once               take one dispatch and stop, rather than serving
  * @param helpRequested      whether the operator asked for help instead
  */
@@ -62,11 +64,22 @@ record RunnerOptions(
         LocalLimits limits,
         String toxiproxyUrl,
         List<String> allowedExtensions,
+        long shutdownGraceMs,
         boolean once,
         boolean helpRequested
 ) {
     /** Where journals go when the operator names nowhere. */
     static final Path DEFAULT_WORK_DIRECTORY = Path.of("faultora-runner-work");
+
+    /**
+     * How long a signal waits for the run in flight.
+     * <p>
+     * Thirty seconds because that is what a container platform gives a process
+     * by default, and a grace period longer than the platform's is a promise
+     * something else will break. A run that needs longer is cut off; its bound
+     * is the lease, not this.
+     */
+    private static final long DEFAULT_SHUTDOWN_GRACE_MS = 30_000;
 
     /**
      * What a runner permits before anything is narrowed.
@@ -106,6 +119,7 @@ record RunnerOptions(
         long maxPayloadBytes = DEFAULT_MAX_PAYLOAD_BYTES;
         String toxiproxyUrl = null;
         List<String> allowedExtensions = new java.util.ArrayList<>();
+        long shutdownGraceMs = DEFAULT_SHUTDOWN_GRACE_MS;
         boolean once = false;
 
         var remaining = args.iterator();
@@ -130,13 +144,16 @@ record RunnerOptions(
                 case "--allow-fault" -> allowedFaults.add(value(remaining, option));
                 case "--max-concurrency" ->
                         maxConcurrency = (int) positive(value(remaining, option), option);
-                case "--max-duration" -> maxDurationMs = duration(value(remaining, option));
+                case "--max-duration" ->
+                        maxDurationMs = duration(value(remaining, option), option);
                 case "--max-requests" ->
                         maxRequests = (int) positive(value(remaining, option), option);
                 case "--max-payload-bytes" ->
                         maxPayloadBytes = positive(value(remaining, option), option);
                 case "--toxiproxy-url" -> toxiproxyUrl = value(remaining, option);
                 case "--allow-extension" -> allowedExtensions.add(value(remaining, option));
+                case "--shutdown-grace" ->
+                        shutdownGraceMs = duration(value(remaining, option), option);
                 case "--once" -> once = true;
                 default -> throw new CliException(
                         "Unknown option: " + option, FaultoraCli.EXIT_INVALID_CONFIG);
@@ -167,12 +184,13 @@ record RunnerOptions(
                         allowedClasses.isEmpty() ? DEFAULT_OPERATION_CLASSES : allowedClasses,
                         allowedEnvironments, allowedFaults,
                         maxConcurrency, maxDurationMs, maxRequests, maxPayloadBytes),
-                toxiproxyUrl, List.copyOf(allowedExtensions), once, false);
+                toxiproxyUrl, List.copyOf(allowedExtensions), shutdownGraceMs, once, false);
     }
 
     private static RunnerOptions help() {
         return new RunnerOptions(null, null, null, null, Map.of(), DEFAULT_WORK_DIRECTORY,
-                null, false, null, null, List.of(), false, true);
+                null, false, null, null, List.of(),
+                DEFAULT_SHUTDOWN_GRACE_MS, false, true);
     }
 
     /**
@@ -211,12 +229,11 @@ record RunnerOptions(
         }
     }
 
-    private static long duration(String value) {
+    private static long duration(String value, String option) {
         OptionalLong millis = DurationSyntax.parseMillis(value);
         if (millis.isEmpty() || millis.getAsLong() <= 0) {
             throw new CliException(
-                    "--max-duration expects " + DurationSyntax.ACCEPTED_FORMS
-                            + "; got: " + value,
+                    option + " expects " + DurationSyntax.ACCEPTED_FORMS + "; got: " + value,
                     FaultoraCli.EXIT_INVALID_CONFIG);
         }
         return millis.getAsLong();
