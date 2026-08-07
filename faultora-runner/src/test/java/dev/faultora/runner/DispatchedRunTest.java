@@ -10,6 +10,7 @@ import dev.faultora.model.security.ContentDigest;
 import dev.faultora.model.security.ExtensionPolicy;
 import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.runner.protocol.Dispatch;
+import dev.faultora.runner.protocol.EffectivePolicy;
 import dev.faultora.runner.protocol.Lease;
 import dev.faultora.runner.protocol.Refusal;
 import dev.faultora.runner.protocol.SignedPolicy;
@@ -41,7 +42,7 @@ class DispatchedRunTest {
 
     private static final LocalLimits LIMITS = new LocalLimits(
             Set.of(), Set.of(SafetyClassification.READ_ONLY), Set.of(),
-            Set.of("http-latency"), 4, 600_000, 100, 1_048_576);
+            Set.of("http-latency"), 4, 600_000, 100, 1_048_576, null);
 
     /** Built-in extensions only, which is what a runner ships with. */
     private static final ExtensionPolicy EXTENSIONS =
@@ -57,9 +58,9 @@ class DispatchedRunTest {
     }
 
     /** The policy a dispatch carries, as the verifier would hand it over. */
-    private static TargetPolicy policyOf(Dispatch dispatch) {
+    private static EffectivePolicy policyOf(Dispatch dispatch) {
         try {
-            return MAPPER.readValue(dispatch.policy().policyJson(), TargetPolicy.class);
+            return MAPPER.readValue(dispatch.policy().policyJson(), EffectivePolicy.class);
         } catch (Exception impossible) {
             throw new AssertionError(impossible);
         }
@@ -70,7 +71,8 @@ class DispatchedRunTest {
                 Set.of(new TargetId("default")), Set.of(SafetyClassification.READ_ONLY),
                 50, 2, 300_000, 1024, Set.of(), Set.of());
         try {
-            return new SignedPolicy(MAPPER.writeValueAsString(policy), "trusted", "c2ln");
+            return new SignedPolicy(
+                    MAPPER.writeValueAsString(EffectivePolicy.of(policy)), "trusted", "c2ln");
         } catch (Exception impossible) {
             throw new AssertionError(impossible);
         }

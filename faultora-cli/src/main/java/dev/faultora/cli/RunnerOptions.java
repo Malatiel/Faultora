@@ -1,7 +1,9 @@
 package dev.faultora.cli;
 
 import dev.faultora.model.catalog.SafetyClassification;
+import dev.faultora.model.security.EvidencePolicy;
 import dev.faultora.runner.LocalLimits;
+import dev.faultora.runtime.RunEvidence;
 import dev.faultora.spec.parser.DurationSyntax;
 
 import java.net.URI;
@@ -122,6 +124,13 @@ record RunnerOptions(
         long shutdownGraceMs = DEFAULT_SHUTDOWN_GRACE_MS;
         boolean once = false;
 
+        EvidencePolicy keeps = RunEvidence.defaultPolicy();
+        boolean captureBodies = keeps.captureBodies();
+        boolean captureHeaders = keeps.captureHeaders();
+        long maxEvidenceBytes = keeps.maxBodyBytes();
+        int maxEvidenceRows = keeps.maxRows();
+        List<String> redactPaths = new java.util.ArrayList<>(keeps.redactPaths());
+
         var remaining = args.iterator();
         while (remaining.hasNext()) {
             String option = remaining.next();
@@ -152,6 +161,13 @@ record RunnerOptions(
                         maxPayloadBytes = positive(value(remaining, option), option);
                 case "--toxiproxy-url" -> toxiproxyUrl = value(remaining, option);
                 case "--allow-extension" -> allowedExtensions.add(value(remaining, option));
+                case "--no-capture-bodies" -> captureBodies = false;
+                case "--no-capture-headers" -> captureHeaders = false;
+                case "--max-evidence-bytes" ->
+                        maxEvidenceBytes = positive(value(remaining, option), option);
+                case "--max-evidence-rows" ->
+                        maxEvidenceRows = (int) positive(value(remaining, option), option);
+                case "--redact" -> redactPaths.add(value(remaining, option));
                 case "--shutdown-grace" ->
                         shutdownGraceMs = duration(value(remaining, option), option);
                 case "--once" -> once = true;
@@ -183,7 +199,11 @@ record RunnerOptions(
                         allowedTargets,
                         allowedClasses.isEmpty() ? DEFAULT_OPERATION_CLASSES : allowedClasses,
                         allowedEnvironments, allowedFaults,
-                        maxConcurrency, maxDurationMs, maxRequests, maxPayloadBytes),
+                        maxConcurrency, maxDurationMs, maxRequests, maxPayloadBytes,
+                        new EvidencePolicy(
+                                captureBodies, captureHeaders, keeps.headerDenylist(),
+                                maxEvidenceBytes, maxEvidenceRows, redactPaths,
+                                keeps.contentTypeAllowlist(), keeps.retentionClass())),
                 toxiproxyUrl, List.copyOf(allowedExtensions), shutdownGraceMs, once, false);
     }
 

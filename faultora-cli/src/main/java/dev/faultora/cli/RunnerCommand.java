@@ -282,12 +282,26 @@ final class RunnerCommand implements Command {
         out.println("  operations    " + String.join(", ",
                 options.limits().allowedOperationClasses().stream()
                         .map(Enum::name).sorted().toList()));
+        out.println("  keeps         " + describe(options.limits().maxEvidence()));
         out.println("  faults        " + (options.limits().allowedFaultTypes().isEmpty()
                 ? "none" : String.join(", ",
                         new java.util.TreeSet<>(options.limits().allowedFaultTypes()))));
         out.println("  targets       " + (options.limits().allowedTargets().isEmpty()
                 ? "any" : String.join(", ",
                         new java.util.TreeSet<>(options.limits().allowedTargets()))));
+    }
+
+    /** What a runner will hold on to, in the words an operator chose it with. */
+    private static String describe(dev.faultora.model.security.EvidencePolicy evidence) {
+        List<String> kept = new java.util.ArrayList<>();
+        kept.add(evidence.captureBodies()
+                ? "bodies up to " + evidence.maxBodyBytes() + " bytes" : "no bodies");
+        kept.add(evidence.captureHeaders() ? "headers" : "no headers");
+        kept.add("up to " + evidence.maxRows() + " rows");
+        if (!evidence.redactPaths().isEmpty()) {
+            kept.add("redacting " + String.join(", ", evidence.redactPaths()));
+        }
+        return String.join(", ", kept);
     }
 
     private static String version() {
@@ -322,6 +336,12 @@ final class RunnerCommand implements Command {
         out.println("                              class you want; they are printed on start");
         out.println("  --allow-private             Permit private and loopback destinations");
         out.println("  --allow-extension <class>   Permit a non-built-in extension");
+        out.println("  --no-capture-bodies         Keep no request or response bodies");
+        out.println("  --no-capture-headers        Keep no headers");
+        out.println("  --max-evidence-bytes <n>    Largest body kept (default 10485760)");
+        out.println("  --max-evidence-rows <n>     Most database rows kept (default 1000)");
+        out.println("  --redact <path>             Redact this path from what is kept;"
+                + " repeatable");
         out.println("  --max-concurrency <n>       Default 10");
         out.println("  --max-duration <duration>   Default 300s");
         out.println("  --max-requests <n>          Default 1000");

@@ -2,6 +2,7 @@ package dev.faultora.integration;
 
 import dev.faultora.cli.FaultoraCli;
 import dev.faultora.engine.run.RunResult;
+import dev.faultora.model.security.EvidencePolicy;
 import dev.faultora.examples.payment.PaymentApi;
 import dev.faultora.runner.DispatchedRun;
 import dev.faultora.runner.protocol.Dispatch;
@@ -16,6 +17,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -142,6 +144,61 @@ class RemoteRunE2ETest {
         assertThat(NormalizedRun.of(journal))
                 .as("an assertion outcome is part of what is compared")
                 .isNotEqualTo(NormalizedRun.of(doctored));
+    }
+
+    @Test
+    void aRunnerKeepsWhatTheSignedPolicySaysItMayKeep() throws Exception {
+        // The dispatcher can now say how much of what a run sees may be held,
+        // and the way to show it lands is to watch an assertion lose the thing
+        // it reads. The scenario's jsonpath runs over the response body: with
+        // bodies kept it passes, and with a policy that keeps none it comes back
+        // indeterminate — not passing quietly, which is the distinction the
+        // whole evidence model turns on.
+        Path scenario = ExampleFixtures.scenario("passing.yaml");
+        EvidencePolicy keepsNoBodies = new EvidencePolicy(
+                false, true, Set.of(), 0, 1000, List.of(), Set.of(), "session");
+
+        try (RemoteRunner runner = new RemoteRunner(directory.resolve("evidence"), Map.of())) {
+            DispatchedRun.Outcome kept = runner.run(new RemoteRunner.Request(
+                    "run-remote-keeping", scenario,
+                    Map.of("openapi", ExampleFixtures.openApi()),
+                    Map.of("", api.baseUrl()), Dispatch.Credentials.none(),
+                    SEED, 60_000, null));
+            DispatchedRun.Outcome withheld = runner.run(new RemoteRunner.Request(
+                    "run-remote-withheld", scenario,
+                    Map.of("openapi", ExampleFixtures.openApi()),
+                    Map.of("", api.baseUrl()), Dispatch.Credentials.none(),
+                    SEED, 60_000, keepsNoBodies));
+
+            assertThat(outcomeOf(kept, "jsonpath"))
+                    .as("a dispatch that said nothing keeps what a local run keeps")
+                    .isEqualTo("PASS");
+            assertThat(outcomeOf(withheld, "jsonpath"))
+                    .as("with no body kept there is nothing to read, and an "
+                            + "assertion that cannot be evaluated says so")
+                    .isEqualTo("INDETERMINATE");
+        }
+    }
+
+    /**
+     * How a run's assertion of one type came out, read from its journal.
+     * <p>
+     * By type rather than by id because an evaluated assertion is journalled
+     * without its id — the same limitation {@link NormalizedRun} records.
+     */
+    private static String outcomeOf(DispatchedRun.Outcome outcome, String assertionType)
+            throws IOException {
+        com.fasterxml.jackson.databind.ObjectMapper mapper =
+                new com.fasterxml.jackson.databind.ObjectMapper();
+        for (String line : Files.readAllLines(outcome.journalPath())) {
+            var event = mapper.readTree(line);
+            if ("ASSERTION_EVALUATED".equals(event.path("eventType").asText())
+                    && assertionType.equals(event.path("assertionType").asText())) {
+                return event.path("outcome").asText();
+            }
+        }
+        throw new AssertionError("no " + assertionType + " assertion was evaluated in "
+                + Files.readString(outcome.journalPath()));
     }
 
     @Test

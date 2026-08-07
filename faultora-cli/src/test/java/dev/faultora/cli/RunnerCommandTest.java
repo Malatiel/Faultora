@@ -5,6 +5,7 @@ import dev.faultora.model.catalog.SafetyClassification;
 import dev.faultora.model.security.ContentDigest;
 import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.runner.protocol.Dispatch;
+import dev.faultora.runner.protocol.EffectivePolicy;
 import dev.faultora.runner.protocol.Lease;
 import dev.faultora.runner.protocol.SignedPolicy;
 import dev.faultora.testkit.Certificates;
@@ -93,9 +94,9 @@ class RunnerCommandTest {
 
     /** The policy a dispatch carries, signed by the key named in it. */
     private static SignedPolicy policySignedBy(Certificates.Identity key) throws Exception {
-        String policy = MAPPER.writeValueAsString(new TargetPolicy(
+        String policy = MAPPER.writeValueAsString(EffectivePolicy.of(new TargetPolicy(
                 Set.of(), Set.of(SafetyClassification.READ_ONLY),
-                100, 2, 60_000, 1024, Set.of(), Set.of()));
+                100, 2, 60_000, 1024, Set.of(), Set.of())));
         return new SignedPolicy(
                 policy, "control-2026", Certificates.sign(key, "RSA", policy));
     }

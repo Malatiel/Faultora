@@ -11,6 +11,7 @@ import dev.faultora.model.identifier.RunId;
 import dev.faultora.model.security.ExtensionPolicy;
 import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.runner.protocol.Dispatch;
+import dev.faultora.runner.protocol.EffectivePolicy;
 import dev.faultora.runner.protocol.DispatchedDocument;
 import dev.faultora.runner.protocol.Refusal;
 import dev.faultora.runtime.CatalogAssembly;
@@ -162,7 +163,7 @@ public final class DispatchedRun {
     private Outcome run(
             Dispatch dispatch,
             ScenarioDocument scenario,
-            TargetPolicy policy,
+            EffectivePolicy policy,
             Map<String, FaultProvider> faultProviders,
             ExtensionPolicy extensions,
             long receivedAt,
@@ -180,7 +181,7 @@ public final class DispatchedRun {
 
         RunId runId = new RunId(dispatch.runId());
         PlanCompilationResult compilation = new PlanCompiler().compile(
-                scenario, catalog, policy, runId, dispatch.seed(),
+                scenario, catalog, policy.targets(), runId, dispatch.seed(),
                 dispatch.scenarioDigest(), dispatch.catalogDigest());
         if (compilation.plan() == null) {
             StringBuilder why = new StringBuilder("the scenario does not compile here:");
@@ -241,13 +242,13 @@ public final class DispatchedRun {
     // Package-private so a test can read the map rather than infer it from a
     // run that happened not to need a credential. What keys the connectors
     // are handed is the thing that drifts, so it is the thing asserted.
-    ConnectorContext connectorContext(Dispatch dispatch, TargetPolicy policy) {
+    ConnectorContext connectorContext(Dispatch dispatch, EffectivePolicy policy) {
         Map<String, Object> config = new LinkedHashMap<>();
         dispatch.targetRedirects().forEach((targetId, url) -> config.put(
                 targetId.isEmpty()
                         ? TargetResolver.BASE_URL : TargetResolver.BASE_URL_PREFIX + targetId,
                 url));
-        config.put("maxResponseBytes", policy.maxPayloadBytes());
+        config.put("maxResponseBytes", policy.targets().maxPayloadBytes());
 
         Dispatch.Credentials credentials = dispatch.credentials();
         if (credentials.authSecretId() != null) {
@@ -260,12 +261,15 @@ public final class DispatchedRun {
             config.put(JdbcConnector.SECRET_ID, credentials.databaseSecretId());
         }
 
-        // The same evidence a local run keeps. It was MINIMAL here, which
-        // captures no bodies and no rows — so a row-balance assertion that
-        // passes on the machine the scenario was written on came back
-        // indeterminate from a runner, for no reason the author could see.
+        // What the runner may keep, as the signed policy said and this
+        // deployment's floor narrowed it. A dispatch that says nothing gets
+        // what a local run keeps: it was MINIMAL here once, which captures no
+        // bodies and no rows, so a row-balance assertion that passes on the
+        // machine the scenario was written on came back indeterminate from a
+        // runner for no reason its author could see.
         return new ConnectorContext(
-                RunEvidence.defaultPolicy(), secrets::apply, 5000, 30000, 60000, config);
+                policy.evidence() == null ? RunEvidence.defaultPolicy() : policy.evidence(),
+                secrets::apply, 5000, 30000, 60000, config);
     }
 
     private static String firstProblem(ParseResult<ScenarioDocument> parsed) {

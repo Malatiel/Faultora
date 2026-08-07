@@ -131,6 +131,36 @@ class RunnerOptionsTest {
     }
 
     @Test
+    void aDeploymentCanRefuseToHoldWhatItIsSent() {
+        // The posture this exists for: bodies may be read by a run inside the
+        // network and must not be kept where they could leave it. A dispatch
+        // asking for bodies is narrowed to none rather than refused, so the run
+        // still happens and the assertions that needed a body say they could
+        // not be evaluated.
+        assertThat(parse().limits().maxEvidence().captureBodies()).isTrue();
+        assertThat(parse("--no-capture-bodies").limits().maxEvidence().captureBodies())
+                .isFalse();
+        assertThat(parse("--no-capture-headers").limits().maxEvidence().captureHeaders())
+                .isFalse();
+    }
+
+    @Test
+    void howMuchIsKeptIsANumberAnOperatorChooses() {
+        assertThat(parse().limits().maxEvidence().maxRows()).isEqualTo(1000);
+        assertThat(parse("--max-evidence-rows", "10").limits().maxEvidence().maxRows())
+                .isEqualTo(10);
+        assertThat(parse("--max-evidence-bytes", "4096")
+                .limits().maxEvidence().maxBodyBytes()).isEqualTo(4096);
+    }
+
+    @Test
+    void aPathADeploymentRedactsIsRedactedWhateverADispatchAsks() {
+        assertThat(parse("--redact", "body.pan", "--redact", "body.email")
+                .limits().maxEvidence().redactPaths())
+                .containsExactly("body.pan", "body.email");
+    }
+
+    @Test
     void helpNeedsNoConfigurationToBeAsking() {
         assertThat(RunnerOptions.parse(List.of("--help")).helpRequested()).isTrue();
     }

@@ -7,6 +7,7 @@ import dev.faultora.model.security.ContentDigest;
 import dev.faultora.model.security.ExtensionPolicy;
 import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.runner.protocol.Dispatch;
+import dev.faultora.runner.protocol.EffectivePolicy;
 import dev.faultora.runner.protocol.Lease;
 import dev.faultora.runner.protocol.Refusal;
 import dev.faultora.runner.protocol.Registration;
@@ -48,7 +49,7 @@ class RunnerTransportTest {
 
     private static final LocalLimits LIMITS = new LocalLimits(
             Set.of(), Set.of(SafetyClassification.READ_ONLY), Set.of(),
-            Set.of(), 4, 600_000, 100, 1_048_576);
+            Set.of(), 4, 600_000, 100, 1_048_576, null);
 
     private static final ExtensionPolicy EXTENSIONS =
             new ExtensionPolicy(Set.of(), false, 0, Set.of(), Set.of());
@@ -92,7 +93,9 @@ class RunnerTransportTest {
                     runId, System.currentTimeMillis(), "nonce", SCENARIO, List.of(),
                     Map.of(), Map.of("", "http://localhost:1"),
                     Dispatch.Credentials.none(), 7L,
-                    new SignedPolicy(MAPPER.writeValueAsString(policy), "trusted", "c2ln"),
+                    new SignedPolicy(
+                            MAPPER.writeValueAsString(EffectivePolicy.of(policy)),
+                            "trusted", "c2ln"),
                     new Lease(System.currentTimeMillis(), 60_000, 10_000),
                     ContentDigest.sha256Uri(SCENARIO), Dispatch.digestOfDocuments(List.of()));
         } catch (Exception impossible) {

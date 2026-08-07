@@ -134,18 +134,46 @@ shard-level leases.
 - **A lease renewed by the runner rather than granted.** Self-renewal makes the
   lease a comment. The deadline has to come from the side that can revoke it.
 
-## What this does not yet carry
+## The signed policy carries two things
 
-- **An evidence policy.** The signed policy is a `TargetPolicy`, which has no
-  evidence dimension, so a dispatch cannot say how much of what a run sees may
-  be kept. The runner uses the same default the CLI does, in one place both
-  read, because the alternative was found the hard way: it started on the
-  strictest possible policy, and every `row-balance` and every `jsonpath` over
-  a response body would have come back indeterminate from a runner while
-  passing on the machine the scenario was written on. **How much evidence a run
-  may hold is a limit an operator should be able to state**, so this has to
-  reach the protocol before 1.0 freezes it — as part of the signed policy,
-  where a runner can narrow it like everything else.
+**What a run may do, and what the runner may keep.** The signed document is an
+`EffectivePolicy`: a `TargetPolicy` and an `EvidencePolicy`. They are separate
+records rather than one because they bound different things and different code
+reads them — the compiler needs the first and has no business with the second,
+so an evidence field on the policy the compiler reads would be a field the
+compiler ignores.
+
+Evidence reached the protocol before the freeze because the alternative was
+found the hard way: the runner started on the strictest possible policy, and
+every `row-balance` and every `jsonpath` over a response body came back
+indeterminate from a runner while passing on the machine the scenario was
+written on. **How much evidence a run may hold is a limit an operator should be
+able to state**, and a protocol that froze without one would have made it
+unstatable until 2.0.
+
+Three rules, and each is a decision rather than an obvious consequence:
+
+- **A dispatch that says nothing gets what a local run keeps.** Not the
+  strictest policy, which is the safer-looking answer and is precisely the bug
+  above. A run must not behave differently for having been dispatched.
+- **Evidence is narrowed, never refused** — the one dimension here that is. The
+  rest bound what a run does to somebody's system, and asking for more than the
+  local floor is asking to do something this deployment forbids. Evidence
+  bounds what the runner *keeps*: keeping less cannot harm the target, and
+  refusing instead would make an ordinary posture — "no response bodies leave
+  this network" — unusable against any dispatcher that had not been told about
+  it. What a run loses is visible, because an assertion with nothing to read
+  comes back indeterminate rather than passing quietly.
+- **A ceiling nobody stated is not a ceiling.** `maxBodyBytes` and `maxRows`
+  carry zero when unstated, and the capture code reads zero as "do not
+  truncate". Narrowing with `Math.min` would therefore have *widened* — the
+  minimum of zero and a real limit is zero. The rule is: if either side stated
+  nothing, the other side's number holds.
+
+`retentionClass` passes through unnarrowed, because nothing in this system
+reads it. A narrowing rule over a field nobody enforces would look like a
+guarantee and be none; when retention is implemented, the ordering it needs is
+decided then.
 - **Delivery that outlives the process.** Events survive a disconnection and
   are re-sent on reconnect — within the life of the runner. A journal the
   runner still holds when the process stops is on disk and is **not**

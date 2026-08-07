@@ -2,9 +2,13 @@ package dev.faultora.runner;
 
 import dev.faultora.model.catalog.SafetyClassification;
 import dev.faultora.model.identifier.TargetId;
+import dev.faultora.model.security.EvidencePolicy;
 import dev.faultora.model.security.TargetPolicy;
+import dev.faultora.runner.protocol.EffectivePolicy;
+import dev.faultora.runtime.RunEvidence;
 
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -50,9 +54,11 @@ public record LocalLimits(
         int maxConcurrency,
         long maxDurationMs,
         int maxRequests,
-        long maxPayloadBytes
+        long maxPayloadBytes,
+        EvidencePolicy maxEvidence
 ) {
     public LocalLimits {
+        maxEvidence = maxEvidence == null ? RunEvidence.defaultPolicy() : maxEvidence;
         allowedTargets = allowedTargets == null ? Set.of() : Set.copyOf(allowedTargets);
         allowedOperationClasses = allowedOperationClasses == null
                 ? Set.of() : Set.copyOf(allowedOperationClasses);
@@ -148,7 +154,12 @@ public record LocalLimits(
      * some field nobody thought to compare. Every field the policy has is
      * narrowed here; if the policy grows one, this stops compiling.
      */
-    public TargetPolicy narrow(TargetPolicy dispatched) {
+    public EffectivePolicy narrow(EffectivePolicy dispatched) {
+        return new EffectivePolicy(
+                narrow(dispatched.targets()), narrowedEvidence(dispatched.evidence()));
+    }
+
+    private TargetPolicy narrow(TargetPolicy dispatched) {
         return new TargetPolicy(
                 narrowedAllowlist(allowedTargets, dispatched.allowedTargets(),
                         TargetId::value, TargetId::new),
@@ -164,6 +175,68 @@ public record LocalLimits(
                 intersected(dispatched.allowedFaultTypes(), allowedFaultTypes),
                 narrowedAllowlist(allowedEnvironments, dispatched.allowedEnvironments(),
                         environment -> environment, environment -> environment));
+    }
+
+    /**
+     * What the runner may keep, narrowed to what this deployment permits.
+     * <p>
+     * Narrowed and never refused, which is a deliberate asymmetry with every
+     * other dimension here. The rest bound what a run <em>does to a target</em>,
+     * and asking for more than the floor is asking to do something this
+     * deployment forbids. Evidence bounds what the runner <em>keeps</em>:
+     * keeping less cannot harm anybody's system, and refusing the run instead
+     * would make an ordinary data-protection posture — "no response bodies
+     * leave this network" — unusable with any dispatcher that had not been told
+     * about it. What a run loses by keeping less is visible: an assertion with
+     * nothing to read comes back indeterminate rather than passing quietly.
+     * <p>
+     * A dispatch that says nothing about evidence gets what a local run keeps.
+     * The strictest possible policy would be the safer-looking default and is
+     * the bug this system already had: every {@code row-balance} and every
+     * body {@code jsonpath} came back indeterminate from a runner while passing
+     * on the machine the scenario was written on.
+     * <p>
+     * {@code retentionClass} passes through: nothing in this system reads it
+     * yet, and a narrowing rule over a field nobody enforces would be a rule
+     * that looks like a guarantee and is not. ADR-020 says so rather than
+     * inventing an ordering for it here.
+     */
+    private EvidencePolicy narrowedEvidence(EvidencePolicy dispatched) {
+        EvidencePolicy asked = dispatched == null ? RunEvidence.defaultPolicy() : dispatched;
+        Set<String> deniedHeaders = new LinkedHashSet<>(asked.headerDenylist());
+        deniedHeaders.addAll(maxEvidence.headerDenylist());
+        List<String> redacted = new java.util.ArrayList<>(asked.redactPaths());
+        maxEvidence.redactPaths().stream()
+                .filter(path -> !redacted.contains(path)).forEach(redacted::add);
+
+        return new EvidencePolicy(
+                asked.captureBodies() && maxEvidence.captureBodies(),
+                asked.captureHeaders() && maxEvidence.captureHeaders(),
+                deniedHeaders,
+                lowerBound(asked.maxBodyBytes(), maxEvidence.maxBodyBytes()),
+                (int) lowerBound(asked.maxRows(), maxEvidence.maxRows()),
+                redacted,
+                narrowedAllowlist(maxEvidence.contentTypeAllowlist(),
+                        asked.contentTypeAllowlist(), type -> type, type -> type),
+                asked.retentionClass());
+    }
+
+    /**
+     * The smaller of two ceilings, where zero means "no ceiling stated".
+     * <p>
+     * {@code Math.min} is wrong here and wrong in the dangerous direction: a
+     * policy that states no body limit carries zero, and the minimum of zero
+     * and a real limit is zero — which the capture code reads as "do not
+     * truncate". Narrowing would have widened.
+     */
+    private static long lowerBound(long asked, long permittedHere) {
+        if (asked <= 0) {
+            return permittedHere;
+        }
+        if (permittedHere <= 0) {
+            return asked;
+        }
+        return Math.min(asked, permittedHere);
     }
 
     /**

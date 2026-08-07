@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.faultora.faults.local.LocalFaultProvider;
 import dev.faultora.model.catalog.SafetyClassification;
 import dev.faultora.model.security.ContentDigest;
+import dev.faultora.model.security.EvidencePolicy;
 import dev.faultora.model.security.ExtensionPolicy;
 import dev.faultora.model.security.SecretHandle;
 import dev.faultora.model.security.TargetPolicy;
@@ -15,6 +16,7 @@ import dev.faultora.runner.RunnerAgent;
 import dev.faultora.runner.RunnerClient;
 import dev.faultora.runner.TlsMaterial;
 import dev.faultora.runner.protocol.Dispatch;
+import dev.faultora.runner.protocol.EffectivePolicy;
 import dev.faultora.runner.protocol.DispatchedDocument;
 import dev.faultora.runner.protocol.Lease;
 import dev.faultora.runner.protocol.SignedPolicy;
@@ -113,7 +115,7 @@ final class RemoteRunner implements AutoCloseable {
         return new LocalLimits(
                 Set.of(), Set.of(SafetyClassification.READ_ONLY, SafetyClassification.MUTATING),
                 Set.of(), new LocalFaultProvider().capabilities(),
-                10, 300_000, 1000, 1_048_576);
+                10, 300_000, 1000, 1_048_576, null);
     }
 
     /**
@@ -123,12 +125,13 @@ final class RemoteRunner implements AutoCloseable {
      * would let a suite pass against a runner whose verification accepts
      * anything, which is the one property mutual TLS does not give.
      */
-    private SignedPolicy signedPolicy() throws Exception {
+    private SignedPolicy signedPolicy(EvidencePolicy evidence) throws Exception {
         TargetPolicy policy = new TargetPolicy(
                 Set.of(), Set.of(SafetyClassification.READ_ONLY, SafetyClassification.MUTATING),
                 1000, 10, 300_000, 1_048_576,
                 new LocalFaultProvider().capabilities(), Set.of());
-        String policyJson = MAPPER.writeValueAsString(policy);
+        String policyJson = MAPPER.writeValueAsString(
+                new EffectivePolicy(policy, evidence));
         return new SignedPolicy(policyJson, SIGNING_KEY,
                 Certificates.sign(signingKey, "RSA", policyJson));
     }
@@ -151,11 +154,22 @@ final class RemoteRunner implements AutoCloseable {
      * @param credentials handles the runner resolves against its own environment
      * @param seed        the run seed
      * @param leaseTtlMs  how long the run's permission is worth before renewal
+     * @param evidence    how much of what the run sees may be kept, or null to
+     *                    say nothing and let the runner keep what a local run
+     *                    keeps
      */
     record Request(
             String runId, Path scenario, Map<String, Path> documents,
             Map<String, String> redirects, Dispatch.Credentials credentials,
-            long seed, long leaseTtlMs) {
+            long seed, long leaseTtlMs, EvidencePolicy evidence) {
+
+        /** A run whose dispatcher says nothing about evidence. */
+        Request(String runId, Path scenario, Map<String, Path> documents,
+                Map<String, String> redirects, Dispatch.Credentials credentials,
+                long seed, long leaseTtlMs) {
+            this(runId, scenario, documents, redirects, credentials,
+                    seed, leaseTtlMs, null);
+        }
     }
 
     /** Dispatch a run and see it through, exactly as the agent would in the field. */
@@ -178,7 +192,7 @@ final class RemoteRunner implements AutoCloseable {
                 request.runId(), System.currentTimeMillis(),
                 request.runId() + "-nonce", scenario, documents,
                 Map.of(), request.redirects(), request.credentials(), request.seed(),
-                signedPolicy(),
+                signedPolicy(request.evidence()),
                 new Lease(System.currentTimeMillis(), request.leaseTtlMs(),
                         Math.max(50, request.leaseTtlMs() / 4)),
                 ContentDigest.sha256Uri(scenario), Dispatch.digestOfDocuments(documents));

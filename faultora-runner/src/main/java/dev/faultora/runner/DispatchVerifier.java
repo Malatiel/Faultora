@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.faultora.model.security.ContentDigest;
 import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.runner.protocol.Dispatch;
+import dev.faultora.runner.protocol.EffectivePolicy;
 import dev.faultora.runner.protocol.Refusal;
 import dev.faultora.runner.protocol.SignedPolicy;
 
@@ -88,15 +89,21 @@ public final class DispatchVerifier {
                     "the policy for run '" + dispatch.runId() + "' is unsigned or was "
                             + "signed by a key this runner does not verify with"));
         }
-        TargetPolicy dispatched;
+        EffectivePolicy dispatched;
         try {
-            dispatched = MAPPER.readValue(dispatch.policy().policyJson(), TargetPolicy.class);
+            dispatched = MAPPER.readValue(
+                    dispatch.policy().policyJson(), EffectivePolicy.class);
         } catch (Exception unreadable) {
             return Verdict.refused(Refusal.of(Refusal.Reason.UNVERIFIED_POLICY,
                     "the policy for run '" + dispatch.runId() + "' verified but could not "
                             + "be read: " + unreadable.getMessage()));
         }
-        String exceeded = limits.exceededBy(dispatched);
+        if (dispatched == null || dispatched.targets() == null) {
+            return Verdict.refused(Refusal.of(Refusal.Reason.UNVERIFIED_POLICY,
+                    "the policy for run '" + dispatch.runId() + "' verified and says "
+                            + "nothing about what the run may do"));
+        }
+        String exceeded = limits.exceededBy(dispatched.targets());
         if (exceeded != null) {
             return Verdict.refused(Refusal.of(Refusal.Reason.POLICY_EXCEEDS_LOCAL_LIMITS,
                     "run '" + dispatch.runId() + "' asks for " + exceeded));
@@ -135,9 +142,9 @@ public final class DispatchVerifier {
      * @param policy  the policy the run executes under, null when refused
      * @param refusal why it will not run, null when it will
      */
-    public record Verdict(TargetPolicy policy, Refusal refusal) {
+    public record Verdict(EffectivePolicy policy, Refusal refusal) {
 
-        static Verdict accepted(TargetPolicy policy) {
+        static Verdict accepted(EffectivePolicy policy) {
             return new Verdict(policy, null);
         }
 

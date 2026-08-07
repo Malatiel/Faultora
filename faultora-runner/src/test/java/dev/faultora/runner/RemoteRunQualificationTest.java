@@ -7,6 +7,7 @@ import dev.faultora.model.security.ContentDigest;
 import dev.faultora.model.security.ExtensionPolicy;
 import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.runner.protocol.Dispatch;
+import dev.faultora.runner.protocol.EffectivePolicy;
 import dev.faultora.runner.protocol.Lease;
 import dev.faultora.runner.protocol.Session;
 import dev.faultora.runner.protocol.SignedPolicy;
@@ -43,7 +44,7 @@ class RemoteRunQualificationTest {
 
     private static final LocalLimits LIMITS = new LocalLimits(
             Set.of(), Set.of(SafetyClassification.READ_ONLY), Set.of(),
-            Set.of(), 4, 600_000, 1000, 1_048_576);
+            Set.of(), 4, 600_000, 1000, 1_048_576, null);
 
     private static final ExtensionPolicy EXTENSIONS =
             new ExtensionPolicy(Set.of(), false, 0, Set.of(), Set.of());
@@ -94,7 +95,9 @@ class RemoteRunQualificationTest {
                     runId, System.currentTimeMillis(), "nonce", scenario, List.of(),
                     Map.of(), Map.of("", "http://localhost:1"),
                     Dispatch.Credentials.none(), 11L,
-                    new SignedPolicy(MAPPER.writeValueAsString(policy), "trusted", "c2ln"),
+                    new SignedPolicy(
+                            MAPPER.writeValueAsString(EffectivePolicy.of(policy)),
+                            "trusted", "c2ln"),
                     new Lease(System.currentTimeMillis(), leaseTtlMs, leaseTtlMs / 4),
                     ContentDigest.sha256Uri(scenario), Dispatch.digestOfDocuments(List.of()));
         } catch (Exception impossible) {

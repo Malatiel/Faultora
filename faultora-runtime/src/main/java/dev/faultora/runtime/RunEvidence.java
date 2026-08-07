@@ -16,13 +16,11 @@ import java.util.Set;
  * scenario was written on. ADR-020 says local and remote runs cannot drift; an
  * evidence policy chosen separately in two places is exactly how they would.
  * <p>
- * <b>This is a default, not a contract.</b> A dispatch does not yet carry an
- * evidence policy — the signed policy is a {@code TargetPolicy}, which has no
- * evidence dimension — so a runner cannot be told to keep more or less than
- * this. How much evidence a run may hold is a limit an operator should be able
- * to state, so the protocol has to grow one before 1.0 freezes it; until then
- * the honest thing is the same default the CLI uses, and ADR-020 records the
- * gap rather than leaving the strictest possible policy in place by accident.
+ * <b>This is what applies when nobody said otherwise.</b> A dispatch may now
+ * carry an evidence policy and a runner may state a floor of its own, and the
+ * run gets the smaller of the two. This is the answer when neither side said
+ * anything — deliberately this rather than the strictest possible policy,
+ * because a run must not behave differently for having been dispatched.
  */
 public final class RunEvidence {
 

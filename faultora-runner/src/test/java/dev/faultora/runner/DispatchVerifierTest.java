@@ -6,6 +6,7 @@ import dev.faultora.model.security.ContentDigest;
 import dev.faultora.model.identifier.TargetId;
 import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.runner.protocol.Dispatch;
+import dev.faultora.runner.protocol.EffectivePolicy;
 import dev.faultora.runner.protocol.DispatchedDocument;
 import dev.faultora.runner.protocol.Lease;
 import dev.faultora.runner.protocol.Refusal;
@@ -39,7 +40,7 @@ class DispatchVerifierTest {
     private static final LocalLimits LIMITS = new LocalLimits(
             Set.of("payments", "ledger"), Set.of(SafetyClassification.READ_ONLY,
             SafetyClassification.MUTATING), Set.of("staging"),
-            Set.of("http-latency", "http-error"), 4, 60_000, 100, 1_048_576);
+            Set.of("http-latency", "http-error"), 4, 60_000, 100, 1_048_576, null);
 
     private final DispatchVerifier verifier =
             new DispatchVerifier(LIMITS, policy -> "trusted".equals(policy.keyId()));
@@ -60,7 +61,9 @@ class DispatchVerifierTest {
 
     private static SignedPolicy signed(TargetPolicy policy, String keyId) {
         try {
-            return new SignedPolicy(MAPPER.writeValueAsString(policy), keyId, "c2ln");
+            return new SignedPolicy(
+                    MAPPER.writeValueAsString(EffectivePolicy.of(policy)),
+                    keyId, "c2ln");
         } catch (Exception impossible) {
             throw new AssertionError(impossible);
         }
@@ -97,8 +100,8 @@ class DispatchVerifierTest {
         DispatchVerifier.Verdict verdict = verifier.verify(wellFormed("run-1", now), now);
 
         assertThat(verdict.isAccepted()).isTrue();
-        assertThat(verdict.policy().maxConcurrency()).isEqualTo(2);
-        assertThat(verdict.policy().allowedFaultTypes()).containsExactly("http-latency");
+        assertThat(verdict.policy().targets().maxConcurrency()).isEqualTo(2);
+        assertThat(verdict.policy().targets().allowedFaultTypes()).containsExactly("http-latency");
     }
 
     @Test
@@ -265,8 +268,8 @@ class DispatchVerifierTest {
                 SCENARIO, null, null), now);
 
         assertThat(verdict.isAccepted()).isTrue();
-        assertThat(verdict.policy().maxConcurrency()).isEqualTo(1);
-        assertThat(verdict.policy().maxDurationMs()).isEqualTo(5_000);
+        assertThat(verdict.policy().targets().maxConcurrency()).isEqualTo(1);
+        assertThat(verdict.policy().targets().maxDurationMs()).isEqualTo(5_000);
     }
 
     @Test
