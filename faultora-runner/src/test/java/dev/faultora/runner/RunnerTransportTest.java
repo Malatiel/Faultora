@@ -12,6 +12,7 @@ import dev.faultora.runner.protocol.Refusal;
 import dev.faultora.runner.protocol.Registration;
 import dev.faultora.runner.protocol.Session;
 import dev.faultora.runner.protocol.SignedPolicy;
+import dev.faultora.testkit.Certificates;
 import dev.faultora.testkit.QualificationDispatcher;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;

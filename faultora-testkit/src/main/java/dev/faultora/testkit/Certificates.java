@@ -1,4 +1,4 @@
-package dev.faultora.runner;
+package dev.faultora.testkit;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -19,17 +19,21 @@ import java.util.List;
  * Invoked at {@code java.home/bin/keytool} rather than from the path, so a
  * machine with a different keytool earlier on its PATH cannot decide what these
  * tests prove.
+ * <p>
+ * Lives here rather than beside the runner's own tests because the qualification
+ * suites need it too, and a test-jar dependency to reach one class is a build
+ * arrangement standing in for a module boundary.
  */
-final class Certificates {
+public final class Certificates {
 
     /** The password every store here uses; these live for one test method. */
-    static final String PASSWORD = "changeit";
+    public static final String PASSWORD = "changeit";
 
     private Certificates() {
     }
 
     /** One identity: a keystore holding a key pair, and its certificate. */
-    record Identity(Path keystore, Path certificate) {
+    public record Identity(Path keystore, Path certificate) {
     }
 
     /**
@@ -38,7 +42,7 @@ final class Certificates {
      * @param validityDays how long it is good for — a test can issue an expired
      *                     one by asking for none
      */
-    static Identity issue(Path directory, String name, int validityDays) throws Exception {
+    public static Identity issue(Path directory, String name, int validityDays) throws Exception {
         Path keystore = directory.resolve(name + ".p12");
         Path certificate = directory.resolve(name + ".crt");
         Files.deleteIfExists(keystore);
@@ -55,7 +59,7 @@ final class Certificates {
     }
 
     /** A truststore holding exactly the certificates named. */
-    static Path trusting(Path directory, String name, Identity... trusted) throws Exception {
+    public static Path trusting(Path directory, String name, Identity... trusted) throws Exception {
         Path truststore = directory.resolve(name + "-trust.p12");
         Files.deleteIfExists(truststore);
         for (int index = 0; index < trusted.length; index++) {

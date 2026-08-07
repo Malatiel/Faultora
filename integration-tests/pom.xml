@@ -40,6 +40,27 @@
             <artifactId>faultora-model</artifactId>
             <scope>test</scope>
         </dependency>
+        <!--
+            The runner and the scaffolding that dispatches to it. The M2 and M3
+            suites have to run through a runner as well as through the CLI, and
+            comparing the two is the only way "local and runner modes produce
+            the same result" is a measurement rather than a hope.
+        -->
+        <dependency>
+            <groupId>dev.faultora</groupId>
+            <artifactId>faultora-runner</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.faultora</groupId>
+            <artifactId>faultora-testkit</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.faultora</groupId>
+            <artifactId>faultora-faults-local</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.apache.kafka</groupId>
             <artifactId>kafka-clients</artifactId>

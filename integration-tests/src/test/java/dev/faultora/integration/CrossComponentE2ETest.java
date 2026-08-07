@@ -3,25 +3,15 @@ package dev.faultora.integration;
 import dev.faultora.cli.FaultoraCli;
 import dev.faultora.examples.recovery.PaymentRecoverySystem;
 import dev.faultora.examples.recovery.SystemConfig;
-import org.apache.kafka.clients.admin.Admin;
-import org.apache.kafka.clients.admin.AdminClientConfig;
-import org.apache.kafka.clients.admin.NewTopic;
-import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
-import org.testcontainers.DockerClientFactory;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.kafka.KafkaContainer;
-import org.testcontainers.utility.DockerImageName;
 
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -50,20 +40,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 @EnabledIf("dockerIsAvailable")
 class CrossComponentE2ETest {
 
-    private static final DockerImageName KAFKA_IMAGE =
-            DockerImageName.parse("apache/kafka:3.8.0");
-    private static final DockerImageName POSTGRES_IMAGE =
-            DockerImageName.parse("postgres:16-alpine");
-
-    /** The password of the read-only role, as the surefire environment holds it. */
-    private static final String READ_ONLY_PASSWORD = "faultora-readonly";
-
-    /** Handle the scenario's database password is resolved under. */
-    private static final String SECRET_ID = "ledger-password";
-
-    private static KafkaContainer kafka;
-    private static PostgreSQLContainer<?> postgres;
-
     /** Seeds do not repeat, so no two runs in this class share a payment id. */
     private static final AtomicInteger SEEDS = new AtomicInteger(88000);
 
@@ -71,38 +47,17 @@ class CrossComponentE2ETest {
 
     @SuppressWarnings("unused")
     static boolean dockerIsAvailable() {
-        try {
-            return DockerClientFactory.instance().isDockerAvailable();
-        } catch (RuntimeException noRuntime) {
-            System.err.println("Cross-component suite skipped: no container runtime. "
-                    + "The M3 exit gate is NOT covered by this build.");
-            return false;
+        if (RecoveryInfrastructure.dockerIsAvailable()) {
+            return true;
         }
+        System.err.println("Cross-component suite skipped: no container runtime. "
+                + "The M3 exit gate is NOT covered by this build.");
+        return false;
     }
 
     @BeforeAll
     static void startInfrastructure() throws Exception {
-        kafka = new KafkaContainer(KAFKA_IMAGE);
-        kafka.start();
-        try (Admin admin = Admin.create(Map.of(
-                AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers()))) {
-            // Declared rather than auto-created: auto-creation races the first
-            // observation, and the failure looks like the defect under test.
-            admin.createTopics(List.of(
-                    new NewTopic("payment-commands", 1, (short) 1),
-                    new NewTopic("payment-events", 1, (short) 1))).all().get();
-        }
-        postgres = new PostgreSQLContainer<>(POSTGRES_IMAGE)
-                .withDatabaseName("payments")
-                .withUsername("payments")
-                .withPassword("payments");
-        postgres.start();
-    }
-
-    @AfterAll
-    static void stopInfrastructure() {
-        if (postgres != null) postgres.stop();
-        if (kafka != null) kafka.stop();
+        RecoveryInfrastructure.start();
     }
 
     @AfterEach
@@ -122,15 +77,13 @@ class CrossComponentE2ETest {
      */
     private void start(SystemConfig config) throws Exception {
         system = new PaymentRecoverySystem(
-                config, postgres.getJdbcUrl(), postgres.getUsername(),
-                postgres.getPassword(), bootstrapServers());
-        system.createSchema(READ_ONLY_PASSWORD);
+                config, RecoveryInfrastructure.jdbcUrl(),
+                RecoveryInfrastructure.databaseOwner(),
+                RecoveryInfrastructure.databaseOwnerPassword(),
+                RecoveryInfrastructure.bootstrapServers());
+        system.createSchema(RecoveryInfrastructure.READ_ONLY_PASSWORD);
         system.emptyTables();
         system.start();
-    }
-
-    private static String bootstrapServers() {
-        return kafka.getBootstrapServers().replace("PLAINTEXT://", "");
     }
 
     private int run(String scenario, String seed) throws IOException {
@@ -148,10 +101,11 @@ class CrossComponentE2ETest {
                         "--asyncapi", RecoveryFixtures.asyncApi().toString(),
                         "--observations", RecoveryFixtures.observations().toString(),
                         "--target", system.apiBaseUrl(),
-                        "--target", "broker=kafka://" + bootstrapServers(),
-                        "--target", "ledger=" + postgres.getJdbcUrl(),
-                        "--db-user", "faultora_readonly",
-                        "--db-secret-id", SECRET_ID,
+                        "--target", "broker=kafka://"
+                                + RecoveryInfrastructure.bootstrapServers(),
+                        "--target", "ledger=" + RecoveryInfrastructure.jdbcUrl(),
+                        "--db-user", RecoveryInfrastructure.READ_ONLY_USER,
+                        "--db-secret-id", RecoveryInfrastructure.SECRET_ID,
                         "--allow-private",
                         "--seed", seed,
                         "--format", "console,json",
