@@ -49,11 +49,23 @@ final class RunPolicies {
      * endpoint.
      */
     static Map<String, FaultProvider> faultProviders(TestOptions options) {
+        return faultProviders(options.toxiproxyUrl());
+    }
+
+    /**
+     * The same providers, for a run that arrived rather than being typed.
+     * <p>
+     * A runner and a local run offer the same things to break, or a scenario
+     * that injects a fault here comes back from a private network refused for
+     * a reason nobody can see from the scenario.
+     *
+     * @param toxiproxyUrl admin endpoint enabling network faults, or null
+     */
+    static Map<String, FaultProvider> faultProviders(String toxiproxyUrl) {
         Map<String, FaultProvider> providers = new LinkedHashMap<>();
         providers.put("local", new LocalFaultProvider());
-        if (options.toxiproxyUrl() != null) {
-            providers.put("toxiproxy",
-                    new ToxiproxyFaultProvider(URI.create(options.toxiproxyUrl())));
+        if (toxiproxyUrl != null) {
+            providers.put("toxiproxy", new ToxiproxyFaultProvider(URI.create(toxiproxyUrl)));
         }
         return providers;
     }

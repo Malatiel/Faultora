@@ -19,6 +19,15 @@
             <groupId>dev.faultora</groupId>
             <artifactId>faultora-runtime</artifactId>
         </dependency>
+        <!-- `faultora runner` is the same binary as `faultora test`: the runner
+             compiles the scenario it was sent with the same compiler and runs
+             it through the same composition root, which is what keeps local and
+             remote runs from drifting. Two artifacts would also mean two things
+             to put in an offline bundle. -->
+        <dependency>
+            <groupId>dev.faultora</groupId>
+            <artifactId>faultora-runner</artifactId>
+        </dependency>
         <dependency>
             <groupId>dev.faultora</groupId>
             <artifactId>faultora-model</artifactId>
@@ -104,6 +113,13 @@
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
         </dependency>
+        <!-- The dispatcher `faultora runner` is driven against in its tests.
+             Qualification scaffolding, not a controller, and it says so. -->
+        <dependency>
+            <groupId>dev.faultora</groupId>
+            <artifactId>faultora-testkit</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -122,6 +138,20 @@
             </resource>
         </resources>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <environmentVariables>
+                        <!-- The password of the key material the runner tests
+                             issue, resolved the way a deployment resolves one:
+                             FAULTORA_SECRET_<HANDLE>. The keystores live for
+                             the length of a test method, so the value here is a
+                             fixture rather than a secret. -->
+                        <FAULTORA_SECRET_RUNNER_TLS>changeit</FAULTORA_SECRET_RUNNER_TLS>
+                    </environmentVariables>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>

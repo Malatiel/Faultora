@@ -10,6 +10,7 @@ import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.runner.DispatchVerifier;
 import dev.faultora.runner.DispatchedRun;
 import dev.faultora.runner.LocalLimits;
+import dev.faultora.runner.PolicyKeys;
 import dev.faultora.runner.RunnerAgent;
 import dev.faultora.runner.RunnerClient;
 import dev.faultora.runner.TlsMaterial;
@@ -47,8 +48,11 @@ final class RemoteRunner implements AutoCloseable {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    /** The key the dispatcher signs with, and the only one this runner trusts. */
+    /** The key id the dispatcher signs with, and the only one this runner holds. */
     private static final String SIGNING_KEY = "qualification";
+
+    /** The key itself, issued per deployment and never shared between them. */
+    private final Certificates.Identity signingKey;
 
     private final QualificationDispatcher dispatcher;
     private final RunnerClient client;
@@ -69,6 +73,7 @@ final class RemoteRunner implements AutoCloseable {
                 Certificates.issue(directory, "runner", 1);
         Certificates.Identity dispatcherIdentity =
                 Certificates.issue(directory, "dispatcher", 1);
+        signingKey = Certificates.issue(directory, "policy-signing", 1);
         TlsMaterial runnerTls = new TlsMaterial(
                 runnerIdentity.keystore(),
                 Certificates.trusting(directory, "runner", dispatcherIdentity),
@@ -82,12 +87,12 @@ final class RemoteRunner implements AutoCloseable {
         client = new RunnerClient(
                 URI.create(dispatcher.address()), runnerTls,
                 "qualification-runner", "0.9.0-SNAPSHOT",
-                Set.of("http", "kafka", "jdbc"));
+                dev.faultora.runtime.RunEnvironment.PROTOCOLS_SPOKEN);
         agent = new RunnerAgent(
                 client,
                 new DispatchedRun(
-                        new DispatchVerifier(limits(), signed ->
-                                SIGNING_KEY.equals(signed.keyId())),
+                        new DispatchVerifier(limits(), new PolicyKeys(
+                                Map.of(SIGNING_KEY, signingKey.certificate()))),
                         directory.resolve("journals"),
                         handleId -> handleOf(handleId, secrets.get(handleId)),
                         true),
@@ -111,14 +116,21 @@ final class RemoteRunner implements AutoCloseable {
                 10, 300_000, 1000, 1_048_576);
     }
 
-    /** The policy the CLI would run under, as a dispatch carries it. */
-    private static SignedPolicy signedPolicy() throws Exception {
+    /**
+     * The policy the CLI would run under, as a dispatch carries it — signed.
+     * <p>
+     * Really signed, with the key this deployment issued. A fixture signature
+     * would let a suite pass against a runner whose verification accepts
+     * anything, which is the one property mutual TLS does not give.
+     */
+    private SignedPolicy signedPolicy() throws Exception {
         TargetPolicy policy = new TargetPolicy(
                 Set.of(), Set.of(SafetyClassification.READ_ONLY, SafetyClassification.MUTATING),
                 1000, 10, 300_000, 1_048_576,
                 new LocalFaultProvider().capabilities(), Set.of());
-        return new SignedPolicy(
-                MAPPER.writeValueAsString(policy), SIGNING_KEY, "c2lnbmF0dXJl");
+        String policyJson = MAPPER.writeValueAsString(policy);
+        return new SignedPolicy(policyJson, SIGNING_KEY,
+                Certificates.sign(signingKey, "RSA", policyJson));
     }
 
     private static SecretHandle handleOf(String handleId, String value) {
@@ -155,7 +167,7 @@ final class RemoteRunner implements AutoCloseable {
                         "the runner asked for work and was given none: " + request.runId()));
     }
 
-    private static Dispatch dispatchOf(Request request) throws Exception {
+    private Dispatch dispatchOf(Request request) throws Exception {
         String scenario = Files.readString(request.scenario());
         List<DispatchedDocument> documents = new ArrayList<>();
         for (Map.Entry<String, Path> document : request.documents().entrySet()) {

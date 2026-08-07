@@ -54,8 +54,31 @@ happens at each edge.
   component may legitimately be given the ability to do; issuing a policy that
   says which faults may be injected is not, and the file that grants the second
   should not arrive with the first. It is read the same way as the rest of the
-  key material — from a path, on connection — so rotating it is the same
+  key material — from a path, on verification — so rotating it is the same
   operation.
+
+  Three details the implementation had to settle, recorded because each could
+  reasonably have gone another way:
+
+  - **The key file is an X.509 certificate**, not a bare public key. That is
+    what `keytool` produces and what the documented procedure already exports,
+    so an operator issues a policy-signing key with the command they used for
+    the TLS material. Nothing here checks the certificate's chain or its
+    validity dates — it is a container for a public key, and the trust decision
+    was made when the operator named the file.
+  - **Keys are held by id, several at once**, which is what `keyId` on the wire
+    is for. A rollover adds the new key, moves the signer, then removes the old
+    one; a single key would make rotation a swap two systems have to perform at
+    the same moment. `--policy-key <id>=<file>` is repeatable for exactly this.
+  - **The signature algorithm follows the key**, not a preference stated here.
+    An EdDSA key is verified with EdDSA; RSA and EC keys name a family and get
+    SHA-256, which is what the rest of the system hashes with. A deployment
+    that issued Ed25519 keys should not be told its key is unusable.
+
+  Everything that can go wrong is a refusal rather than an exception: an
+  unreadable file, an unknown id, a signature that is not base64, one that does
+  not hold. A runner that threw here would report a misconfigured path as an
+  unexplained failure of the run, to the one person who cannot reach it.
 - **A dispatch names secret handles, never secret values.** The policy and the
   scenario refer to `authSecretId` and `databaseSecretId`; the runner resolves
   them from its own environment, as a local run does. Nothing that has ever

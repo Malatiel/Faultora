@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * The clients a compiled plan needs, and the engine over them.
@@ -41,6 +42,17 @@ import java.util.Map;
  * caller holds rather than a map it is handed.
  */
 public final class RunEnvironment implements AutoCloseable {
+
+    /**
+     * The protocols a run here can speak.
+     * <p>
+     * Read from the connectors below rather than typed again wherever a runner
+     * has to say what it can do. What a runner advertises at registration and
+     * what it can actually open are the same fact, and two spellings of one
+     * fact are two things that have to be kept true.
+     */
+    public static final Set<String> PROTOCOLS_SPOKEN = Set.of(
+            "http", KafkaConnector.PROTOCOL, JdbcConnector.PROTOCOL);
 
     private final LocalEngine engine;
     private final List<AutoCloseable> opened;

@@ -71,6 +71,62 @@ public final class Certificates {
         return truststore;
     }
 
+    /**
+     * Sign with an identity's private key, the way a control plane signs a
+     * policy.
+     * <p>
+     * Here rather than in a test because the runner's side of this — verifying
+     * — is only worth anything if something really signed. A fixture signature
+     * would let a verifier that accepts everything pass.
+     *
+     * @param algorithm the key's own, as {@code keytool} was asked for it
+     */
+    public static String sign(Identity identity, String algorithm, String payload)
+            throws Exception {
+        java.security.KeyStore store = java.security.KeyStore.getInstance("PKCS12");
+        try (java.io.InputStream bytes = Files.newInputStream(identity.keystore())) {
+            store.load(bytes, PASSWORD.toCharArray());
+        }
+        String alias = store.aliases().nextElement();
+        java.security.PrivateKey key = (java.security.PrivateKey)
+                store.getKey(alias, PASSWORD.toCharArray());
+        java.security.Signature signer =
+                java.security.Signature.getInstance(signatureAlgorithmFor(algorithm));
+        signer.initSign(key);
+        signer.update(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        return java.util.Base64.getEncoder().encodeToString(signer.sign());
+    }
+
+    private static String signatureAlgorithmFor(String keyAlgorithm) {
+        return switch (keyAlgorithm) {
+            case "RSA" -> "SHA256withRSA";
+            case "EC" -> "SHA256withECDSA";
+            default -> "EdDSA";
+        };
+    }
+
+    /**
+     * Issue an identity whose key is of a named algorithm.
+     * <p>
+     * The default {@link #issue} makes RSA keys because that is what the TLS
+     * material has always used; a policy-signing key is a separate file with a
+     * separate rotation, and an operator may well choose differently.
+     */
+    public static Identity issueKeyOf(String algorithm, Path directory, String name)
+            throws Exception {
+        Path keystore = directory.resolve(name + ".p12");
+        Path certificate = directory.resolve(name + ".crt");
+        Files.deleteIfExists(keystore);
+        Files.deleteIfExists(certificate);
+        keytool("-genkeypair", "-alias", name, "-keyalg", algorithm,
+                "-dname", "CN=" + name, "-validity", "1",
+                "-keystore", keystore.toString(), "-storetype", "PKCS12",
+                "-storepass", PASSWORD, "-keypass", PASSWORD);
+        keytool("-exportcert", "-alias", name, "-keystore", keystore.toString(),
+                "-storepass", PASSWORD, "-file", certificate.toString());
+        return new Identity(keystore, certificate);
+    }
+
     private static void keytool(String... arguments) throws Exception {
         List<String> command = new ArrayList<>();
         command.add(Path.of(System.getProperty("java.home"), "bin", "keytool").toString());
