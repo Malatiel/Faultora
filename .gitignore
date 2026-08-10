@@ -40,3 +40,7 @@ Thumbs.db
 
 # Offline installation bundles, built by deploy/offline-bundle.sh
 dist/
+
+# Review correspondence dropped into the tree to be read. Working copies,
+# not sources, and nothing that ends up in a release should come from here.
+.review-attachments/
