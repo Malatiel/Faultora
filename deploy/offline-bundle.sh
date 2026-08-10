@@ -13,7 +13,7 @@
 #
 set -eu
 
-VERSION="${1:-0.9.0-SNAPSHOT}"
+VERSION="${1:-0.9.0}"
 IMAGE="${IMAGE:-faultora/runner:${VERSION}}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 JAR="${ROOT}/faultora-cli/target/faultora-${VERSION}.jar"

@@ -2,7 +2,54 @@
 
 All notable changes to Faultora are documented in this file.
 
-## Unreleased — 0.9 in progress
+## 0.9.0 — 2026-08-10
+
+A runner you can put inside a private network, and the semantics 1.0 would
+otherwise have frozen by accident.
+
+### Added
+
+- **`faultora runner`** — a runner that dials out for work from inside a network
+  nothing can reach into. It registers with a control plane over mutually
+  authenticated TLS, is dispatched a scenario, compiles it with the same
+  compiler a local run uses, executes it, and streams the journal back as it
+  goes. There is no port: the release gate is a shape rather than a promise,
+  and `RunnerIsolationTest` asks the operating system to confirm it.
+- **A run is bounded by a lease it does not control.** A dispatch carries
+  permission with a deadline, the runner renews it by asking, and when there is
+  nobody left to ask the permission runs out and the run stops on the runner's
+  own clock — rolling back its faults and running cleanup. Nothing detects the
+  disconnection: not renewing *is* the detection.
+- **The policy a run executes under is signed, and the signature is verified.**
+  Mutual TLS says who is speaking; a signature says what they said and that
+  nothing in the middle altered it. Verifying keys are held by id so a rollover
+  can overlap, are read from their files at verification so rotating one is
+  replacing a file, and follow the operator's choice of algorithm rather than
+  ours.
+- **A deployment states what it permits, and a dispatch can only narrow it.**
+  Targets, environments, operation classes, fault types, concurrency, duration,
+  requests, payload size, and how much evidence may be kept. Two dimensions
+  mean the opposite of each other on purpose: naming no targets means any, and
+  naming no fault types means none.
+- **A dispatch can say how much of what a run sees may be kept.** The signed
+  policy carries an evidence policy beside the execution policy, and the runner
+  keeps the smaller of that and its own floor. A dispatch that says nothing gets
+  what a local run keeps — not the strictest policy, which is the safer-looking
+  answer and would make every body assertion indeterminate from a runner.
+- **`faultora health`** — reads the status file a runner writes, for a platform
+  that cannot connect to one. Live means the runner's own timer is turning;
+  ready means a dispatcher has accepted it. A runner that cannot reach its
+  control plane fails readiness and never liveness, because restarting does not
+  make a control plane reachable.
+- **Packaging an operator can deploy**: a distroless image, Compose and
+  Kubernetes examples with every capability dropped and a deny-by-default
+  network policy, and an offline bundle carrying the saved image, the jar, the
+  examples and their checksums.
+- **`matches`** on the `jsonpath` assertion: a regular expression over the
+  selected value, for the generated identifier whose value is unknown and whose
+  shape is not. It was documented and missing; `length` was too, and is gone
+  from the documentation because JMESPath's own `length()` in the path always
+  was the way to ask.
 
 ### Changed
 
@@ -37,13 +84,17 @@ All notable changes to Faultora are documented in this file.
   a template always resolves to text. `type` is what distinguishes 5 from
   `"5"`. This is the rule the tabular assertions have applied since 0.8.
 
-### Added
+### Fixed
 
-- **`matches`** on the `jsonpath` assertion: a regular expression over the
-  selected value, for the generated identifier whose value is unknown and whose
-  shape is not. It was documented and missing; `length` was too, and is gone
-  from the documentation because JMESPath's own `length()` in the path always
-  was the way to ask.
+- **The engine skipped cleanup when a run was cancelled**, three lines below a
+  comment promising it never would. A run stopped by its lease or its deadline
+  left the steps that undo its setup unrun.
+- **A catalog compiled from two documents could not start.** The digest over
+  their versions was joined with `+`, which the identifier type refuses, so
+  every run importing more than one description failed before it began.
+- **The JDBC connector's fetch-size bound meant nothing on PostgreSQL**, which
+  opens a server-side cursor only inside a transaction. The documented limit on
+  how much a query may pull was a claim about nothing.
 
 The assertion stays named `jsonpath` while evaluating JMESPath. Renaming means
 two names frozen in the contract forever or breaking every scenario that
