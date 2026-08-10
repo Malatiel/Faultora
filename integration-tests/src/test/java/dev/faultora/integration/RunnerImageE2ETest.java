@@ -19,6 +19,8 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -118,6 +120,7 @@ class RunnerImageE2ETest {
                 directory, "control", 1, "dns:" + HOST_FROM_CONTAINER);
         Certificates.Identity signing = Certificates.issue(directory, "policy-signing", 1);
         Path truststore = Certificates.trusting(directory, "runner", control);
+        readableInsideTheContainer(directory);
 
         try (QualificationDispatcher dispatcher = new QualificationDispatcher(
                 new TlsMaterial(control.keystore(),
@@ -170,8 +173,10 @@ class RunnerImageE2ETest {
         Path status = directory.resolve("health.json");
         Files.writeString(status, statusWritten(System.currentTimeMillis()));
 
-        assertThat(probe(status, "30s").exitValue())
-                .as("a runner that wrote a moment ago is alive").isZero();
+        Process fresh = probe(status, "30s");
+        assertThat(fresh.exitValue())
+                .as(() -> "the probe said: " + output(fresh))
+                .isZero();
 
         Files.writeString(status, statusWritten(System.currentTimeMillis() - 600_000));
 
@@ -195,7 +200,37 @@ class RunnerImageE2ETest {
         assertThat(output(container)).contains("--policy-key");
     }
 
+    /**
+     * Let the user the image runs as read what is mounted from here.
+     * <p>
+     * A temporary directory is created {@code rwx------} on POSIX, and the
+     * image runs as uid 65532 rather than as whoever ran the build — so the
+     * container cannot so much as enter this directory, its key material is
+     * unreadable, and the runner exits having failed to register. The failure
+     * says "could not register", which sends a reader looking at TLS and at
+     * the network, and is a file mode.
+     * <p>
+     * Invisible on a machine whose container runtime virtualizes ownership,
+     * which is why this passed for a whole release before a Linux build ran it.
+     * Nothing secret lives here: these keystores exist for one test method.
+     */
+    private static void readableInsideTheContainer(Path directory) throws IOException {
+        Set<PosixFilePermission> directoryPermissions = PosixFilePermissions.fromString("rwxr-xr-x");
+        Set<PosixFilePermission> filePermissions = PosixFilePermissions.fromString("rw-r--r--");
+        if (!directory.getFileSystem().supportedFileAttributeViews().contains("posix")) {
+            return;
+        }
+        Files.setPosixFilePermissions(directory, directoryPermissions);
+        try (var entries = Files.list(directory)) {
+            for (Path entry : entries.toList()) {
+                Files.setPosixFilePermissions(entry,
+                        Files.isDirectory(entry) ? directoryPermissions : filePermissions);
+            }
+        }
+    }
+
     private Process probe(Path status, String maxAge) throws Exception {
+        readableInsideTheContainer(directory);
         return run(60, PROJECT_ROOT,
                 "docker", "run", "--rm",
                 "-v", status.toAbsolutePath() + ":/var/faultora/health.json:ro",
