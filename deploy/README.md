@@ -106,7 +106,19 @@ is started without `--toxiproxy-url` and without any `--allow-fault`. Granting
 the capability while forbidding the fault type, or the reverse, is one fact
 written in two places that will eventually disagree.
 
-**What is exercised and what is not.** The image is built and run by
-`RunnerImageE2ETest`, which serves a real dispatch through it over mutual TLS.
-The Compose file and the Kubernetes manifests are documentation: no test
-applies them, and they carry example addresses that have to be replaced.
+**What is exercised and what is not.**
+
+- The image is built and run by `RunnerImageE2ETest`, which serves a real
+  dispatch through it over mutual TLS.
+- That **nothing listens** is checked by `RunnerIsolationTest`, which asks the
+  operating system for the listening sockets of a running runner and requires
+  there to be none — while idle and while a run is in flight. It puts the same
+  question to a process that is listening, so a check that finds nothing means
+  something.
+- Rotating key material is checked by `TlsMaterialTest` and `PolicyKeysTest`:
+  the file is replaced, the new material works, and the old stops working,
+  with nothing restarted.
+- The Compose file and the Kubernetes manifests are **documentation**. No test
+  applies them, the deny-by-default network policy is not enforced by anything
+  in this repository, and the addresses in them are examples that have to be
+  replaced.
