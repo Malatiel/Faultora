@@ -8,10 +8,11 @@ across HTTP and Kafka, checks technical and business invariants, and produces
 console, JSON, HTML, and JUnit reports. Execution stays inside your
 infrastructure and does not require a hosted control plane or telemetry.
 
-Version 0.8.0 is a runnable technical preview. It targets local
-development and CI use on Java 21.
+Version 0.9.0 is a runnable technical preview. It targets local development
+and CI use on Java 21, and it can now run **inside a private network** as a
+runner that dials out for work.
 
-## What 0.8.0 includes
+## What 0.9.0 includes
 
 Scenario execution:
 
@@ -59,6 +60,21 @@ Fault injection:
 - `expectError` steps for requests that are supposed to fail under a fault;
 - fault windows and fault-to-node attribution in console and HTML reports.
 
+Private-network execution:
+
+- `faultora runner` — the same binary serving a control plane from inside a
+  network nothing can reach into, dialling out for work over mutually
+  authenticated TLS;
+- runs bounded by a lease the runner renews by asking, so losing contact stops
+  a run and rolls back its faults rather than extending either;
+- a signed execution and evidence policy, verified against a key the operator
+  configures, narrowed by limits the deployment states and a dispatch can never
+  widen;
+- `faultora health` — a status file and a command to read it, for a platform
+  probing a process that has no port;
+- a distroless image, Compose and Kubernetes examples, and an offline
+  installation bundle in [deploy/](deploy/README.md).
+
 Security posture:
 
 - SSRF protection with DNS resolution and address pinning;
@@ -88,7 +104,7 @@ accepted.
 Download the release JAR and its checksums:
 
 ```bash
-FAULTORA_VERSION=0.8.0
+FAULTORA_VERSION=0.9.0
 RELEASE_URL="https://github.com/Malatiel/Faultora/releases/download/v${FAULTORA_VERSION}"
 
 curl --fail --location --retry 3 \
@@ -116,7 +132,7 @@ Every release also includes a CycloneDX SBOM and the Apache 2.0 license.
 The executable artifact is written to:
 
 ```text
-faultora-cli/target/faultora-0.8.0.jar
+faultora-cli/target/faultora-0.9.0.jar
 ```
 
 The regular CI build can run without repository secrets. Configure the
@@ -129,9 +145,9 @@ missing.
 Check the executable and validate the example scenario:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.8.0.jar --version
+java -jar faultora-cli/target/faultora-0.9.0.jar --version
 
-java -jar faultora-cli/target/faultora-0.8.0.jar \
+java -jar faultora-cli/target/faultora-0.9.0.jar \
   validate \
   --scenario examples/payment-service/scenarios/passing.yaml
 ```
@@ -139,7 +155,7 @@ java -jar faultora-cli/target/faultora-0.8.0.jar \
 Generate a starter scenario from an OpenAPI document:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.8.0.jar \
+java -jar faultora-cli/target/faultora-0.9.0.jar \
   init \
   --from-openapi examples/payment-service/openapi.yaml \
   --output ./generated
@@ -148,7 +164,7 @@ java -jar faultora-cli/target/faultora-0.8.0.jar \
 Run a scenario against an API:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.8.0.jar \
+java -jar faultora-cli/target/faultora-0.9.0.jar \
   test \
   --scenario examples/payment-service/scenarios/passing.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -200,7 +216,7 @@ race window, then asserts the business invariant that exactly one payment
 exists:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.8.0.jar \
+java -jar faultora-cli/target/faultora-0.9.0.jar \
   test \
   --scenario examples/payment-service/scenarios/fault-concurrent-duplicate.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -309,7 +325,7 @@ An AsyncAPI 3.0 description brings Kafka channels into the same catalog as the
 HTTP operations, and `--openapi` and `--asyncapi` can be given together:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.8.0.jar \
+java -jar faultora-cli/target/faultora-0.9.0.jar \
   test \
   --scenario examples/payment-worker/scenarios/duplicate-delivery.yaml \
   --asyncapi examples/payment-worker/asyncapi.yaml \
@@ -413,7 +429,7 @@ observations:
 ```
 
 ```bash
-java -jar faultora-cli/target/faultora-0.8.0.jar \
+java -jar faultora-cli/target/faultora-0.9.0.jar \
   test \
   --scenario examples/payment-recovery/scenarios/settlement-invariant.yaml \
   --openapi examples/payment-recovery/openapi.yaml \
@@ -550,7 +566,7 @@ handle is mapped to an environment variable with the `FAULTORA_SECRET_` prefix:
 ```bash
 export FAULTORA_SECRET_PAYMENTS_API='replace-with-a-real-token'
 
-java -jar faultora-cli/target/faultora-0.8.0.jar \
+java -jar faultora-cli/target/faultora-0.9.0.jar \
   test \
   --scenario scenario.yaml \
   --openapi openapi.yaml \
@@ -570,6 +586,55 @@ HttpClient header and wire logging is disabled in the release configuration.
 | `1` | A scenario assertion failed |
 | `2` | Invalid scenario or CLI configuration |
 | `3` | Runner or infrastructure failure |
+
+## Running inside a private network
+
+Everything above runs a scenario from where you are typing. When the system
+under test is somewhere you cannot reach — a customer's network, a segment with
+no inbound path — the same binary runs as a runner instead:
+
+```bash
+faultora runner \
+  --dispatcher https://control.example.internal:8443 \
+  --keystore /etc/faultora/runner.p12 \
+  --truststore /etc/faultora/trusted.p12 \
+  --tls-secret-id runner-tls \
+  --policy-key control-2026=/etc/faultora/policy.crt \
+  --work-dir /var/faultora
+```
+
+**The runner dials out; nothing connects to it.** It asks a control plane for
+work, compiles the scenario it is sent with the same compiler a local run uses,
+executes it, and streams the journal back as it goes. It has no port — not for
+the control plane, not for a health probe, not for a metrics scrape.
+
+Three properties are worth knowing before deploying one:
+
+- **A run is bounded by a lease the runner does not control.** It renews the
+  lease by asking; when there is nobody to ask, the permission runs out and the
+  run stops, rolls back its faults and runs cleanup, on the runner's own clock.
+  Losing contact cannot extend a run or leave a fault injected.
+- **The policy a run executes under is signed and verified.** A runner will not
+  take its permissions from whoever reached it, and its own configuration is a
+  floor a dispatch can narrow and never widen.
+- **A dispatch names secret handles, never secret values.** The runner resolves
+  them from its own environment, exactly as a local run does.
+
+Health is a command rather than an endpoint, because there is no port to put
+one on:
+
+```bash
+faultora health --file /var/faultora/health.json                      # live
+faultora health --file /var/faultora/health.json --require-registered # ready
+```
+
+A container image, Compose and Kubernetes examples, and an offline installation
+bundle are in [deploy/](deploy/README.md), which also says which of their
+claims are exercised by tests and which are documentation.
+
+The control plane that dispatches to a runner is 2.0. What 0.9 ships is the
+runner and the protocol it speaks; the counterpart in this repository is
+qualification scaffolding and is named so.
 
 ## Security model
 

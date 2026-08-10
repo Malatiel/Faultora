@@ -1,7 +1,7 @@
 # A runner beside the system it tests, on a network that reaches nothing else.
 #
 #   ./mvnw -o package -DskipTests
-#   docker build --build-arg JAR=faultora-cli/target/faultora-0.9.0-SNAPSHOT.jar \
+#   docker build --build-arg JAR=faultora-cli/target/faultora-0.9.0.jar \
 #                -t faultora/runner:0.9.0 .
 #   FAULTORA_SECRET_RUNNER_TLS=... docker compose -f deploy/docker-compose.yml up
 #
