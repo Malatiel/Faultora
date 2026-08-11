@@ -1,4 +1,4 @@
-apiVersion: faultora.dev/v1alpha1
+apiVersion: faultora.dev/v1
 kind: Scenario
 
 metadata:

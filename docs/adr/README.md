@@ -19,3 +19,8 @@
 | [ADR-015](ADR-015-asyncapi-direction.md) | The direction of an imported AsyncAPI operation | Accepted |
 | [ADR-016](ADR-016-assertion-parameters.md) | Assertion parameters are expressions | Accepted |
 | [ADR-017](ADR-017-database-observations.md) | Database observations come from the operator, not the scenario | Accepted |
+| [ADR-018](ADR-018-expression-semantics.md) | What an expression means, decided before it is frozen | Accepted |
+| [ADR-019](ADR-019-assertion-semantics.md) | What an assertion means, decided before it is frozen | Accepted |
+| [ADR-020](ADR-020-runner-dispatch-and-leases.md) | What is dispatched to a runner, and what keeps it bounded | Accepted |
+| [ADR-021](ADR-021-runner-trust.md) | How a runner and a control plane come to trust each other | Accepted |
+| [ADR-022](ADR-022-freezing-the-scenario-api.md) | Freezing `faultora.dev/v1` | Accepted |

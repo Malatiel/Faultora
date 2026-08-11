@@ -1,0 +1,67 @@
+# The shape of a faultora.dev/v1 scenario document.
+#
+# Generated from the model and committed on purpose. ScenarioSurfaceTest fails
+# when the two disagree, which is what makes the freeze a rule rather than a
+# sentence in a document.
+#
+# From 1.0 the only change permitted in a 1.x release is an addition an older
+# 1.x would have ignored rather than refused. A rename, a removal, a type
+# change, or a field that becomes required is a new apiVersion. ADR-022.
+AssertionStep.assertionType: String
+AssertionStep.dependsOn: List<String>
+AssertionStep.id: String
+AssertionStep.message: String
+AssertionStep.metadata: Map<String, Object>
+AssertionStep.params: Map<String, Object>
+AssertionStep.targetStep: String
+Condition.assertionType: String
+Condition.message: String
+Condition.params: Map<String, Object>
+FaultStep.dependsOn: List<String>
+FaultStep.duration: String
+FaultStep.faultType: String
+FaultStep.id: String
+FaultStep.metadata: Map<String, Object>
+FaultStep.params: Map<String, Object>
+FaultStep.targetScope: String
+Generate.fields: List<String>
+Generate.preferExamples: Boolean
+Generate.strategy: String
+InputDeclaration.defaultValue: Object
+InputDeclaration.description: String
+InputDeclaration.required: boolean
+InputDeclaration.type: String
+RetryPolicy.backoffMs: long
+RetryPolicy.backoffMultiplier: double
+RetryPolicy.maxAttempts: int
+RetryPolicy.maxBackoffMs: long
+ScenarioDocument.apiVersion: String
+ScenarioDocument.assertions: List<AssertionStep>
+ScenarioDocument.cleanup: List<ScenarioStep>
+ScenarioDocument.execute: List<ScenarioStep>
+ScenarioDocument.faults: List<FaultStep>
+ScenarioDocument.inputs: Map<String, InputDeclaration>
+ScenarioDocument.kind: String
+ScenarioDocument.metadata: ScenarioMetadata
+ScenarioDocument.setup: List<ScenarioStep>
+ScenarioDocument.timeout: String
+ScenarioMetadata.annotations: Map<String, String>
+ScenarioMetadata.description: String
+ScenarioMetadata.labels: Map<String, String>
+ScenarioMetadata.name: String
+ScenarioStep.count: Integer
+ScenarioStep.dependsOn: List<String>
+ScenarioStep.expectError: boolean
+ScenarioStep.forEach: List<Object>
+ScenarioStep.generate: ScenarioStep.Generate
+ScenarioStep.id: String
+ScenarioStep.inputs: Map<String, Object>
+ScenarioStep.interval: String
+ScenarioStep.metadata: Map<String, Object>
+ScenarioStep.operationId: String
+ScenarioStep.outputAs: String
+ScenarioStep.retry: ScenarioStep.RetryPolicy
+ScenarioStep.steps: List<ScenarioStep>
+ScenarioStep.timeout: String
+ScenarioStep.type: String
+ScenarioStep.until: List<ScenarioStep.Condition>

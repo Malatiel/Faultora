@@ -1,5 +1,7 @@
 package dev.faultora.cli;
 
+import dev.faultora.spec.model.ApiVersions;
+
 import dev.faultora.runtime.ExtensionRegistry;
 
 import dev.faultora.spi.contract.SourceImporter;
@@ -86,7 +88,7 @@ public class InitCommand implements Command {
 
     private String generateScenario(ApiCatalog catalog) {
         StringBuilder sb = new StringBuilder();
-        sb.append("apiVersion: faultora.dev/v1alpha1\n");
+        sb.append("apiVersion: ").append(ApiVersions.CURRENT).append('\n');
         sb.append("kind: Scenario\n");
         sb.append("metadata:\n");
         sb.append("  name: generated-scenario\n");

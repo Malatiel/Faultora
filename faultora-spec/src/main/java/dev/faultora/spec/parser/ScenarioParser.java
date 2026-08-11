@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import dev.faultora.spec.model.ApiVersions;
 import dev.faultora.spec.model.ScenarioDocument;
 
 import java.io.IOException;
@@ -43,10 +44,15 @@ public class ScenarioParser {
             String apiVersion = getTextOrNull(root, "apiVersion");
             if (apiVersion == null) {
                 diagnostics.add(Diagnostic.error("apiVersion", "apiVersion is required"));
-            } else if (!ScenarioDocument.SUPPORTED_API_VERSION.equals(apiVersion)) {
+            } else if (!ApiVersions.isAccepted(apiVersion)) {
                 diagnostics.add(Diagnostic.error("apiVersion",
-                        "Unsupported apiVersion: " + apiVersion +
-                        ". Expected: " + ScenarioDocument.SUPPORTED_API_VERSION));
+                        ApiVersions.unsupportedNotice(apiVersion)));
+            } else if (ApiVersions.isDeprecated(apiVersion)) {
+                // A warning, never an error. A document written against the
+                // preview still runs, and the release whose point is stability
+                // must not be the one that turns every existing pipeline red.
+                diagnostics.add(Diagnostic.warning("apiVersion",
+                        ApiVersions.deprecationNotice(apiVersion)));
             }
 
             // Validate kind
