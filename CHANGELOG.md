@@ -2,6 +2,25 @@
 
 All notable changes to Faultora are documented in this file.
 
+## 0.9.1 — 2026-08-11
+
+**Nothing in this release changes what Faultora does.** 0.9.0 was tagged on a
+commit whose build did not pass, so no release was ever published under it; this
+is the same code with a green build behind it, and it is a separate version
+rather than a moved tag because a tag that quietly points somewhere else is
+worse than a version number nobody needed.
+
+### Fixed
+
+- **The image test could not read the key material it mounted.** A temporary
+  directory is created `rwx------` on POSIX and the image runs as another user,
+  so on Linux the container could not enter the directory its keystore came
+  from and exited having failed to register — a file mode that reads like TLS.
+  Invisible on a container runtime that virtualizes ownership, which is how it
+  reached a release.
+- **Review correspondence left in the tree** is out of it and into
+  `.gitignore`.
+
 ## 0.9.0 — 2026-08-10
 
 A runner you can put inside a private network, and the semantics 1.0 would
