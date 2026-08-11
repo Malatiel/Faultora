@@ -34,7 +34,7 @@ public class FaultoraCli {
     public static final int EXIT_RUNNER_FAILURE = 3;
 
     private static final String VERSION = Optional.ofNullable(
-            FaultoraCli.class.getPackage().getImplementationVersion()).orElse("0.9.1");
+            FaultoraCli.class.getPackage().getImplementationVersion()).orElse("0.10.0");
 
     private final PrintWriter out;
     private final PrintWriter err;
