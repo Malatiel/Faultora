@@ -4,7 +4,7 @@ This page documents the scenario format implemented by Faultora 0.9.1. The
 format is versioned independently from the application:
 
 ```yaml
-apiVersion: faultora.dev/v1alpha1
+apiVersion: faultora.dev/v1
 kind: Scenario
 ```
 
@@ -12,10 +12,37 @@ Faultora rejects unsupported versions, missing required fields, duplicate step
 IDs, unknown references, dependency cycles, and execution features that are not
 available in 0.9.1.
 
+## Compatibility
+
+`faultora.dev/v1` is **frozen**. Within 1.x the only change permitted is an
+addition that an earlier 1.x release would have ignored rather than refused; a
+rename, a removal, a type change, or a field that becomes required is a new
+`apiVersion`. The rule is enforced rather than promised: the shape of the
+document is held as a committed list, and a build that changes it fails until
+somebody writes the change down.
+
+| Document declares | 0.8 and earlier | 0.9.x | 1.x | 2.0 |
+|---|---|---|---|---|
+| `faultora.dev/v1alpha1` | read | read | read, with a deprecation warning | **not read** |
+| `faultora.dev/v1` | refused | refused | read | read |
+
+A warning is a warning: a deprecated document runs, and the exit code is the
+one the scenario earned. Moving a document is one line, and there is a command
+for it:
+
+```bash
+faultora migrate scenarios/          # says what would change
+faultora migrate scenarios/ --write  # changes it
+```
+
+The migrator edits the version token and nothing else — comments, key order and
+formatting survive, because a diff nobody can review is not a migration
+anybody will run.
+
 ## Complete example
 
 ```yaml
-apiVersion: faultora.dev/v1alpha1
+apiVersion: faultora.dev/v1
 kind: Scenario
 
 metadata:
@@ -1047,7 +1074,7 @@ reviewable in one file that lives beside the deployment.
 
 ```yaml
 # observations.yaml
-apiVersion: faultora.dev/v1alpha1
+apiVersion: faultora.dev/v1
 kind: Observations
 
 servers:

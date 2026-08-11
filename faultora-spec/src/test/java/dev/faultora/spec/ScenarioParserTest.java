@@ -34,7 +34,7 @@ class ScenarioParserTest {
 
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.document()).isNotNull();
-        assertThat(result.document().apiVersion()).isEqualTo("faultora.dev/v1alpha1");
+        assertThat(result.document().apiVersion()).isEqualTo(ApiVersions.CURRENT);
         assertThat(result.document().kind()).isEqualTo("Scenario");
         assertThat(result.document().metadata().name()).isEqualTo("duplicate-payment");
         assertThat(result.document().execute()).hasSize(1);
@@ -79,6 +79,58 @@ class ScenarioParserTest {
         assertThat(result.errors().stream().map(Diagnostic::message))
                 .anyMatch(m -> m.contains("Unsupported apiVersion"));
     }
+
+    @Test
+    void aDocumentWrittenAgainstThePreviewStillRuns() {
+        // The release whose purpose is stability must not be the one that turns
+        // every existing pipeline red. A deprecated version parses, succeeds,
+        // and says what to do about it — as a warning, which no exit code reads.
+        String preview = SMOKE_SCENARIO.formatted("faultora.dev/v1alpha1");
+
+        ParseResult<ScenarioDocument> result = parser.parse(preview);
+
+        assertThat(result.isSuccess())
+                .as("a warning is not a failure").isTrue();
+        assertThat(result.errors()).isEmpty();
+        assertThat(result.warnings().stream().map(Diagnostic::message))
+                .anyMatch(message -> message.contains("faultora migrate")
+                        && message.contains(ApiVersions.SUNSET));
+    }
+
+    @Test
+    void theFrozenVersionParsesWithNothingToSay() {
+        ParseResult<ScenarioDocument> result =
+                parser.parse(SMOKE_SCENARIO.formatted(ApiVersions.CURRENT));
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.diagnostics())
+                .as("the current version is not deprecated and says nothing")
+                .isEmpty();
+    }
+
+    @Test
+    void aVersionNobodyReadsNamesTheOnesThatAreRead() {
+        // What an operator does next is the point of the message.
+        ParseResult<ScenarioDocument> result =
+                parser.parse(SMOKE_SCENARIO.formatted("faultora.dev/v2"));
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.errors().stream().map(Diagnostic::message))
+                .anyMatch(message -> message.contains(ApiVersions.CURRENT)
+                        && message.contains("faultora.dev/v1alpha1"));
+    }
+
+    /** The smallest document that parses, with its version left to the caller. */
+    private static final String SMOKE_SCENARIO = """
+            apiVersion: %s
+            kind: Scenario
+            metadata:
+              name: smallest-thing-that-parses
+            execute:
+              - id: pause
+                type: wait
+                timeout: 10ms
+            """;
 
     @Test
     void parseEmptyContentReportsError() {

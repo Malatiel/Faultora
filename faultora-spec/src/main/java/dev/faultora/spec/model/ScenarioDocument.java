@@ -7,9 +7,9 @@ import java.util.Map;
 
 /**
  * Top-level scenario document model.
- * Parsed from YAML with apiVersion: faultora.dev/v1alpha1
+ * Parsed from YAML with apiVersion: faultora.dev/v1
  *
- * @param apiVersion  must be "faultora.dev/v1alpha1"
+ * @param apiVersion  a version {@link ApiVersions} accepts
  * @param kind        must be "Scenario"
  * @param metadata    scenario metadata
  * @param inputs      declared input parameters
@@ -33,7 +33,12 @@ public record ScenarioDocument(
         List<ScenarioStep> cleanup,
         String timeout
 ) {
-    public static final String SUPPORTED_API_VERSION = "faultora.dev/v1alpha1";
+    /**
+     * @deprecated the set of readable versions is {@link ApiVersions}, and a
+     *             single constant cannot express "reads two, writes one".
+     */
+    @Deprecated
+    public static final String SUPPORTED_API_VERSION = ApiVersions.CURRENT;
     public static final String EXPECTED_KIND = "Scenario";
 
     /** Convenience constructor for documents without a scenario deadline. */

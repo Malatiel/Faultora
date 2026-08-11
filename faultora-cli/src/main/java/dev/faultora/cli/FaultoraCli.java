@@ -16,6 +16,8 @@ import java.util.*;
  *       private network, dialling out for work</li>
  *   <li>{@code health --file <status file>} — read what a runner says about
  *       itself, for a probe that cannot connect to one</li>
+ *   <li>{@code migrate <path>...} — move documents to the current API
+ *       version</li>
  * </ul>
  * <p>
  * Exit codes: 0 = pass, 1 = test failure, 2 = invalid configuration, 3 = runner failure.
@@ -48,6 +50,7 @@ public class FaultoraCli {
         commands.put("test", new TestCommand());
         commands.put("runner", new RunnerCommand(out, err));
         commands.put("health", new HealthCommand(out, err));
+        commands.put("migrate", new MigrateCommand(out, err));
     }
 
     /**
@@ -115,6 +118,7 @@ public class FaultoraCli {
         out.println("  test       --scenario <file> [options]              Run scenario against target");
         out.println("  runner     --dispatcher <url> [options]             Serve a control plane, dialling out");
         out.println("  health     --file <status file>                     Is the runner in this container all right?");
+        out.println("  migrate    <file or directory>... [--write]        Move documents to the current API version");
         out.println();
         out.println("Options:");
         out.println("  -v, --version   Show version");
