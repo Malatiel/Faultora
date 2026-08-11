@@ -11,13 +11,13 @@
 # one of the things this packaging exists for.
 #
 #   ./mvnw -o package -DskipTests
-#   docker build --build-arg JAR=faultora-cli/target/faultora-0.9.1.jar \
-#                -t faultora/runner:0.9.1 .
+#   docker build --build-arg JAR=faultora-cli/target/faultora-0.10.0.jar \
+#                -t faultora/runner:0.10.0 .
 #
 FROM gcr.io/distroless/java21-debian12:nonroot
 
 ARG JAR
-ARG VERSION=0.9.1
+ARG VERSION=0.10.0
 
 LABEL org.opencontainers.image.title="Faultora runner" \
       org.opencontainers.image.description="Reliability test runner for private networks" \

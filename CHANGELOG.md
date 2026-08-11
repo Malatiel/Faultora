@@ -2,6 +2,46 @@
 
 All notable changes to Faultora are documented in this file.
 
+## 0.10.0 — 2026-08-11
+
+The scenario format stops moving. `faultora.dev/v1` is frozen — the same
+semantics `v1alpha1` already had, with nothing renamed and nothing given a new
+meaning, because using a freeze as an opportunity to reshape the format would
+make every existing scenario a rewrite on the release whose point is that
+scenarios stop being rewritten.
+
+The application version and the format version are independent, which is why
+this is 0.10.0: 1.0 also wants extension isolation, supply-chain work,
+operational readiness and a security qualification, and none of those are done.
+
+### Added
+
+- **`faultora migrate`** moves documents to `faultora.dev/v1`. It reports by
+  default and writes when asked, changes the version token and nothing else —
+  comments, key order and formatting survive — and writes atomically, because a
+  tool run over a whole repository must not be able to leave a truncated
+  scenario behind. Running it twice does nothing the second time.
+- **A compatibility matrix** in the scenario reference: which release reads
+  which `apiVersion`, and until when.
+- **A deprecation diagnostic** for `faultora.dev/v1alpha1`. It is a *warning* —
+  a deprecated document still runs and the exit code is the one the scenario
+  earned, because a deprecation that changed an exit code would turn every
+  existing pipeline red the day somebody upgraded. It names the command that
+  fixes it and the release that stops reading it.
+
+### Changed
+
+- **`faultora.dev/v1` is what `init` writes** and what every document in this
+  repository declares — moved by the migrator rather than by hand, which is
+  also the migrator's end-to-end proof.
+- **The freeze is enforced rather than promised.** The shape of a scenario
+  document is derived from the model and compared with a committed list, so a
+  field added to a record fails the build until the addition is written down.
+  Within 1.x the only permitted change is an addition an earlier 1.x would have
+  ignored rather than refused; a rename, a removal, a type change or a field
+  that becomes required is a new `apiVersion`. ADR-022 records the decision and
+  what it deliberately leaves out.
+
 ## 0.9.1 — 2026-08-11
 
 **Nothing in this release changes what Faultora does.** 0.9.0 was tagged on a
