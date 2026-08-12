@@ -148,6 +148,53 @@ class MigrateCommandTest {
     }
 
     @Test
+    void aQuotedVersionIsStillTheVersion() throws Exception {
+        // YAML lets a scalar be quoted, and the parser reads the two the same
+        // way — so a migrator that took the quotes for part of the version
+        // would skip the file, report that there was nothing to do, and leave
+        // every run of that scenario warning about a version it just said was
+        // current. Both quoting styles, because a tool is used the way its
+        // author's editor formats YAML.
+        Path single = scenarioNamed("single.yaml",
+                SCENARIO.replace("apiVersion: faultora.dev/v1alpha1",
+                        "apiVersion: 'faultora.dev/v1alpha1'"));
+        Path doubled = scenarioNamed("double.yaml",
+                SCENARIO.replace("apiVersion: faultora.dev/v1alpha1",
+                        "apiVersion: \"faultora.dev/v1alpha1\""));
+
+        migrate(single.toString(), doubled.toString(), "--write");
+
+        assertThat(Files.readString(single))
+                .as("the quotes are the author's, and stay")
+                .contains("apiVersion: '" + ApiVersions.CURRENT + "'");
+        assertThat(Files.readString(doubled))
+                .contains("apiVersion: \"" + ApiVersions.CURRENT + "\"");
+        assertThat(out.toString()).contains("Migrated 2 document(s)");
+    }
+
+    @Test
+    void anApiVersionFromSomewhereElseIsNotOurs() throws Exception {
+        // Kubernetes manifests have an apiVersion too, and this command is run
+        // over whole repositories. Counting them as ours would also make the
+        // summary claim they declare a Faultora version.
+        scenarioNamed("deployment.yaml", """
+                apiVersion: apps/v1
+                kind: Deployment
+                metadata:
+                  name: not-a-scenario
+                """);
+        String before = Files.readString(directory.resolve("deployment.yaml"));
+
+        migrate(directory.toString(), "--write");
+
+        assertThat(Files.readString(directory.resolve("deployment.yaml"))).isEqualTo(before);
+        assertThat(out.toString())
+                .as("nothing here is ours, and the summary says so rather than "
+                        + "counting somebody else's manifest")
+                .contains("Nothing to migrate: 0 document(s)");
+    }
+
+    @Test
     void itMovesADocumentWithoutJudgingIt() throws Exception {
         // A scenario missing its steps is invalid before and after, and saying
         // so is `faultora validate`'s job. This command moves a version; a
