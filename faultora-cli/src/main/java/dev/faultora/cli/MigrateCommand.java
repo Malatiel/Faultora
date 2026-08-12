@@ -42,10 +42,27 @@ final class MigrateCommand implements Command {
      * The version line, wherever it sits.
      * <p>
      * Anchored to the start of a line so a version named inside a description
-     * or a comment is left alone.
+     * or a comment is left alone, and tolerant of quotes because YAML is: a
+     * document writing {@code apiVersion: "faultora.dev/v1alpha1"} means the
+     * same thing the parser reads, and a migrator that took the quotes for
+     * part of the version would skip the file while every run of it warned.
+     * <p>
+     * The quotes are their own groups so only what is between them is
+     * replaced, and the document keeps the punctuation its author chose.
      */
-    private static final Pattern API_VERSION_LINE =
-            Pattern.compile("^(\\s*apiVersion\\s*:\\s*)([^\\s#]+)(.*)$", Pattern.MULTILINE);
+    private static final Pattern API_VERSION_LINE = Pattern.compile(
+            "^(\\s*apiVersion\\s*:\\s*)(['\"]?)([^\\s#'\"]+)(['\"]?)(.*)$",
+            Pattern.MULTILINE);
+
+    /** What became of one document. */
+    private enum Outcome {
+        /** No Faultora version line: an OpenAPI document, or somebody's notes. */
+        NOT_OURS,
+        /** Already on the current version. */
+        CURRENT,
+        /** Moved, or would be. */
+        MIGRATED
+    }
 
     private final PrintWriter out;
     private final PrintWriter err;
@@ -91,15 +108,22 @@ final class MigrateCommand implements Command {
         }
 
         int migrated = 0;
+        int ours = 0;
         for (Path document : documents) {
-            if (migrate(document, write)) {
+            Outcome outcome = migrate(document, write);
+            if (outcome != Outcome.NOT_OURS) {
+                ours++;
+            }
+            if (outcome == Outcome.MIGRATED) {
                 migrated++;
             }
         }
 
         if (migrated == 0) {
-            out.println("Nothing to migrate: " + documents.size()
-                    + " document(s) already declare " + ApiVersions.CURRENT);
+            // Counting what was looked at rather than what was ours would
+            // report an OpenAPI document as declaring a Faultora version.
+            out.println("Nothing to migrate: " + ours + " document(s) already declare "
+                    + ApiVersions.CURRENT);
         } else if (write) {
             out.println("Migrated " + migrated + " document(s) to " + ApiVersions.CURRENT);
         } else {
@@ -132,47 +156,47 @@ final class MigrateCommand implements Command {
         }
     }
 
-    /**
-     * Move one document, or say why it is being left alone.
-     *
-     * @return whether this document needed migrating
-     */
-    private boolean migrate(Path document, boolean write) {
+    /** Move one document, or say why it is being left alone. */
+    private Outcome migrate(Path document, boolean write) {
         String before;
         try {
             before = Files.readString(document);
         } catch (IOException unreadable) {
             err.println("Skipped " + document + ": " + unreadable.getMessage());
-            return false;
+            return Outcome.NOT_OURS;
         }
 
         Matcher version = API_VERSION_LINE.matcher(before);
         if (!version.find()) {
             // Not a Faultora document. An OpenAPI or AsyncAPI file sitting in
             // the same directory is the ordinary case, not a problem.
-            return false;
+            return Outcome.NOT_OURS;
         }
-        String declared = version.group(2);
+        String declared = version.group(3);
+        if (!ApiVersions.isAccepted(declared)) {
+            // A version from somewhere else entirely: a Kubernetes manifest
+            // has an apiVersion too, and rewriting one would be this tool
+            // doing something nobody asked for.
+            return Outcome.NOT_OURS;
+        }
         if (!ApiVersions.isDeprecated(declared)) {
-            return false;
+            return Outcome.CURRENT;
         }
 
         String after = new StringBuilder(before)
-                .replace(version.start(2), version.end(2), ApiVersions.CURRENT)
+                .replace(version.start(3), version.end(3), ApiVersions.CURRENT)
                 .toString();
 
-        if (!write) {
-            out.println(document + ": " + declared + " → " + ApiVersions.CURRENT);
-            return true;
-        }
-        try {
-            writeAtomically(document, after);
-        } catch (IOException unwritable) {
-            err.println("Could not write " + document + ": " + unwritable.getMessage());
-            return false;
+        if (write) {
+            try {
+                writeAtomically(document, after);
+            } catch (IOException unwritable) {
+                err.println("Could not write " + document + ": " + unwritable.getMessage());
+                return Outcome.NOT_OURS;
+            }
         }
         out.println(document + ": " + declared + " → " + ApiVersions.CURRENT);
-        return true;
+        return Outcome.MIGRATED;
     }
 
     /**
