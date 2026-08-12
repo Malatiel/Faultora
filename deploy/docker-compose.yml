@@ -1,8 +1,8 @@
 # A runner beside the system it tests, on a network that reaches nothing else.
 #
 #   ./mvnw -o package -DskipTests
-#   docker build --build-arg JAR=faultora-cli/target/faultora-0.10.0.jar \
-#                -t faultora/runner:0.10.0 .
+#   docker build --build-arg JAR=faultora-cli/target/faultora-0.10.1.jar \
+#                -t faultora/runner:0.10.1 .
 #   FAULTORA_SECRET_RUNNER_TLS=... docker compose -f deploy/docker-compose.yml up
 #
 # Nothing here publishes a port. The runner dials the control plane; there is
@@ -11,7 +11,7 @@
 
 services:
   runner:
-    image: faultora/runner:0.10.0
+    image: faultora/runner:0.10.1
     command:
       - runner
       - --dispatcher

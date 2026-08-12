@@ -2,6 +2,25 @@
 
 All notable changes to Faultora are documented in this file.
 
+## 0.10.1 — 2026-08-11
+
+### Fixed
+
+- **`faultora migrate` skipped a document whose version was quoted.** YAML
+  lets a scalar be quoted and the parser reads the two the same way, but the
+  migrator's pattern took the quotes as part of the token — so
+  `apiVersion: 'faultora.dev/v1alpha1'` was never recognised as deprecated.
+  The file was left alone, the summary said there was nothing to migrate, and
+  every run of that scenario went on warning about a version the migrator had
+  just called current. The quotes are now their own groups, so only what is
+  between them is replaced and the document keeps the punctuation its author
+  chose.
+- **The summary counted documents that were not Faultora's.** Run over a
+  repository, it reported an OpenAPI file as one that already declares
+  `faultora.dev/v1`. A document is counted only when its `apiVersion` is one
+  this release accepts — which also means a Kubernetes manifest, which has an
+  `apiVersion` of its own, is not treated as a Faultora document at all.
+
 ## 0.10.0 — 2026-08-11
 
 The scenario format stops moving. `faultora.dev/v1` is frozen — the same
