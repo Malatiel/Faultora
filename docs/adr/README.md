@@ -24,3 +24,4 @@
 | [ADR-020](ADR-020-runner-dispatch-and-leases.md) | What is dispatched to a runner, and what keeps it bounded | Accepted |
 | [ADR-021](ADR-021-runner-trust.md) | How a runner and a control plane come to trust each other | Accepted |
 | [ADR-022](ADR-022-freezing-the-scenario-api.md) | Freezing `faultora.dev/v1` | Accepted |
+| [ADR-023](ADR-023-extension-isolation.md) | What an extension policy promises, and when | Accepted |
