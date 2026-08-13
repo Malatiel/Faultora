@@ -78,6 +78,12 @@ public final class RunEnvironment implements AutoCloseable {
             ExtensionPolicy extensions,
             boolean allowPrivate
     ) {
+        // Before anything is opened: a policy describing a control this build
+        // does not have must stop the run rather than let it proceed looking
+        // enforced. Here because this is the one composition root both the CLI
+        // and the runner go through, so neither can forget it.
+        ExtensionRegistry.refuseWhatIsNotEnforced(extensions);
+
         List<AutoCloseable> opened = new ArrayList<>();
         Map<String, Connector> connectors = new LinkedHashMap<>();
 

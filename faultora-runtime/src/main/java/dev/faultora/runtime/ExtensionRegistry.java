@@ -5,7 +5,9 @@ import dev.faultora.spi.contract.AssertionProvider;
 import dev.faultora.spi.contract.ReportRenderer;
 import dev.faultora.spi.contract.SourceImporter;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader;
 
@@ -35,6 +37,52 @@ public final class ExtensionRegistry {
     private static final String BUILT_IN_PACKAGE = "dev.faultora.";
 
     private ExtensionRegistry() {
+    }
+
+    /**
+     * What a policy asks for that nothing in this build enforces.
+     * <p>
+     * Four of {@code ExtensionPolicy}'s five fields are described as controls
+     * and read by nobody. Three of them cannot honestly be enforced in-process
+     * at all — a memory ceiling, a network allowlist and a set of permitted
+     * secret handles all assume the extension is somewhere its heap, its
+     * sockets and its {@code SecretResolver} are not shared with the run — so
+     * they arrive with the out-of-process protocol or not at all. Implementing
+     * them in-process as approximations would be a control that reports success
+     * and prevents nothing.
+     * <p>
+     * Until then, asking is refused rather than ignored, and each entry
+     * disappears from here as its enforcement lands.
+     *
+     * @return what was asked and is not enforced, empty when there is nothing
+     */
+    public static List<String> notYetEnforced(ExtensionPolicy policy) {
+        if (policy == null) {
+            return List.of();
+        }
+        List<String> requests = new ArrayList<>();
+        if (policy.requireProcessIsolation()) {
+            requests.add("process isolation for extensions");
+        }
+        if (policy.maxResourceMemoryMb() > 0) {
+            requests.add("a memory ceiling of " + policy.maxResourceMemoryMb()
+                    + "MB per extension");
+        }
+        if (!policy.maxNetworkDestinations().isEmpty()) {
+            requests.add("a network allowlist for extensions");
+        }
+        if (!policy.secretCapabilities().isEmpty()) {
+            requests.add("a secret allowlist for extensions");
+        }
+        return requests;
+    }
+
+    /** Stop before a run starts when the policy describes something imaginary. */
+    static void refuseWhatIsNotEnforced(ExtensionPolicy policy) {
+        List<String> requests = notYetEnforced(policy);
+        if (!requests.isEmpty()) {
+            throw new UnenforceablePolicy(requests);
+        }
     }
 
     /** Assertion providers, keyed by the assertion type they evaluate. */
