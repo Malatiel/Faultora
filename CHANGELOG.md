@@ -2,6 +2,35 @@
 
 All notable changes to Faultora are documented in this file.
 
+## Unreleased — M6-02 in progress
+
+Extension isolation arrives as one release rather than a version per slice: a
+release shipping a manifest and calling it isolation would be the defect
+ADR-023 exists to stop. What has landed so far:
+
+### Changed
+
+- **A non-built-in extension without a manifest is refused.** This is a
+  breaking change for a third-party extension permitted by class name today: it
+  will stop loading, and a scenario naming its assertion type will fail with an
+  unknown type rather than a subtle difference. A plugin cannot say what
+  Faultora it was built against without one, and asking is the point of having
+  one — but the version it breaks on should be the version somebody read about,
+  not the one they were upgrading to. Add `META-INF/faultora-plugin.yaml`
+  declaring `id`, `version` and `requiresApi`.
+- **A plugin is identified by the digest of its artifact**, not only by its
+  class name. Naming the class still works and still means "any jar offering
+  that class"; naming the digest means exactly those bytes. The refusal quotes
+  the digest to paste.
+- **A plugin declaring a network destination or a secret handle is refused**,
+  because nothing can hold it to that declaration while it shares this JVM's
+  sockets and resolver. ADR-023 says which slice makes them grantable.
+- **An extension policy asking for a control this build does not enforce stops
+  the run.** Four of `ExtensionPolicy`'s five fields had never been read by
+  anything while describing process isolation, a memory ceiling, a network
+  allowlist and a secret allowlist. Nothing in a default configuration sets
+  any of them, so no existing run changes.
+
 ## 0.10.1 — 2026-08-11
 
 ### Fixed

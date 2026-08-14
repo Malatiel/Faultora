@@ -44,6 +44,11 @@ public record EvidenceSnapshot(
         @JsonProperty("error") NormalizedError error,
         @JsonProperty("protocolEvidence") Map<String, Object> protocolEvidence
 ) {
+    /** One reader. Jackson's is thread-safe once configured, and building one
+     * per call put an object graph behind every body an assertion looks at. */
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
     public EvidenceSnapshot {
         responseHeaders = responseHeaders == null ? Map.of() : Map.copyOf(responseHeaders);
         protocolEvidence = protocolEvidence == null ? Map.of() : Map.copyOf(protocolEvidence);
@@ -91,8 +96,7 @@ public record EvidenceSnapshot(
                     return Optional.empty();
                 }
                 try {
-                    return Optional.of(
-                            new com.fasterxml.jackson.databind.ObjectMapper().readTree(body));
+                    return Optional.of(JSON.readTree(body));
                 } catch (Exception notJson) {
                     return Optional.empty();
                 }
