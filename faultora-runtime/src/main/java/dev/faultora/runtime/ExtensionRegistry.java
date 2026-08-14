@@ -1,6 +1,7 @@
 package dev.faultora.runtime;
 
 import dev.faultora.model.security.ExtensionPolicy;
+import dev.faultora.spi.extension.PluginManifest;
 import dev.faultora.spi.contract.AssertionProvider;
 import dev.faultora.spi.contract.ReportRenderer;
 import dev.faultora.spi.contract.SourceImporter;
@@ -10,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader;
+import java.util.Set;
 
 /**
  * Discovers the extensions available on the classpath.
@@ -111,23 +113,99 @@ public final class ExtensionRegistry {
      * Whether an implementation may take part in the run.
      * <p>
      * Built-ins ship with the release and are reviewed with it. Anything else
-     * has to be named by the operator, so that adding a jar to the classpath
-     * is not by itself enough to put third-party code in the path of a run.
-     * Identity is checked by class name; verifying a digest, and isolating the
-     * extension from the run, arrive with the out-of-process plugin protocol.
+     * has to answer three questions, and a plugin that cannot answer one of
+     * them is refused with which:
+     * <ol>
+     *   <li><b>Which artifact is this?</b> Named by the operator as a class
+     *       name or as the digest of the jar it arrived in. A class name is
+     *       the weaker of the two — two jars can offer the same class, one
+     *       reviewed and one not — so the refusal quotes the digest, which is
+     *       what an operator would have to paste to permit exactly these
+     *       bytes.</li>
+     *   <li><b>What was it built against?</b> Its manifest declares a range,
+     *       and a plugin outside it is refused here rather than throwing a
+     *       {@code NoSuchMethodError} halfway through somebody's run.</li>
+     *   <li><b>What does it want?</b> A plugin declaring a capability is
+     *       refused, because nothing can hold it to the declaration while it
+     *       shares this JVM's sockets and secrets. ADR-023 says which slice
+     *       makes them grantable.</li>
+     * </ol>
+     * A non-built-in without a manifest is refused. It cannot say what it was
+     * built against, and asking is the whole point of having one.
      */
     private static boolean isAllowed(Object extension, ExtensionPolicy policy, String kind) {
         String className = extension.getClass().getName();
         if (className.startsWith(BUILT_IN_PACKAGE)) {
             return true;
         }
-        if (policy != null && policy.allowedExtensions().contains(className)) {
-            return true;
+        PluginArtifact artifact = PluginArtifact.of(extension);
+        Set<String> permitted = policy == null ? Set.of() : policy.allowedExtensions();
+
+        if (!permitted.contains(className)
+                && (artifact.digest() == null || !permitted.contains(artifact.digest()))) {
+            refuse(kind, className, "the run does not allow it. Pass "
+                    + "--allow-extension " + (artifact.isIdentifiable()
+                            ? artifact.digest() + " to permit exactly these bytes, or "
+                                    + className + " to permit any jar offering that class"
+                            : className));
+            return false;
         }
-        System.err.println("Refused " + kind + " " + className
-                + ": it is not a built-in extension and the run does not allow it. "
-                + "Pass --allow-extension " + className + " to permit it.");
-        return false;
+
+        PluginManifest manifest = artifact.manifest();
+        if (manifest == null) {
+            refuse(kind, className, "it carries no " + PluginManifest.LOCATION
+                    + ", so it cannot say what it was built against");
+            return false;
+        }
+        if (manifest.requiresApi() != null && !manifest.requiresApi().admits(runningVersion())) {
+            refuse(kind, className, manifest.id() + " " + manifest.version()
+                    + " was built for Faultora " + manifest.requiresApi()
+                    + ", and this is " + runningVersion());
+            return false;
+        }
+        if (!manifest.capabilities().asked().isEmpty()) {
+            refuse(kind, className, "it asks for "
+                    + String.join(", ", manifest.capabilities().asked())
+                    + ", and nothing here can hold it to that while it shares this "
+                    + "process. See ADR-023");
+            return false;
+        }
+        return true;
+    }
+
+    private static void refuse(String kind, String className, String because) {
+        System.err.println("Refused " + kind + " " + className + ": " + because + ".");
+    }
+
+    /**
+     * The Faultora a plugin is being asked to work with.
+     * <p>
+     * From a resource Maven filters, rather than a constant in source: the
+     * version a compatibility range is compared against has to be the version
+     * this actually is, and a constant would be a second place to remember on
+     * every release. A build from a jar has an implementation version too, and
+     * it is preferred — it is what the artifact was stamped with.
+     */
+    static String runningVersion() {
+        String packaged = ExtensionRegistry.class.getPackage().getImplementationVersion();
+        return packaged != null ? packaged : BUILT_VERSION;
+    }
+
+    /** What this build is, read once from what Maven filtered in. */
+    private static final String BUILT_VERSION = builtVersion();
+
+    private static String builtVersion() {
+        try (var declared = ExtensionRegistry.class
+                .getResourceAsStream("/faultora-version.properties")) {
+            if (declared == null) {
+                return "0";
+            }
+            var properties = new java.util.Properties();
+            properties.load(declared);
+            return properties.getProperty("version", "0");
+        } catch (Exception unreadable) {
+            return "0";
+        }
     }
 
     /**
