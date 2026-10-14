@@ -5,6 +5,7 @@ import dev.faultora.faults.local.LocalFaultProvider;
 import dev.faultora.faults.toxiproxy.ToxiproxyFaultProvider;
 import dev.faultora.model.catalog.SafetyClassification;
 import dev.faultora.connector.http.HttpConnector;
+import dev.faultora.connector.kafka.KafkaConnector;
 import dev.faultora.model.security.EvidencePolicy;
 import dev.faultora.runtime.RunEvidence;
 import dev.faultora.model.security.ExtensionPolicy;
@@ -128,6 +129,7 @@ final class RunPolicies {
                 config.put(TargetResolver.BASE_URL_PREFIX + targetId, url));
         config.put("maxResponseBytes", targetPolicy.maxPayloadBytes());
         config.put(HttpConnector.MAX_REQUEST_BYTES, targetPolicy.maxPayloadBytes());
+        config.put(KafkaConnector.MAX_RECORD_BYTES, targetPolicy.maxPayloadBytes());
         if (options.authSecretId() != null) {
             config.put(HttpConnector.AUTH_SECRET_ID, options.authSecretId());
         }

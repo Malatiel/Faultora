@@ -408,6 +408,35 @@ This limit covers the emitted body bytes. Request lines, URLs and headers,
 already parsed input objects, generated-value snapshots and total process
 memory are separate controls; the body limit is not a claim about their size.
 
+**Kafka publication has an aggregate record-data limit.** CLI and runner pass
+`TargetPolicy.maxPayloadBytes` as `maxRecordBytes`. The unit is the sum of the
+encoded key, value, header names and header values; topic names, Kafka framing,
+batching and compression are outside this unit. Exactly the limit is allowed.
+A publish above it returns nonretryable `POLICY_VIOLATION` /
+`REQUEST_TOO_LARGE` before opening a producer or calling `send`. The error
+contains the limit, not message content. An absent setting defaults to 10 MiB;
+nonintegral, nonfinite, nonpositive or greater-than-10-MiB limits return
+`VALIDATION` / `INVALID_PAYLOAD_LIMIT`.
+
+Record fields share one remaining byte budget during construction. Raw binary
+values are checked before copying; text is encoded in bounded chunks; JSON is
+written to a bounded byte output using Kafka's existing representation. Null
+values retain tombstone semantics and differ from empty values. Headers are
+checked during traversal, not after an unrestricted map copy. Null names or
+values are omitted; normalized names keep their last value, with replacement
+refunding the previous contribution. Every candidate must fit during
+construction even if a later candidate might replace it. Size checking also
+bounds retained encoded field bytes, not arbitrary conversion callbacks,
+already parsed inputs, evidence snapshots or total process memory.
+
+The producer's serializers and operator-supplied interceptors cannot replace
+the checked representation: `interceptor.classes` is reserved alongside the
+serializers. Other Kafka transport and broker limits still apply and may
+reject a record that fits the policy; widening `max.request.size` cannot widen
+the record-data budget. Publication still waits for broker acknowledgement;
+the publication limit does not change observation selection or consumer
+ownership.
+
 **Classification cannot be assumed uniform across protocols.** It is a property
 of each connector, not of the engine, because each client resolves its own
 destinations. The HTTP connector classifies and pins; the Kafka and JDBC

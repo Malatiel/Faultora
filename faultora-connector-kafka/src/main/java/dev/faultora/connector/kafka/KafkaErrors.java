@@ -61,6 +61,17 @@ final class KafkaErrors {
                 "KAFKA_INVALID_OPERATION", message, false, Map.of());
     }
 
+    static NormalizedError payloadLimit(int maxBytes) {
+        return new NormalizedError(NormalizedError.ErrorCategory.POLICY_VIOLATION,
+                "REQUEST_TOO_LARGE", "Kafka record exceeds maximum payload size of " + maxBytes + " bytes",
+                false, Map.of("maxBytes", maxBytes));
+    }
+
+    static NormalizedError invalidPayloadLimit(String message) {
+        return new NormalizedError(NormalizedError.ErrorCategory.VALIDATION,
+                "INVALID_PAYLOAD_LIMIT", message, false, Map.of());
+    }
+
     static NormalizedError unreachable(String message) {
         return new NormalizedError(
                 NormalizedError.ErrorCategory.NETWORK,

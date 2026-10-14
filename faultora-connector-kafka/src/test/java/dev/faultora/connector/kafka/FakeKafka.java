@@ -44,6 +44,7 @@ final class FakeKafka implements KafkaClients {
     private final Map<String, Long> history = new LinkedHashMap<>();
     private final List<ConsumerRecord<byte[], byte[]>> records = new ArrayList<>();
     private final AtomicInteger consumersOpened = new AtomicInteger();
+    private final AtomicInteger producersOpened = new AtomicInteger();
     private final List<MockConsumer<byte[], byte[]>> opened = new ArrayList<>();
 
     private final MockProducer<byte[], byte[]> producer =
@@ -51,6 +52,7 @@ final class FakeKafka implements KafkaClients {
 
     @Override
     public Producer<byte[], byte[]> producer(Map<String, Object> config) {
+        producersOpened.incrementAndGet();
         return producer;
     }
 
@@ -89,6 +91,8 @@ final class FakeKafka implements KafkaClients {
     MockProducer<byte[], byte[]> published() {
         return producer;
     }
+
+    int producersOpened() { return producersOpened.get(); }
 
     /** How many consumers the connector has opened against this broker. */
     int consumersOpened() {

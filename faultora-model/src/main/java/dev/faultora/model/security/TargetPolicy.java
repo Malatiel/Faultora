@@ -15,7 +15,7 @@ import java.util.Set;
  * @param maxRequests              maximum total requests in a run
  * @param maxConcurrency           maximum concurrent operations
  * @param maxDurationMs            maximum execution duration in milliseconds, excluding cleanup and fault rollback
- * @param maxPayloadBytes          maximum request/response body size
+ * @param maxPayloadBytes          maximum HTTP body bytes or aggregate Kafka publication key/value/header bytes
  * @param allowedFaultTypes        fault type allowlist (empty = no faults)
  * @param allowedEnvironments      environment name allowlist
  */

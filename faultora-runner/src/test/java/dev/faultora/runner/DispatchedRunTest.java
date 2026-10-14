@@ -2,6 +2,7 @@ package dev.faultora.runner;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.faultora.connector.http.HttpConnector;
+import dev.faultora.connector.kafka.KafkaConnector;
 import dev.faultora.connector.jdbc.JdbcConnector;
 import dev.faultora.engine.exec.TargetResolver;
 import dev.faultora.model.catalog.SafetyClassification;
@@ -199,6 +200,7 @@ class DispatchedRunTest {
 
         assertThat(config).containsEntry(HttpConnector.AUTH_SECRET_ID, "api-token");
         assertThat(config).containsEntry(HttpConnector.MAX_REQUEST_BYTES, policyOf(dispatch).targets().maxPayloadBytes());
+        assertThat(config).containsEntry(KafkaConnector.MAX_RECORD_BYTES, policyOf(dispatch).targets().maxPayloadBytes());
         assertThat(config).containsEntry("maxResponseBytes", policyOf(dispatch).targets().maxPayloadBytes());
         assertThat(config).containsEntry(JdbcConnector.USER, "faultora_readonly");
         assertThat(config).containsEntry(JdbcConnector.SECRET_ID, "ledger-password");

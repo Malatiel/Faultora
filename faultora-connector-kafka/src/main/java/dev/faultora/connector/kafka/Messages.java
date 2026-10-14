@@ -34,32 +34,6 @@ final class Messages {
     private Messages() {
     }
 
-    /**
-     * Serialize a value a scenario wants published.
-     * <p>
-     * Text is published as written — a scenario that hand-wrote a payload means
-     * those bytes. Anything else is JSON, which is what a generated payload and
-     * a scenario mapping both are.
-     */
-    static byte[] payloadOf(Object value) {
-        if (value == null) {
-            return null;
-        }
-        if (value instanceof byte[] bytes) {
-            return bytes.clone();
-        }
-        if (value instanceof CharSequence text) {
-            return text.toString().getBytes(StandardCharsets.UTF_8);
-        }
-        try {
-            return MAPPER.writeValueAsBytes(value);
-        } catch (Exception notSerializable) {
-            throw new IllegalArgumentException(
-                    "Message payload cannot be serialized: " + notSerializable.getMessage(),
-                    notSerializable);
-        }
-    }
-
     /** Header values as text, with a repeated name keeping its last value. */
     static Map<String, String> headersOf(Headers headers) {
         Map<String, String> asText = new LinkedHashMap<>();
@@ -70,20 +44,6 @@ final class Messages {
             }
         }
         return asText;
-    }
-
-    /** A scenario's {@code headers} input as text pairs. */
-    static Map<String, String> declaredHeaders(Object declared) {
-        if (!(declared instanceof Map<?, ?> map)) {
-            return Map.of();
-        }
-        Map<String, String> headers = new LinkedHashMap<>();
-        map.forEach((name, value) -> {
-            if (name != null && value != null) {
-                headers.put(name.toString(), value.toString());
-            }
-        });
-        return headers;
     }
 
     /**
