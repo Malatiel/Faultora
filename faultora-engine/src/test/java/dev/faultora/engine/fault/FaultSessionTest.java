@@ -166,6 +166,24 @@ class FaultSessionTest {
     }
 
     @Test
+    void aFailedRollbackAfterConcurrentClosureIsNotClaimedAsConfirmed() {
+        FaultSession session = new FaultSession((fault, status) -> { });
+        FaultProvider provider = new FaultProvider() {
+            public Set<String> capabilities() { return Set.of("synthetic-fault"); }
+            public ActiveFault inject(String type, Map<String, Object> params, FaultContext context) {
+                session.close();
+                return new ActiveFault("synthetic-failed", type, context.targetScope(),
+                        System.currentTimeMillis(), context.hardExpiryMs(), "synthetic rollback");
+            }
+            public void rollback(ActiveFault fault, FaultContext context) { throw new IllegalStateException("SYNTHETIC_PRIVATE_FAILURE"); }
+        };
+        assertThatThrownBy(() -> session.start(provider, new NodeId("fault"), "synthetic-fault", "*", Map.of(), 60_000))
+                .hasMessageContaining("rollback could not be confirmed").hasMessageNotContaining("SYNTHETIC_PRIVATE_FAILURE");
+        assertThat(session.outcome().failures()).isEqualTo(1);
+        assertThat(session.outcome().unconfirmed()).isZero();
+    }
+
+    @Test
     void handleForNodeResolvesTheStartedFault() {
         CountingProvider provider = new CountingProvider();
         try (FaultSession session = new FaultSession((fault, status) -> { })) {

@@ -47,7 +47,9 @@ admission alone also leaves a manually assembled plan without a runtime guard.
   `connector-attempt`. The report metric counts grant events, including
   cleanup and failed preparation; retry scheduling and condition evaluation
   events are not substitutes for this count. Old journals without the marker
-  or grant events report the metric as unknown. Journal I/O remains best effort.
+  or grant events report the metric as unknown. Journal I/O failures now make
+  the terminal result an infrastructure error; available partial events remain
+  in memory, without claiming they reached durable storage.
 
 ## Rejected alternatives
 

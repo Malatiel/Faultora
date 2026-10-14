@@ -107,8 +107,12 @@ public class HttpConnector implements Connector {
     }
 
     public HttpConnector(DestinationPolicy destinationPolicy) {
+        this(destinationPolicy, createClient());
+    }
+
+    HttpConnector(DestinationPolicy destinationPolicy, CloseableHttpClient client) {
         this.destinationPolicy = destinationPolicy;
-        this.client = createClient();
+        this.client = client;
         this.deadlines = new ScheduledThreadPoolExecutor(1, task -> {
             Thread thread = new Thread(task, "faultora-http-deadline");
             thread.setDaemon(true);
@@ -310,11 +314,18 @@ public class HttpConnector implements Connector {
                 // Build redirect request with DNS pinning
                 pinnedAddresses = extractPinnedAddresses(redirectResult);
                 String redirectMethod = redirectedMethod(statusCode, currentMethod);
+                if (crossOrigin && requestBody != null && requestBody.length > 0
+                        && Set.of("POST", "PUT", "PATCH").contains(redirectMethod)) {
+                    return OperationResult.failure(new NormalizedError(
+                            NormalizedError.ErrorCategory.POLICY_VIOLATION, "CROSS_ORIGIN_BODY_REDIRECT",
+                            "A redirect cannot forward a request body to another origin", false, Map.of()),
+                            (System.nanoTime() - startTime) / 1_000_000);
+                }
                 request = buildRequest(redirectMethod, redirectUri, inputs, context, requestBody);
 
                 // Strip sensitive headers on cross-origin redirect
                 if (crossOrigin) {
-                    stripSensitiveHeaders(request);
+                    stripSensitiveHeaders(request, context.evidencePolicy());
                 }
 
                 currentUri = redirectUri;
@@ -503,9 +514,13 @@ public class HttpConnector implements Connector {
      * Strip sensitive headers from a request to prevent credential leakage
      * on cross-origin redirects. Apache HttpClient 5 supports removing headers.
      */
-    private static void stripSensitiveHeaders(ClassicHttpRequest request) {
+    private static void stripSensitiveHeaders(ClassicHttpRequest request,
+                                              dev.faultora.model.security.EvidencePolicy evidencePolicy) {
         for (String headerName : SENSITIVE_HEADERS) {
             request.removeHeaders(headerName);
+        }
+        if (evidencePolicy != null) {
+            evidencePolicy.headerDenylist().forEach(request::removeHeaders);
         }
     }
 
@@ -517,14 +532,13 @@ public class HttpConnector implements Connector {
      * A scheme downgrade (HTTPS→HTTP) is always considered a different origin.
      */
     static boolean originEquals(URI a, URI b) {
-        if (!Objects.equals(
-                Optional.ofNullable(a.getScheme()).orElse(""),
+        if (!Optional.ofNullable(a.getScheme()).orElse("").equalsIgnoreCase(
                 Optional.ofNullable(b.getScheme()).orElse(""))) {
             return false;
         }
-        String hostA = Optional.ofNullable(a.getHost()).orElse("").toLowerCase();
-        String hostB = Optional.ofNullable(b.getHost()).orElse("").toLowerCase();
-        if (!Objects.equals(hostA, hostB)) {
+        String hostA = Optional.ofNullable(a.getHost()).orElse("");
+        String hostB = Optional.ofNullable(b.getHost()).orElse("");
+        if (!hostA.equalsIgnoreCase(hostB)) {
             return false;
         }
         int portA = effectivePort(a);
@@ -563,7 +577,7 @@ public class HttpConnector implements Connector {
         if (uri.getPort() > 0) {
             return uri.getPort();
         }
-        return switch (Optional.ofNullable(uri.getScheme()).orElse("")) {
+        return switch (Optional.ofNullable(uri.getScheme()).orElse("").toLowerCase(Locale.ROOT)) {
             case "https" -> 443;
             case "http" -> 80;
             default -> -1;

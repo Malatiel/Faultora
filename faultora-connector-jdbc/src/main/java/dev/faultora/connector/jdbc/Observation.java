@@ -73,7 +73,7 @@ final class Observation {
             }
         } catch (SQLException failed) {
             return OperationResult.failure(
-                    JdbcErrors.of(failed, target.url().redacted()), elapsedMs(startedAt));
+                    JdbcErrors.of(failed), elapsedMs(startedAt));
         }
     }
 

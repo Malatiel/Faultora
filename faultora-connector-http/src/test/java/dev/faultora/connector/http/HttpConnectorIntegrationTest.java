@@ -12,6 +12,8 @@ import dev.faultora.spi.result.OperationResult;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.apache.hc.core5.http.ContentType;
 import org.apache.hc.core5.http.io.entity.InputStreamEntity;
 
@@ -22,6 +24,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.stream.Stream;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -365,9 +368,14 @@ class HttpConnectorIntegrationTest {
         }
     }
 
+    static Stream<Arguments> redirectChains() {
+        return Stream.of(301, 302, 303, 307, 308).flatMap(status ->
+                Stream.of(false, true).map(host -> Arguments.of(status, host)));
+    }
+
     @ParameterizedTest
-    @ValueSource(ints = {302, 307, 308})
-    void credentialsStayBoundToTheOriginalOriginAcrossMultipleRedirects(int status)
+    @MethodSource("redirectChains")
+    void credentialsStayBoundToTheOriginalOriginAcrossMultipleRedirects(int status, boolean differentHost)
             throws Exception {
         AtomicReference<List<String>> originalHeaders = new AtomicReference<>();
         AtomicReference<List<String>> firstForeignHeaders = new AtomicReference<>();
@@ -375,7 +383,9 @@ class HttpConnectorIntegrationTest {
         AtomicReference<List<String>> returnedHeaders = new AtomicReference<>();
         AtomicReference<String> foreignTrace = new AtomicReference<>();
         HttpServer foreign = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        String foreignUrl = "http://127.0.0.1:" + foreign.getAddress().getPort();
+        String foreignUrl = differentHost ? "http://localhost:" + port
+                : "http://127.0.0.1:" + foreign.getAddress().getPort();
+        HttpServer downstream = differentHost ? server : foreign;
 
         server.createContext("/start", exchange -> {
             originalHeaders.set(sensitiveHeadersOf(exchange));
@@ -383,13 +393,13 @@ class HttpConnectorIntegrationTest {
             exchange.sendResponseHeaders(status, -1);
             exchange.close();
         });
-        foreign.createContext("/first", exchange -> {
+        downstream.createContext("/first", exchange -> {
             firstForeignHeaders.set(sensitiveHeadersOf(exchange));
             exchange.getResponseHeaders().set("Location", "/second");
             exchange.sendResponseHeaders(status, -1);
             exchange.close();
         });
-        foreign.createContext("/second", exchange -> {
+        downstream.createContext("/second", exchange -> {
             secondForeignHeaders.set(sensitiveHeadersOf(exchange));
             foreignTrace.set(exchange.getRequestHeaders().getFirst("X-Trace"));
             exchange.getResponseHeaders().set("Location", baseUrl + "/returned");
@@ -406,7 +416,8 @@ class HttpConnectorIntegrationTest {
                 "synthetic-auth", "***", "test", -1,
                 () -> "synthetic-token".toCharArray());
         ConnectorContext context = new ConnectorContext(
-                EvidencePolicy.MINIMAL, handleId -> handle,
+                new EvidencePolicy(false, false, Set.of("X-Service-Secret"), 0, 0, List.of(), Set.of(), "session"),
+                handleId -> handle,
                 5000, 30000, 60000,
                 Map.of("baseUrl", baseUrl, "authSecretId", "synthetic-auth"));
         TargetDefinition target = new TargetDefinition(
@@ -428,15 +439,16 @@ class HttpConnectorIntegrationTest {
                             "Proxy-Authorization", "synthetic-proxy",
                             "WWW-Authenticate", "synthetic-challenge",
                             "X-Api-Key", "synthetic-key",
+                            "X-Service-Secret", "synthetic-secret",
                             "X-Trace", "synthetic-trace")), context);
 
             assertThat(result.isSuccess()).isTrue();
             assertThat(originalHeaders.get()).containsExactly(
                     "Bearer synthetic-token", "synthetic-cookie", "synthetic-proxy",
-                    "synthetic-challenge", "synthetic-key");
-            assertThat(firstForeignHeaders.get()).hasSize(5)
+                    "synthetic-challenge", "synthetic-key", "synthetic-secret");
+            assertThat(firstForeignHeaders.get()).hasSize(6)
                     .allSatisfy(value -> assertThat(value).isNull());
-            assertThat(secondForeignHeaders.get()).hasSize(5)
+            assertThat(secondForeignHeaders.get()).hasSize(6)
                     .allSatisfy(value -> assertThat(value).isNull());
             assertThat(foreignTrace.get()).isEqualTo("synthetic-trace");
             assertThat(returnedHeaders.get()).isEqualTo(originalHeaders.get());
@@ -448,7 +460,7 @@ class HttpConnectorIntegrationTest {
 
     private static List<String> sensitiveHeadersOf(HttpExchange exchange) {
         return List.of("Authorization", "Cookie", "Proxy-Authorization",
-                        "WWW-Authenticate", "X-Api-Key").stream()
+                        "WWW-Authenticate", "X-Api-Key", "X-Service-Secret").stream()
                 .map(name -> exchange.getRequestHeaders().getFirst(name))
                 .toList();
     }

@@ -344,6 +344,16 @@ origin cannot restore headers stripped on the first hop. Returning to the
 initial origin permits those headers again; HTTPS-to-HTTP downgrades remain
 blocked.
 
+HTTP redirect boundaries compare scheme, host and effective port, with
+case-insensitive scheme/host names. The built-in credential headers and the
+operator's evidence header denylist are never forwarded to a foreign origin.
+An empty body may follow a redirect; a nonempty body retained by POST/PUT/PATCH
+cannot leave the initial origin and receives nonretryable
+`CROSS_ORIGIN_BODY_REDIRECT` before the foreign exchange. Same-origin 307/308
+reuse the checked body. POST-to-GET 301/302/303 discard it. No setting allows a
+body-bearing redirect to widen this boundary; an intended second destination
+must be a separate declared operation. HTTPS-to-HTTP remains refused.
+
 **Request counts mean connector attempts (ADR-025).** `maxRequests` includes
 setup, execution, retries, polls and declared cleanup. Compilation admits the
 worst-case count; runtime grants each attempt atomically before connector
@@ -411,8 +421,8 @@ limit, not the rejected value.
 The connector body buffer grows only up to the limit, with fixed encoding
 buffers and a bounded final byte-array copy. It does not build an unlimited
 JSON string or fully encode an oversized raw string before checking. One
-validated byte array is reused for redirects that retain the body; redirects
-that change to GET discard it. GET, HEAD, DELETE and OPTIONS do not serialize
+validated byte array is reused for permitted same-origin redirects that retain
+the body; redirects that change to GET discard it. GET, HEAD, DELETE and OPTIONS do not serialize
 an unused body. An absent limit defaults to 10 MiB; configured values must be
 exact positive integers at most 10 MiB, otherwise execution returns
 `VALIDATION` / `INVALID_PAYLOAD_LIMIT` before transport or secret resolution.
@@ -478,12 +488,36 @@ Treating "no `//`" as "nothing to classify" would have let such a URL reach an
 internal host with the destination policy never consulted, so a URL this
 connector cannot read is refused unless its subprotocol runs in-process.
 
-**A driver's own message reaches the report.** It is what names the column that
-does not exist or the type that would not cast, and several drivers quote the
-offending value inside it. The message is bounded in length and never contains
-the JDBC URL, but a value from a failing query can appear in it. A run against
-data that must not be quoted anywhere should use credentials scoped to a view
-that does not expose it.
+**JDBC driver exception text is not exported.** Drivers may quote passwords,
+URLs and SQL values in messages, causes and chained exceptions. Connection and
+observation failures use fixed messages and existing normalized codes instead.
+Only the numeric vendor code and an uppercase five-character alphanumeric
+SQLState are retained as classification metadata; malformed states are omitted.
+Required parameter names remain visible. A failed connection initialization
+attempt closes the acquired connection; a failed close is recorded by the
+boolean `connectionCloseFailed`, without its exception text. Unknown URL formats
+are refused without echoing the URL.
+
+**The journal is mandatory for a trustworthy outcome.** Append/flush failures
+are sticky and stop subsequent main nodes after the current node finishes.
+Cleanup and fault rollback continue. The terminal result is `ERROR` with
+`JOURNAL_WRITE_FAILED`; CLI and runner also finalize journal close before
+publishing the outcome. Diagnostics retain the failed operation name, not raw
+I/O messages, paths or exception causes. Available events remain in memory,
+including events whose writes failed. CLI reports use that partial snapshot,
+so a completion event followed by a flush/close failure cannot produce PASS.
+JUnit's synthetic run-failure testcase also counts in its suite totals.
+The damaged on-disk journal is neither repaired nor claimed complete.
+
+**Rollback attempts and confirmed rollback are different.** A provider failure
+is recorded once and does not prevent other obligations from being attempted.
+Confirmed failure produces terminal `ERROR` / `FAULT_ROLLBACK_FAILED`; an
+in-flight watchdog that did not finish within session shutdown produces
+`FAULT_ROLLBACK_UNCONFIRMED`. The outcome snapshots completion before reading
+failure, so a concurrent completion cannot hide a failed rollback. A journal
+failure takes precedence while retaining safe rollback counts. Raw provider
+exception text is omitted from diagnostics. An unconfirmed or failed rollback
+requires operator recovery; this does not claim a forced process-wide bound.
 
 ## 10. Data protection
 

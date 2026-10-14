@@ -63,6 +63,11 @@ end-to-end shutdown bound: rollback and resource closing remain separate.
 Forced process termination can still interrupt cleanup or rollback, and the
 external-fault recovery limitation in ADR-010 remains.
 
+Rollback attempts are not confirmation of recovery. A confirmed provider
+failure or a watchdog rollback still in flight after session shutdown makes
+the terminal outcome an infrastructure error. Other cleanup and rollback
+obligations continue; raw provider exception messages are not exported.
+
 Regression tests cover shared operations/waits, cancellation, elapsed main
 deadlines, shorter child limits, failure reporting, preserved rollback and
 real HTTP body disconnection. No new scenario field or command-line option

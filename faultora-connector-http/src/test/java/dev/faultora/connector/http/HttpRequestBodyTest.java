@@ -208,6 +208,29 @@ class HttpRequestBodyTest {
         return Map.of(HttpConnector.MAX_REQUEST_BYTES, bytes);
     }
 
+    @ParameterizedTest
+    @ValueSource(ints = {307, 308})
+    void aCrossOriginRedirectCannotDeliverANonemptyBodyToTheForeignPeer(int status) throws Exception {
+        var reached = new java.util.concurrent.atomic.AtomicInteger();
+        HttpServer foreign = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        foreign.createContext("/accept", exchange -> {
+            try (exchange) { reached.incrementAndGet(); exchange.sendResponseHeaders(204, -1); }
+        });
+        server.createContext("/foreign", exchange -> {
+            try (exchange) {
+                exchange.getRequestBody().readAllBytes();
+                exchange.getResponseHeaders().set("Location", "http://127.0.0.1:" + foreign.getAddress().getPort() + "/accept");
+                exchange.sendResponseHeaders(status, -1);
+            }
+        });
+        foreign.start();
+        try {
+            var result = execute("POST", "/foreign", Map.of("body", "synthetic-body"), limit(32));
+            assertThat(result.error().code()).isEqualTo("CROSS_ORIGIN_BODY_REDIRECT");
+            assertThat(reached.get()).isZero();
+        } finally { foreign.stop(0); }
+    }
+
     private static void assertTooLarge(OperationResult result) {
         assertThat(result.isSuccess()).isFalse();
         assertThat(result.error().category()).isEqualTo(NormalizedError.ErrorCategory.POLICY_VIOLATION);

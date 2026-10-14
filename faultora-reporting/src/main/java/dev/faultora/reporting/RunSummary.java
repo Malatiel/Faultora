@@ -205,7 +205,7 @@ public final class RunSummary {
     }
 
     public boolean passed() {
-        return completed != null;
+        return completed != null && failed == null;
     }
 
     /** Whether the run ended with an explicit failure event. */
@@ -230,8 +230,8 @@ public final class RunSummary {
     }
 
     public long durationMs() {
-        if (completed != null) return completed.durationMs();
-        return failed != null ? failed.durationMs() : 0;
+        if (failed != null) return failed.durationMs();
+        return completed != null ? completed.durationMs() : 0;
     }
 
     public int totalNodes() {

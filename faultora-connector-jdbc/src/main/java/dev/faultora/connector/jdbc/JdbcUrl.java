@@ -54,15 +54,14 @@ record JdbcUrl(String value, String host) {
         }
         if (!url.startsWith(SCHEME)) {
             throw new DestinationPolicyViolation(
-                    "A database URL begins 'jdbc:', and this one is '" + url + "'");
+                    "A database URL must begin 'jdbc:'");
         }
         String host = hostOf(url);
         if (host == null) {
             String lowercase = url.toLowerCase(Locale.ROOT);
             if (IN_PROCESS.stream().noneMatch(lowercase::startsWith)) {
                 throw new DestinationPolicyViolation(
-                        "Cannot find the host in database URL '" + redactionOf(url)
-                                + "'. A URL the destination policy cannot read is refused "
+                        "Cannot find the host in database URL. A URL the destination policy cannot read is refused "
                                 + "rather than allowed, because a driver that writes its "
                                 + "host some other way — 'jdbc:oracle:thin:@host:1521:SID' "
                                 + "— would otherwise reach it unchecked");
@@ -113,33 +112,4 @@ record JdbcUrl(String value, String host) {
         return host.isBlank() ? null : host;
     }
 
-    /**
-     * The URL as it may appear in a message.
-     * <p>
-     * A JDBC URL is a common place to find a password — H2 and SQL Server both
-     * take one as a {@code ;}-separated property, and several drivers take one
-     * in the query string. So a diagnostic names the driver and the host it
-     * reaches, and drops everything a driver reads as configuration.
-     */
-    String redacted() {
-        return redactionOf(value);
-    }
-
-    /** The same redaction, usable before a URL has been accepted. */
-    private static String redactionOf(String url) {
-        int authority = url.indexOf("//");
-        if (authority >= 0) {
-            String host = hostOf(url);
-            return url.substring(0, authority + 2) + (host == null ? "" : host);
-        }
-        int properties = url.length();
-        for (int index = 0; index < url.length(); index++) {
-            char character = url.charAt(index);
-            if (character == ';' || character == '?' || character == '@') {
-                properties = index;
-                break;
-            }
-        }
-        return url.substring(0, properties);
-    }
 }

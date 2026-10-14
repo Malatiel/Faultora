@@ -242,16 +242,13 @@ class JdbcConnectorTest {
     }
 
     @Test
-    void aFailingQueryNamesTheDatabaseAndNotItsProperties() {
-        // A JDBC URL is a common place to find a password: H2 and SQL Server
-        // both take one as a ';' property. A diagnostic names the driver and
-        // the host, never the configuration behind them.
+    void aFailingQueryExportsClassificationRatherThanTheDatabaseUrlOrSql() {
         OperationResult result = observe("SELECT nope FROM ledger_entries", Map.of(), 100);
 
         assertThat(result.isSuccess()).isFalse();
         assertThat(result.error().code()).isEqualTo("OBSERVATION_FAILED");
-        assertThat(result.error().message()).doesNotContain("DB_CLOSE_DELAY");
-        assertThat(result.error().message()).contains("jdbc:h2:mem:observations");
+        assertThat(result.error().message()).doesNotContain(URL, "DB_CLOSE_DELAY", "nope", "ledger_entries");
+        assertThat(result.error().metadata()).containsKeys("sqlState", "vendorCode");
     }
 
     @Test

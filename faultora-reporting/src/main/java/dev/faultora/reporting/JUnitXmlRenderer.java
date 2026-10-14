@@ -28,6 +28,7 @@ public class JUnitXmlRenderer implements ReportRenderer {
         int failures = (int) nodes.stream()
                 .filter(node -> !node.passed() && !node.skipped()).count();
         int skipped = (int) nodes.stream().filter(RunSummary.Node::skipped).count();
+        boolean runFailure = summary.failed() && failures == 0;
         double totalTime = nodes.stream().mapToDouble(node -> node.durationMs() / 1000.0).sum();
         String suiteName = "faultora-run-" + summary.runId();
 
@@ -35,7 +36,8 @@ public class JUnitXmlRenderer implements ReportRenderer {
         output.write(String.format(Locale.ROOT,
                 "<testsuite name=\"%s\" tests=\"%d\" failures=\"%d\" errors=\"0\" "
                         + "skipped=\"%d\" time=\"%.3f\">\n",
-                escapeXml(suiteName), nodes.size(), failures, skipped, totalTime));
+                escapeXml(suiteName), nodes.size() + (runFailure ? 1 : 0), failures + (runFailure ? 1 : 0),
+                skipped, totalTime + (runFailure ? summary.durationMs() / 1000.0 : 0)));
 
         for (RunSummary.Node node : nodes) {
             output.write(String.format(Locale.ROOT,
@@ -66,7 +68,7 @@ public class JUnitXmlRenderer implements ReportRenderer {
 
         // A run can fail for reasons no single node owns — a scenario deadline,
         // cancellation, or a cleanup failure. CI must still see a failure.
-        if (summary.failed() && failures == 0) {
+        if (runFailure) {
             output.write(String.format(Locale.ROOT,
                     "  <testcase name=\"run-failure\" classname=\"faultora\" time=\"%.3f\">\n",
                     summary.durationMs() / 1000.0));

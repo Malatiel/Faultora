@@ -22,6 +22,7 @@ public class RunJournal implements AutoCloseable {
     private final List<RunEvent> events;
     private final Writer writer;
     private final boolean autoFlush;
+    private boolean closed;
 
     /**
      * Create a run journal that writes to the given path.
@@ -31,11 +32,20 @@ public class RunJournal implements AutoCloseable {
      * @throws IOException if the file cannot be created
      */
     public RunJournal(Path journalPath, boolean autoFlush) throws IOException {
+        this(journalPath, autoFlush, openWriter(journalPath));
+    }
+
+    /** Use an owned writer; closing the journal closes it even after a flush failure. */
+    public RunJournal(Path journalPath, boolean autoFlush, Writer writer) {
         this.journalPath = journalPath;
         this.events = new ArrayList<>();
         this.autoFlush = autoFlush;
+        this.writer = java.util.Objects.requireNonNull(writer, "writer");
+    }
+
+    private static Writer openWriter(Path journalPath) throws IOException {
         Files.createDirectories(journalPath.getParent());
-        this.writer = new BufferedWriter(
+        return new BufferedWriter(
                 new OutputStreamWriter(
                         new FileOutputStream(journalPath.toFile(), true),
                         StandardCharsets.UTF_8
@@ -50,17 +60,18 @@ public class RunJournal implements AutoCloseable {
      * @throws IOException if writing fails
      */
     public synchronized void append(RunEvent event) throws IOException {
+        events.add(event);
         String json = MAPPER.writeValueAsString(event);
         writer.write(json);
         writer.write('\n');
         if (autoFlush) {
             writer.flush();
         }
-        events.add(event);
     }
 
     /**
      * Get all events in memory (for reporting).
+     * Includes events whose writes failed; this snapshot does not prove durability.
      */
     public synchronized List<RunEvent> events() {
         return List.copyOf(events);
@@ -81,9 +92,11 @@ public class RunJournal implements AutoCloseable {
      * @throws IOException if closing fails
      */
     @Override
-    public void close() throws IOException {
-        flush();
-        writer.close();
+    public synchronized void close() throws IOException {
+        if (closed) { return; }
+        closed = true;
+        try { flush(); }
+        finally { writer.close(); }
     }
 
     /**

@@ -18,12 +18,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Tracks the faults injected during a single run and guarantees rollback.
+ * Tracks injected faults and their rollback attempts and confirmed outcomes.
  * <p>
- * Every fault is rolled back exactly once, by whichever of these fires first:
+ * Every fault receives one rollback attempt, by whichever of these fires first:
  * an explicit fault-stop node, the hard-expiry watchdog, or the unconditional
  * end-of-run sweep in {@link #close()}. The watchdog runs on a daemon thread,
- * so a hung scenario cannot extend a fault beyond its hard expiry.
+ * so rollback is attempted even when the scenario hangs.
  */
 public final class FaultSession implements AutoCloseable {
 
@@ -46,6 +46,8 @@ public final class FaultSession implements AutoCloseable {
         final ActiveFault fault;
         final FaultContext context;
         final AtomicBoolean rolledBack = new AtomicBoolean(false);
+        volatile boolean completed;
+        volatile boolean failed;
         volatile ScheduledFuture<?> watchdog;
 
         FaultRecord(FaultProvider provider, ActiveFault fault, FaultContext context) {
@@ -122,9 +124,12 @@ public final class FaultSession implements AutoCloseable {
     /** Roll back a fault the session can no longer stand behind, and say so. */
     private void abandon(ActiveFault fault) {
         rollback(fault.handle(), REASON_RUN_END);
+        FaultRecord record = records.get(fault.handle());
+        String confirmation = record != null && record.completed && !record.failed
+                ? "it has been rolled back" : "rollback could not be confirmed";
         throw new IllegalStateException(
                 "The run ended while fault " + fault.handle()
-                        + " was being injected; it has been rolled back");
+                        + " was being injected; " + confirmation);
     }
 
     private void requireOpen() {
@@ -158,11 +163,27 @@ public final class FaultSession implements AutoCloseable {
         try {
             record.provider.rollback(record.fault, record.context);
         } catch (Exception e) {
-            LOG.warn("Fault rollback failed for {}: {}", handle, e.getMessage());
+            record.failed = true;
+            LOG.warn("Fault rollback failed");
             status = reason + "-rollback-failed";
         }
-        listener.onRolledBack(record.fault, status);
+        try { listener.onRolledBack(record.fault, status); }
+        finally { record.completed = true; }
         return true;
+    }
+
+    public record RollbackOutcome(int failures, int unconfirmed) { }
+
+    /** Read completion before failure so a concurrently finishing rollback cannot look successful. */
+    public RollbackOutcome outcome() {
+        int failures = 0;
+        int unconfirmed = 0;
+        for (FaultRecord record : records.values()) {
+            boolean completed = record.completed;
+            if (record.failed) { failures++; }
+            if (!completed) { unconfirmed++; }
+        }
+        return new RollbackOutcome(failures, unconfirmed);
     }
 
     /** Roll back every fault that is still active. */
@@ -172,7 +193,7 @@ public final class FaultSession implements AutoCloseable {
         }
     }
 
-    /** Number of faults not yet rolled back (for tests and diagnostics). */
+    /** Number of unclaimed rollback attempts; completion is reported separately by outcome(). */
     public int pendingCount() {
         return (int) records.values().stream()
                 .filter(record -> !record.rolledBack.get())

@@ -5,6 +5,7 @@ import dev.faultora.connector.kafka.KafkaConnector;
 import dev.faultora.connector.jdbc.JdbcConnector;
 import dev.faultora.engine.exec.TargetResolver;
 import dev.faultora.engine.journal.RunJournal;
+import dev.faultora.engine.exec.JournalWriter;
 import dev.faultora.engine.plan.PlanCompilationResult;
 import dev.faultora.engine.plan.PlanCompiler;
 import dev.faultora.engine.run.RunResult;
@@ -214,7 +215,8 @@ public final class DispatchedRun {
                     compilation.plan(), journal,
                     expressionContext(dispatch), connectorContext(dispatch, policy),
                     cancellation);
-            return Outcome.ran(result, journalPath, lease.hasExpired());
+            return Outcome.ran(JournalWriter.closeJournal(journal, result),
+                    journalPath, lease.hasExpired());
         }
     }
 
