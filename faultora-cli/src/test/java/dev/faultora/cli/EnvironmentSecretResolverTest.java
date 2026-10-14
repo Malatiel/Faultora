@@ -161,8 +161,9 @@ class EnvironmentSecretResolverTest {
 
     @Test
     void customPrefixIsUsed() {
-        // Use HOME which exists on most Unix systems
-        EnvironmentSecretResolver resolver = new EnvironmentSecretResolver("");
-        assertThat(resolver.isAvailable("HOME")).isTrue();
+        // Resolve PATH with a nonempty prefix on both Windows and Unix.
+        EnvironmentSecretResolver resolver = new EnvironmentSecretResolver("P");
+        assertThat(resolver.isAvailable("ATH")).isTrue();
+        assertThat(resolver.resolve("ATH").handleId()).isEqualTo("ATH");
     }
 }

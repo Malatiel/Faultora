@@ -88,9 +88,14 @@ class RunnerImageE2ETest {
         Path jar = shadedJar();
         int built = run(60, PROJECT_ROOT,
                 "docker", "build",
-                "--build-arg", "JAR=" + PROJECT_ROOT.relativize(jar),
+                "--build-arg", jarBuildArgument(PROJECT_ROOT, jar),
                 "-t", IMAGE, ".").exitValue();
         assertThat(built).as("the image builds").isZero();
+    }
+
+    static String jarBuildArgument(Path projectRoot, Path jar) {
+        return "JAR=" + projectRoot.relativize(jar).toString()
+                .replace(projectRoot.getFileSystem().getSeparator(), "/");
     }
 
     /**
