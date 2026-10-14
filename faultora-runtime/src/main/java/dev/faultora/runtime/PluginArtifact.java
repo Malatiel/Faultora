@@ -46,14 +46,19 @@ public record PluginArtifact(String location, String digest, PluginManifest mani
      * the moment somebody is trying to work out why their plugin was refused.
      */
     public static PluginArtifact of(Object extension) {
-        URL source = codeSourceOf(extension);
+        return of(extension.getClass());
+    }
+
+    /** Inspect a provider's artifact without constructing or initializing it. */
+    public static PluginArtifact of(Class<?> extensionType) {
+        URL source = codeSourceOf(extensionType);
         if (source == null) {
-            return new PluginArtifact(extension.getClass().getName(), null, null);
+            return new PluginArtifact(extensionType.getName(), null, null);
         }
         Path file = fileAt(source);
         if (file == null || !Files.isRegularFile(file)) {
             // A directory of classes: development, not a shipped artifact.
-            return new PluginArtifact(source.toString(), null, manifestNextTo(extension));
+            return new PluginArtifact(source.toString(), null, manifestNextTo(extensionType));
         }
         return new PluginArtifact(file.toString(), digestOf(file), manifestIn(file));
     }
@@ -63,9 +68,9 @@ public record PluginArtifact(String location, String digest, PluginManifest mani
         return digest != null;
     }
 
-    private static URL codeSourceOf(Object extension) {
+    private static URL codeSourceOf(Class<?> extensionType) {
         try {
-            var domain = extension.getClass().getProtectionDomain();
+            var domain = extensionType.getProtectionDomain();
             return domain == null || domain.getCodeSource() == null
                     ? null : domain.getCodeSource().getLocation();
         } catch (SecurityException notAllowedToLook) {
@@ -104,8 +109,8 @@ public record PluginArtifact(String location, String digest, PluginManifest mani
     }
 
     /** The manifest beside a class loaded from a directory rather than a jar. */
-    private static PluginManifest manifestNextTo(Object extension) {
-        try (InputStream declared = extension.getClass().getClassLoader()
+    private static PluginManifest manifestNextTo(Class<?> extensionType) {
+        try (InputStream declared = extensionType.getClassLoader()
                 .getResourceAsStream(PluginManifest.LOCATION)) {
             return declared == null
                     ? null : YAML.readValue(declared.readAllBytes(), PluginManifest.class);
