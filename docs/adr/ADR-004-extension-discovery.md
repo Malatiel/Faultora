@@ -29,6 +29,18 @@ project's "no implicit egress" and "safe defaults" principles.
 - Inspect classpath service descriptors through `ServiceLoader.Provider`
   before calling `get()`. Check artifact identity, manifest, API compatibility,
   and requested capabilities before provider initialization or construction.
+- Hash external artifacts incrementally with a 128 MiB byte ceiling. Read at
+  most 64 KiB of uncompressed manifest data, including for directory-loaded
+  providers. Directory manifests belong to the provider's code source, rather
+  than whichever parent classloader first supplies a resource of that name.
+- Require a nonblank manifest ID and version and a `requiresApi` range with at
+  least one bound. Version bounds use nonnegative integer components separated
+  by dots, optionally followed by a `-` or `+` suffix, with a maximum of 128
+  characters per bound; reject overflow and reversed ranges. Reject malformed
+  YAML, duplicate fields, trailing documents, unknown fields, and nesting deeper
+  than 16 levels. JAR and manifest inputs must be regular files. Inspection
+  failures refuse the provider with a fixed diagnostic that does not echo
+  manifest contents.
 - Built-in status comes from the explicit inventory of shipped implementation
   classes in the runtime's defining classloader, not a package prefix. In a
   merged release, a built-in must also originate from the runtime artifact.

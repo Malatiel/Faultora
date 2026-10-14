@@ -228,7 +228,15 @@ before provider initialization or construction. A Faultora package prefix is
 not a built-in credential: the runtime holds an explicit class inventory, and
 the merged CLI release also verifies that built-ins originate from its own
 artifact. Modular/development deployments trust their runtime and core-module
-bootstrap classpath. These checks do not sandbox an allowed in-process plugin;
+bootstrap classpath. External artifacts are limited to 128 MiB and hashed
+incrementally. Their manifest is limited to 64 KiB of uncompressed bytes,
+including in development directories. The manifest must declare a nonblank
+ID and version and at least one valid API version bound. Duplicate fields,
+extra YAML documents, malformed metadata, and nesting deeper than 16 levels
+are refused before provider initialization. A development provider's manifest
+is read from its own directory, never inherited from a parent classloader.
+Inspection failures name the provider and reason without echoing manifest
+contents. These checks do not sandbox an allowed in-process plugin;
 policies requiring process isolation or resource controls are still refused
 until ADR-023's isolation slice is implemented.
 

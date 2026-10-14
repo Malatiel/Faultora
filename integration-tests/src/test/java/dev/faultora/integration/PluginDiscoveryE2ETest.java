@@ -10,6 +10,7 @@ import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
@@ -26,18 +27,24 @@ class PluginDiscoveryE2ETest {
 
     static Stream<Arguments> providers() {
         return Stream.of(
-                Arguments.of("dev.faultora.untrusted.OutsideProvider", false),
-                Arguments.of("dev.faultora.assertions.core.StatusAssertionProvider", false),
-                Arguments.of("dev.faultora.assertions.core.StatusAssertionProvider", true));
+                Arguments.of("dev.faultora.untrusted.OutsideProvider", false, null),
+                Arguments.of("dev.faultora.assertions.core.StatusAssertionProvider", false, null),
+                Arguments.of("dev.faultora.assertions.core.StatusAssertionProvider", true, null),
+                Arguments.of("dev.faultora.untrusted.OutsideProvider", false,
+                        "id: synthetic-plugin\nversion: 1.0\nrequiresApi:\n  from: 0.1\n#" + "x".repeat(65_536)),
+                Arguments.of("dev.faultora.untrusted.OutsideProvider", false, "requiresApi: [unterminated\n"),
+                Arguments.of("dev.faultora.untrusted.OutsideProvider", false,
+                        "id: synthetic-plugin\nversion: 1.0\nrequiresApi:\n  from: 2147483648.0\n"));
     }
 
     @ParameterizedTest
     @MethodSource("providers")
-    void thePackagedCliRejectsAnUnpermittedProviderBeforeItsCodeRuns(String className, boolean copySpi)
+    void thePackagedCliRejectsInvalidProvidersBeforeTheirCodeRuns(String className, boolean copySpi,
+                                                                String manifest)
             throws Exception {
         Path release = Path.of(System.getProperty("faultora.cliJar")).toAbsolutePath().normalize();
         assertThat(release).as("package the CLI before running its E2E suite").isRegularFile();
-        Path plugin = pluginJar(release, className, copySpi);
+        Path plugin = pluginJar(release, className, copySpi, manifest);
         Path marker = directory.resolve("plugin-executed.txt");
         Path scenario = directory.resolve("wait.yaml");
         Files.writeString(scenario, """
@@ -60,6 +67,9 @@ class PluginDiscoveryE2ETest {
                 "--target", "http://127.0.0.1:1", "--allow-private",
                 "--format", "console,json,junit,html", "--output", reports.toString())
                 .redirectErrorStream(true).redirectOutput(log.toFile());
+        if (manifest != null) {
+            command.command().addAll(List.of("--allow-extension", className));
+        }
         command.environment().put("FAULTORA_TEST_PLUGIN_MARKER", marker.toString());
         Process process = command.start();
         try {
@@ -70,6 +80,9 @@ class PluginDiscoveryE2ETest {
             }
             assertThat(process.exitValue()).as(said).isZero();
             assertThat(said).contains("Refused assertion provider " + className);
+            if (manifest != null) {
+                assertThat(said).contains("its manifest");
+            }
             assertThat(marker).as("neither static initialization nor construction ran").doesNotExist();
             assertThat(reports.resolve("report.json")).isRegularFile();
             assertThat(reports.resolve("report.xml")).isRegularFile();
@@ -82,7 +95,7 @@ class PluginDiscoveryE2ETest {
         }
     }
 
-    private Path pluginJar(Path release, String className, boolean copySpi) throws Exception {
+    private Path pluginJar(Path release, String className, boolean copySpi, String manifest) throws Exception {
         String simpleName = className.substring(className.lastIndexOf('.') + 1);
         Path classes = Files.createDirectory(directory.resolve("classes"));
         Path source = classes.resolve(simpleName + ".java");
@@ -126,6 +139,11 @@ class PluginDiscoveryE2ETest {
             output.putNextEntry(new JarEntry("META-INF/services/dev.faultora.spi.contract.AssertionProvider"));
             output.write(className.getBytes(StandardCharsets.UTF_8));
             output.closeEntry();
+            if (manifest != null) {
+                output.putNextEntry(new JarEntry("META-INF/faultora-plugin.yaml"));
+                output.write(manifest.getBytes(StandardCharsets.UTF_8));
+                output.closeEntry();
+            }
             if (copySpi) {
                 String spiEntry = "dev/faultora/spi/contract/AssertionProvider.class";
                 try (JarFile shipped = new JarFile(release.toFile());

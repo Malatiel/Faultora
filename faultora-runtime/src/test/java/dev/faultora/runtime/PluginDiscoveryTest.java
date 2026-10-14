@@ -91,7 +91,10 @@ class PluginDiscoveryTest {
         }
     }
 
-    private enum Refusal { UNLISTED, NO_MANIFEST, INCOMPATIBLE, CAPABILITIES }
+    private enum Refusal {
+        UNLISTED, NO_MANIFEST, INCOMPATIBLE, CAPABILITIES,
+        OVERSIZED, MALFORMED, DUPLICATE, TRAILING, MISSING_RANGE, INVALID_RANGE
+    }
 
     static Stream<Arguments> refusedPlugins() {
         return Arrays.stream(Kind.values()).flatMap(kind ->
@@ -108,6 +111,12 @@ class PluginDiscoveryTest {
             case INCOMPATIBLE -> COMPATIBLE_MANIFEST.replace("from: 0.1", "from: 99.0");
             case CAPABILITIES -> COMPATIBLE_MANIFEST
                     + "capabilities:\n  networkDestinations: [api.example.com]\n";
+            case OVERSIZED -> COMPATIBLE_MANIFEST + "#".repeat(PluginArtifact.MAX_MANIFEST_BYTES);
+            case MALFORMED -> "requiresApi: [unterminated\n";
+            case DUPLICATE -> COMPATIBLE_MANIFEST + "version: 2.0\n";
+            case TRAILING -> COMPATIBLE_MANIFEST + "---\n" + COMPATIBLE_MANIFEST;
+            case MISSING_RANGE -> "id: synthetic-plugin\nversion: 1.0\n";
+            case INVALID_RANGE -> COMPATIBLE_MANIFEST.replace("from: 0.1", "from: 2147483648.0");
         };
         Fixture fixture = fixture(kind, "somebody.elses.OutsideProvider", manifest);
         try {

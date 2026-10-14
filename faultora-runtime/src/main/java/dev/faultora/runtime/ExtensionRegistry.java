@@ -178,7 +178,12 @@ public final class ExtensionRegistry {
         if (isBuiltIn(extensionType)) {
             return true;
         }
-        PluginArtifact artifact = PluginArtifact.of(extensionType);
+        PluginArtifact.Inspection inspection = PluginArtifact.inspect(extensionType);
+        if (inspection.refusal() != null) {
+            refuse(kind, className, inspection.refusal());
+            return false;
+        }
+        PluginArtifact artifact = inspection.artifact();
         Set<String> permitted = policy == null ? Set.of() : policy.allowedExtensions();
 
         if (!permitted.contains(className)
