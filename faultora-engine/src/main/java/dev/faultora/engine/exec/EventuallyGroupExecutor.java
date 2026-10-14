@@ -43,6 +43,7 @@ public final class EventuallyGroupExecutor {
             ExpressionContext expressionContext
     ) {
         long groupStart = System.currentTimeMillis();
+        context = context.within(group.timeoutMs());
         NodeId groupId = group.nodeId();
         PlanNode.OperationNode child = group.child();
 
@@ -87,7 +88,7 @@ public final class EventuallyGroupExecutor {
         boolean satisfied = false;
         int attempt = 0;
 
-        while (attempt < group.maxPolls() && !context.cancelled()) {
+        while (attempt < group.maxPolls() && !context.cancelled() && !context.deadline().expired()) {
             attempt++;
 
             evidence = new NodeEvidence(context.connectorContext().evidencePolicy());
@@ -100,7 +101,8 @@ public final class EventuallyGroupExecutor {
             context.journal().evidenceOf(child.nodeId(), evidence);
 
             conditionResults = evaluateConditions(group, conditionParams, evidence);
-            satisfied = !evidence.hasError() && conditionResults.stream()
+            satisfied = !context.cancelled() && !context.deadline().expired()
+                    && !evidence.hasError() && conditionResults.stream()
                     .allMatch(condition -> condition.outcome() == AssertionResult.Outcome.PASS);
 
             long elapsedMs = System.currentTimeMillis() - groupStart;
@@ -111,12 +113,12 @@ public final class EventuallyGroupExecutor {
             if (satisfied) {
                 break;
             }
-            long remainingMs = group.timeoutMs() - elapsedMs;
+            long remainingMs = context.deadline().remainingMillis();
             if (remainingMs <= 0 || attempt >= group.maxPolls()) {
                 break;
             }
             try {
-                Waits.sleep(Math.min(group.intervalMs(), remainingMs), context.cancellation());
+                Waits.sleep(Math.min(group.intervalMs(), remainingMs), context.cancellation(), context.deadline());
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
                 context.cancellation().set(true);

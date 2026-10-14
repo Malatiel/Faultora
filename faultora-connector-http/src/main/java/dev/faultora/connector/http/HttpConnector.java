@@ -1,6 +1,5 @@
 package dev.faultora.connector.http;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.faultora.model.catalog.*;
 import dev.faultora.model.identifier.ProtocolId;
 import dev.faultora.model.security.SecretHandle;
@@ -21,8 +20,8 @@ import org.apache.hc.client5.http.protocol.HttpClientContext;
 import org.apache.hc.client5.http.ssl.ClientTlsStrategyBuilder;
 import org.apache.hc.core5.http.*;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
-import org.apache.hc.core5.http.io.entity.StringEntity;
-import org.apache.hc.core5.http.io.support.ClassicRequestBuilder;
+import org.apache.hc.core5.http.io.entity.ByteArrayEntity;
+import org.apache.hc.core5.io.CloseMode;
 import org.apache.hc.core5.util.Timeout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,8 +31,14 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.URI;
+import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 /**
@@ -65,10 +70,12 @@ public class HttpConnector implements Connector {
      */
     public static final String AUTH_SECRET_ID = "authSecretId";
 
+    /** Maximum encoded request-body bytes, supplied by the effective target policy. */
+    public static final String MAX_REQUEST_BYTES = "maxRequestBytes";
+
     private static final Logger LOG = LoggerFactory.getLogger(HttpConnector.class);
 
     private static final ProtocolId PROTOCOL = new ProtocolId("http");
-    private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final long DEFAULT_CONNECT_TIMEOUT_MS = 5000;
     private static final long DEFAULT_REQUEST_TIMEOUT_MS = 30000;
     private static final long MAX_RESPONSE_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -93,6 +100,7 @@ public class HttpConnector implements Connector {
 
     private final CloseableHttpClient client;
     private final DestinationPolicy destinationPolicy;
+    private final ScheduledThreadPoolExecutor deadlines;
 
     public HttpConnector() {
         this(DestinationPolicy.defaultPolicy());
@@ -101,6 +109,12 @@ public class HttpConnector implements Connector {
     public HttpConnector(DestinationPolicy destinationPolicy) {
         this.destinationPolicy = destinationPolicy;
         this.client = createClient();
+        this.deadlines = new ScheduledThreadPoolExecutor(1, task -> {
+            Thread thread = new Thread(task, "faultora-http-deadline");
+            thread.setDaemon(true);
+            return thread;
+        });
+        deadlines.setRemoveOnCancelPolicy(true);
     }
 
     /**
@@ -176,9 +190,12 @@ public class HttpConnector implements Connector {
     ) {
         HttpPreparedTarget httpTarget = (HttpPreparedTarget) preparedTarget;
         long startTime = System.nanoTime();
+        OperationDeadline deadline = new OperationDeadline(startTime, context.totalTimeoutMs());
         ClassicHttpResponse response = null;
 
         try {
+            deadline.start(deadlines);
+            int requestLimit = RequestBody.limit(context.config().get(MAX_REQUEST_BYTES));
             // Build the request URL
             String method = (String) operation.protocolMetadata().getOrDefault("method", "GET");
             String path = (String) operation.protocolMetadata().getOrDefault("path", "/");
@@ -187,6 +204,7 @@ public class HttpConnector implements Connector {
             // Validate the resolved URL against destination policy (includes DNS resolution)
             URI resolvedUri = URI.create(url);
             DestinationPolicy.CheckResult policyResult = destinationPolicy.check(resolvedUri);
+            deadline.check();
             if (!policyResult.isAllowed()) {
                 NormalizedError error = new NormalizedError(
                         NormalizedError.ErrorCategory.POLICY_VIOLATION,
@@ -200,14 +218,21 @@ public class HttpConnector implements Connector {
 
             InetAddress[] pinnedAddresses = extractPinnedAddresses(policyResult);
             String currentMethod = method;
-            ClassicHttpRequest request = buildRequest(currentMethod, resolvedUri, inputs, context);
+            byte[] requestBody = switch (method.toUpperCase(Locale.ROOT)) {
+                case "POST", "PUT", "PATCH" -> RequestBody.encode(inputs.get("body"), requestLimit);
+                case "GET", "DELETE", "HEAD", "OPTIONS" -> null;
+                default -> throw new IOException("Unsupported HTTP method: " + method);
+            };
+            HttpUriRequestBase request = buildRequest(currentMethod, resolvedUri, inputs, context, requestBody);
 
             // Execute with manual redirect following
             URI currentUri = resolvedUri;
             int redirectCount = 0;
 
             while (true) {
+                deadline.attach(request);
                 response = executeWithPinning(request, pinnedAddresses, context);
+                deadline.check();
 
                 int statusCode = response.getCode();
                 if (!isRedirectStatus(statusCode)) {
@@ -253,6 +278,7 @@ public class HttpConnector implements Connector {
 
                 // Re-check destination policy for each redirect hop
                 DestinationPolicy.CheckResult redirectResult = destinationPolicy.check(redirectUri);
+                deadline.check();
                 if (!redirectResult.isAllowed()) {
                     NormalizedError error = new NormalizedError(
                             NormalizedError.ErrorCategory.POLICY_VIOLATION,
@@ -284,7 +310,7 @@ public class HttpConnector implements Connector {
                 // Build redirect request with DNS pinning
                 pinnedAddresses = extractPinnedAddresses(redirectResult);
                 String redirectMethod = redirectedMethod(statusCode, currentMethod);
-                request = buildRequest(redirectMethod, redirectUri, inputs, context);
+                request = buildRequest(redirectMethod, redirectUri, inputs, context, requestBody);
 
                 // Strip sensitive headers on cross-origin redirect
                 if (crossOrigin) {
@@ -294,8 +320,6 @@ public class HttpConnector implements Connector {
                 currentUri = redirectUri;
                 currentMethod = redirectMethod;
             }
-
-            long durationMs = (System.nanoTime() - startTime) / 1_000_000;
 
             int statusCode = response.getCode();
             HttpEntity entity = response.getEntity();
@@ -307,60 +331,26 @@ public class HttpConnector implements Connector {
                 responseHeaders.computeIfAbsent(key, k -> new ArrayList<>()).add(h.getValue());
             }
 
+            deadline.complete();
             return OperationResult.success(
                     statusCode, responseHeaders, responseBytes,
-                    durationMs, Map.of());
-
-        } catch (ResponseTooLargeException e) {
-            long durationMs = (System.nanoTime() - startTime) / 1_000_000;
-            NormalizedError error = new NormalizedError(
-                    NormalizedError.ErrorCategory.POLICY_VIOLATION,
-                    "RESPONSE_TOO_LARGE",
-                    "Response exceeds maximum payload size of " + e.maxBytes() + " bytes",
-                    false, Map.of());
-            return OperationResult.failure(error, durationMs);
-        } catch (java.net.ConnectException e) {
-            long durationMs = (System.nanoTime() - startTime) / 1_000_000;
-            NormalizedError error = new NormalizedError(
-                    NormalizedError.ErrorCategory.NETWORK, "CONNECTION_REFUSED",
-                    "Connection refused: " + e.getMessage(), true, Map.of());
-            return OperationResult.failure(error, durationMs);
-        } catch (org.apache.hc.client5.http.ConnectTimeoutException
-                 | org.apache.hc.core5.http.ConnectionRequestTimeoutException e) {
-            long durationMs = (System.nanoTime() - startTime) / 1_000_000;
-            NormalizedError error = new NormalizedError(
-                    NormalizedError.ErrorCategory.TIMEOUT, "REQUEST_TIMEOUT",
-                    "Request timed out: " + e.getMessage(), true, Map.of());
-            return OperationResult.failure(error, durationMs);
-        } catch (javax.net.ssl.SSLException e) {
-            long durationMs = (System.nanoTime() - startTime) / 1_000_000;
-            NormalizedError error = new NormalizedError(
-                    NormalizedError.ErrorCategory.NETWORK, "TLS_ERROR",
-                    "TLS error: " + e.getMessage(), false, Map.of());
-            return OperationResult.failure(error, durationMs);
-        } catch (DestinationPolicyViolation e) {
-            long durationMs = (System.nanoTime() - startTime) / 1_000_000;
-            NormalizedError error = new NormalizedError(
-                    NormalizedError.ErrorCategory.POLICY_VIOLATION,
-                    "DESTINATION_BLOCKED",
-                    e.getMessage(), false, Map.of());
-            return OperationResult.failure(error, durationMs);
+                    (System.nanoTime() - startTime) / 1_000_000, Map.of());
         } catch (Exception e) {
-            long durationMs = (System.nanoTime() - startTime) / 1_000_000;
-            NormalizedError error = new NormalizedError(
-                    NormalizedError.ErrorCategory.INTERNAL, "EXECUTION_ERROR",
-                    "Execution error: " + e.getMessage(), false, Map.of());
-            return OperationResult.failure(error, durationMs);
+            return failure(e, deadline.expired(), (System.nanoTime() - startTime) / 1_000_000);
         } finally {
-            if (response != null) {
-                try {
-                    response.close();
-                } catch (IOException closeFailure) {
-                    LOG.debug("Failed to close HTTP response: {}", closeFailure.getMessage());
+            try {
+                if (response != null) {
+                    try {
+                        response.close();
+                    } catch (IOException closeFailure) {
+                        LOG.debug("Failed to close HTTP response: {}", closeFailure.getMessage());
+                    }
                 }
+            } finally {
+                deadline.close();
+                PINNED_ADDRESSES.remove();
+                CONNECT_TIMEOUT.remove();
             }
-            PINNED_ADDRESSES.remove();
-            CONNECT_TIMEOUT.remove();
         }
     }
 
@@ -369,11 +359,8 @@ public class HttpConnector implements Connector {
 
     @Override
     public void close() {
-        try {
-            client.close();
-        } catch (IOException e) {
-            LOG.warn("Failed to close HTTP client: {}", e.getMessage());
-        }
+        deadlines.shutdownNow();
+        client.close(CloseMode.IMMEDIATE);
     }
 
     // ---- DNS Pinning ----
@@ -437,25 +424,24 @@ public class HttpConnector implements Connector {
      * The original hostname is preserved in the URI for Host header (HTTP)
      * and TLS SNI (HTTPS). The DnsResolver handles routing to the pinned IP.
      */
-    private ClassicHttpRequest buildRequest(
+    private HttpUriRequestBase buildRequest(
             String method,
             URI uri,
             Map<String, Object> inputs,
-            ConnectorContext context
+            ConnectorContext context,
+            byte[] body
     ) throws IOException {
-        ClassicRequestBuilder builder = ClassicRequestBuilder.create(method.toUpperCase())
-                .setUri(uri);
+        HttpUriRequestBase request = new HttpUriRequestBase(method.toUpperCase(Locale.ROOT), uri);
 
-        String body = buildBody(inputs);
-        switch (method.toUpperCase()) {
-            case "POST", "PUT", "PATCH" -> builder.setEntity(bodyEntity(body));
+        switch (method.toUpperCase(Locale.ROOT)) {
+            case "POST", "PUT", "PATCH" -> request.setEntity(bodyEntity(body));
             case "GET", "DELETE", "HEAD", "OPTIONS" -> {}
             default -> throw new IOException("Unsupported HTTP method: " + method);
         }
 
-        addHeaders(builder, inputs, context);
+        addHeaders(request, inputs, context);
 
-        return builder.build();
+        return request;
     }
 
     /**
@@ -466,15 +452,15 @@ public class HttpConnector implements Connector {
      * so proceeding without auth would violate that expectation.
      */
     private void addHeaders(
-            ClassicRequestBuilder builder,
+            HttpUriRequestBase request,
             Map<String, Object> inputs,
             ConnectorContext context
     ) throws IOException {
         // Default content type for bodies
         if (inputs.containsKey("body")) {
-            builder.addHeader("Content-Type", "application/json");
+            request.addHeader("Content-Type", "application/json");
         }
-        builder.addHeader("Accept", "application/json");
+        request.addHeader("Accept", "application/json");
 
         Object authSecretId = context.config().get(AUTH_SECRET_ID);
         if (authSecretId instanceof String secretId && !secretId.isBlank()) {
@@ -494,7 +480,7 @@ public class HttpConnector implements Connector {
                 throw new IOException("Secret value is empty for: " + secretId);
             }
             try {
-                builder.addHeader("Authorization", "Bearer " + new String(secretValue));
+                request.addHeader("Authorization", "Bearer " + new String(secretValue));
             } finally {
                 Arrays.fill(secretValue, '\0');
             }
@@ -507,7 +493,7 @@ public class HttpConnector implements Connector {
             Map<String, Object> headerMap = (Map<String, Object>) headers;
             for (Map.Entry<String, Object> entry : headerMap.entrySet()) {
                 if (entry.getValue() != null) {
-                    builder.addHeader(entry.getKey(), entry.getValue().toString());
+                    request.addHeader(entry.getKey(), entry.getValue().toString());
                 }
             }
         }
@@ -624,13 +610,6 @@ public class HttpConnector implements Connector {
         return java.net.URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
-    private String buildBody(Map<String, Object> inputs) throws IOException {
-        Object body = inputs.get("body");
-        if (body == null) return null;
-        if (body instanceof String s) return s;
-        return MAPPER.writeValueAsString(body);
-    }
-
     private static long maxResponseBytes(ConnectorContext context) {
         Object configured = context.config().get("maxResponseBytes");
         if (configured == null) {
@@ -647,11 +626,11 @@ public class HttpConnector implements Connector {
         return value;
     }
 
-    private HttpEntity bodyEntity(String body) {
-        if (body == null || body.isEmpty()) {
+    private HttpEntity bodyEntity(byte[] body) {
+        if (body == null || body.length == 0) {
             return null;
         }
-        return new StringEntity(body, ContentType.APPLICATION_JSON);
+        return new ByteArrayEntity(body, ContentType.APPLICATION_JSON);
     }
 
     /**
@@ -724,6 +703,110 @@ public class HttpConnector implements Connector {
 
         long maxBytes() {
             return maxBytes;
+        }
+    }
+
+    private static OperationResult failure(Exception failure, boolean totalExpired, long durationMs) {
+        NormalizedError error;
+        if (totalExpired) {
+            error = new NormalizedError(NormalizedError.ErrorCategory.TIMEOUT, "TOTAL_TIMEOUT",
+                    "HTTP operation exceeded its total timeout", true, Map.of());
+        } else if (failure instanceof RequestBody.TooLarge tooLarge) {
+            error = new NormalizedError(NormalizedError.ErrorCategory.POLICY_VIOLATION, "REQUEST_TOO_LARGE",
+                    tooLarge.getMessage(), false, Map.of("maxBytes", tooLarge.limit()));
+        } else if (failure instanceof RequestBody.InvalidLimit invalidLimit) {
+            error = new NormalizedError(NormalizedError.ErrorCategory.VALIDATION, "INVALID_PAYLOAD_LIMIT",
+                    invalidLimit.getMessage(), false, Map.of());
+        } else if (failure instanceof ResponseTooLargeException tooLarge) {
+            error = new NormalizedError(NormalizedError.ErrorCategory.POLICY_VIOLATION, "RESPONSE_TOO_LARGE",
+                    "Response exceeds maximum payload size of " + tooLarge.maxBytes() + " bytes", false, Map.of());
+        } else if (failure instanceof SocketTimeoutException
+                || failure instanceof org.apache.hc.core5.http.ConnectionRequestTimeoutException) {
+            error = new NormalizedError(NormalizedError.ErrorCategory.TIMEOUT, "REQUEST_TIMEOUT",
+                    "Request timed out: " + failure.getMessage(), true, Map.of());
+        } else if (failure instanceof java.net.ConnectException) {
+            error = new NormalizedError(NormalizedError.ErrorCategory.NETWORK, "CONNECTION_REFUSED",
+                    "Connection refused: " + failure.getMessage(), true, Map.of());
+        } else if (failure instanceof javax.net.ssl.SSLException) {
+            error = new NormalizedError(NormalizedError.ErrorCategory.NETWORK, "TLS_ERROR",
+                    "TLS error: " + failure.getMessage(), false, Map.of());
+        } else if (failure instanceof DestinationPolicyViolation) {
+            error = new NormalizedError(NormalizedError.ErrorCategory.POLICY_VIOLATION, "DESTINATION_BLOCKED",
+                    failure.getMessage(), false, Map.of());
+        } else {
+            error = new NormalizedError(NormalizedError.ErrorCategory.INTERNAL, "EXECUTION_ERROR",
+                    "Execution error: " + failure.getMessage(), false, Map.of());
+        }
+        return OperationResult.failure(error, durationMs);
+    }
+
+    /** One monotonic budget, with cancellation that remains live during body reads. */
+    private static final class OperationDeadline implements AutoCloseable {
+        private static final int ACTIVE = 0;
+        private static final int EXPIRED = 1;
+        private static final int COMPLETED = 2;
+        private final long start;
+        private final long budget;
+        private final AtomicInteger state = new AtomicInteger(ACTIVE);
+        private final AtomicReference<HttpUriRequestBase> request = new AtomicReference<>();
+        private ScheduledFuture<?> cancellation;
+
+        OperationDeadline(long start, long timeoutMs) {
+            this.start = start;
+            this.budget = TimeUnit.MILLISECONDS.toNanos(Math.max(0, timeoutMs));
+        }
+
+        void start(ScheduledThreadPoolExecutor scheduler) throws SocketTimeoutException {
+            check();
+            cancellation = scheduler.schedule(this::expire,
+                    Math.max(0, budget - (System.nanoTime() - start)), TimeUnit.NANOSECONDS);
+        }
+
+        void attach(HttpUriRequestBase current) throws SocketTimeoutException {
+            request.set(current);
+            if (expired()) {
+                current.cancel();
+                throw new SocketTimeoutException("HTTP total timeout elapsed");
+            }
+        }
+
+        void check() throws SocketTimeoutException {
+            if (expired()) {
+                throw new SocketTimeoutException("HTTP total timeout elapsed");
+            }
+        }
+
+        boolean expired() {
+            if (System.nanoTime() - start >= budget) {
+                expire();
+            }
+            return state.get() == EXPIRED;
+        }
+
+        private void expire() {
+            if (state.compareAndSet(ACTIVE, EXPIRED)) {
+                HttpUriRequestBase active = request.get();
+                if (active != null) {
+                    active.cancel();
+                }
+            }
+        }
+
+        void complete() throws SocketTimeoutException {
+            check();
+            if (!state.compareAndSet(ACTIVE, COMPLETED)) {
+                throw new SocketTimeoutException("HTTP total timeout elapsed");
+            }
+            close();
+        }
+
+        @Override
+        public void close() {
+            state.compareAndSet(ACTIVE, COMPLETED);
+            request.set(null);
+            if (cancellation != null) {
+                cancellation.cancel(false);
+            }
         }
     }
 }

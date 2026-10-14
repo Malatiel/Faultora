@@ -34,7 +34,7 @@ final class RunPolicies {
     private static final int MAX_CONCURRENCY = 10;
     /** Wall-clock budget of one run. */
     private static final long MAX_DURATION_MS = 300_000;
-    /** Largest response body read from a target. */
+    /** Largest encoded request body or response body. */
     private static final long MAX_PAYLOAD_BYTES = 1_048_576;
 
     private RunPolicies() {
@@ -127,6 +127,7 @@ final class RunPolicies {
         options.targetUrls().forEach((targetId, url) ->
                 config.put(TargetResolver.BASE_URL_PREFIX + targetId, url));
         config.put("maxResponseBytes", targetPolicy.maxPayloadBytes());
+        config.put(HttpConnector.MAX_REQUEST_BYTES, targetPolicy.maxPayloadBytes());
         if (options.authSecretId() != null) {
             config.put(HttpConnector.AUTH_SECRET_ID, options.authSecretId());
         }

@@ -198,6 +198,8 @@ class DispatchedRunTest {
                 .connectorContext(dispatch, policyOf(dispatch)).config();
 
         assertThat(config).containsEntry(HttpConnector.AUTH_SECRET_ID, "api-token");
+        assertThat(config).containsEntry(HttpConnector.MAX_REQUEST_BYTES, policyOf(dispatch).targets().maxPayloadBytes());
+        assertThat(config).containsEntry("maxResponseBytes", policyOf(dispatch).targets().maxPayloadBytes());
         assertThat(config).containsEntry(JdbcConnector.USER, "faultora_readonly");
         assertThat(config).containsEntry(JdbcConnector.SECRET_ID, "ledger-password");
         assertThat(config).containsEntry(TargetResolver.BASE_URL, "http://localhost:1");

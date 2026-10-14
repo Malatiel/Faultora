@@ -14,7 +14,7 @@ import java.util.Set;
  * @param allowedOperationClasses  permitted safety classifications
  * @param maxRequests              maximum total requests in a run
  * @param maxConcurrency           maximum concurrent operations
- * @param maxDurationMs            maximum run duration in milliseconds
+ * @param maxDurationMs            maximum execution duration in milliseconds, excluding cleanup and fault rollback
  * @param maxPayloadBytes          maximum request/response body size
  * @param allowedFaultTypes        fault type allowlist (empty = no faults)
  * @param allowedEnvironments      environment name allowlist

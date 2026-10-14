@@ -43,7 +43,9 @@ budget would let a scenario hang instead of failing.
   rather than ignored fields.
 - The scenario-level `timeout` bounds the whole run: no further node starts
   once it elapses, cleanup obligations are collected before execution starts
-  so they always run, and the run fails with `SCENARIO_DEADLINE_EXCEEDED`.
+  so they are retained, and the run fails with `SCENARIO_DEADLINE_EXCEEDED`.
+  Declared cleanup operations and waits subsequently share their own finite
+  budget; expired obligations are reported as failures (ADR-024).
 
 ## Rejected alternatives
 

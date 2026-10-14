@@ -249,6 +249,7 @@ public final class DispatchedRun {
                         ? TargetResolver.BASE_URL : TargetResolver.BASE_URL_PREFIX + targetId,
                 url));
         config.put("maxResponseBytes", policy.targets().maxPayloadBytes());
+        config.put(HttpConnector.MAX_REQUEST_BYTES, policy.targets().maxPayloadBytes());
 
         Dispatch.Credentials credentials = dispatch.credentials();
         if (credentials.authSecretId() != null) {

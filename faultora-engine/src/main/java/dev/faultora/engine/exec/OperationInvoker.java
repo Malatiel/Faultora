@@ -37,6 +37,15 @@ public final class OperationInvoker {
             NodeContext context,
             Map<String, Object> inputs
     ) {
+        context = context.within(node.deadlineMs());
+        if (context.connectorContext().totalTimeoutMs() <= 0) {
+            return stopped(NormalizedError.ErrorCategory.TIMEOUT);
+        }
+        context = context.within(context.connectorContext().totalTimeoutMs());
+        OperationResult halt = halt(context);
+        if (halt != null) {
+            return halt;
+        }
         ConnectorContext connectorContext = context.connectorContext();
 
         String protocol = node.operation().protocol().value();
@@ -60,11 +69,27 @@ public final class OperationInvoker {
                     false, Map.of()), 0);
         }
 
-        ConnectorContext operationContext = withNodeDeadline(node, connectorContext);
+        halt = halt(context);
+        if (halt != null) {
+            return halt;
+        }
+        ConnectorContext operationContext = remainingContext(context);
+        if (operationContext == null) {
+            return stopped(NormalizedError.ErrorCategory.TIMEOUT);
+        }
         var prepared = connector.prepare(target, operationContext);
         try {
-            return connector.execute(
-                    prepared, node.operation(), inputs, operationContext);
+            halt = halt(context);
+            if (halt != null) {
+                return halt;
+            }
+            operationContext = remainingContext(context);
+            if (operationContext == null) {
+                return stopped(NormalizedError.ErrorCategory.TIMEOUT);
+            }
+            OperationResult result = connector.execute(prepared, node.operation(), inputs, operationContext);
+            halt = halt(context);
+            return halt == null ? result : OperationResult.failure(halt.error(), result.durationMs());
         } finally {
             connector.release(prepared);
         }
@@ -80,12 +105,17 @@ public final class OperationInvoker {
             NodeContext context,
             Map<String, Object> inputs
     ) throws InterruptedException {
+        context = context.within(node.deadlineMs()).within(context.connectorContext().totalTimeoutMs());
         PlanNode.RetrySpec retry = node.retrySpec();
         int maxAttempts = retry == null ? 1 : retry.maxAttempts();
 
         OperationResult result = invoke(node, context, inputs);
         for (int failedAttempt = 1; failedAttempt < maxAttempts; failedAttempt++) {
-            if (result.error() == null || !result.error().retryable() || context.cancelled()) {
+            OperationResult halt = halt(context);
+            if (halt != null) {
+                return halt;
+            }
+            if (result.error() == null || !result.error().retryable()) {
                 return result;
             }
             long delayMs = RetryBackoff.delayMs(
@@ -93,10 +123,11 @@ public final class OperationInvoker {
             context.journal().operationRetried(
                     node.nodeId(), failedAttempt, maxAttempts, delayMs, result.error().code());
             if (delayMs > 0) {
-                Waits.sleep(delayMs, context.cancellation());
+                Waits.sleep(delayMs, context.cancellation(), context.deadline());
             }
-            if (context.cancelled()) {
-                return result;
+            halt = halt(context);
+            if (halt != null) {
+                return halt;
             }
             result = invoke(node, context, inputs);
         }
@@ -128,20 +159,40 @@ public final class OperationInvoker {
     /**
      * A node deadline may only tighten the run's timeouts, never widen them.
      */
-    private ConnectorContext withNodeDeadline(
-            PlanNode.OperationNode node, ConnectorContext connectorContext) {
-        if (node.deadlineMs() <= 0) {
-            return connectorContext;
+    private ConnectorContext remainingContext(NodeContext context) {
+        long remaining = context.deadline().remainingMillis();
+        if (remaining <= 0) {
+            return null;
         }
-        long requestTimeout = Math.min(connectorContext.requestTimeoutMs(), node.deadlineMs());
-        long totalTimeout = Math.min(connectorContext.totalTimeoutMs(), node.deadlineMs());
+        ConnectorContext connectorContext = context.connectorContext();
+        long requestTimeout = boundedTimeout(connectorContext.requestTimeoutMs(), remaining);
+        long totalTimeout = Math.min(connectorContext.totalTimeoutMs(), remaining);
         return new ConnectorContext(
                 connectorContext.evidencePolicy(),
                 connectorContext.secretResolver(),
-                Math.min(connectorContext.connectTimeoutMs(), requestTimeout),
+                boundedTimeout(connectorContext.connectTimeoutMs(), Math.min(requestTimeout, remaining)),
                 requestTimeout,
                 totalTimeout,
                 connectorContext.config());
+    }
+
+    private static long boundedTimeout(long configured, long remaining) {
+        return configured > 0 ? Math.min(configured, remaining) : remaining;
+    }
+
+    private static OperationResult halt(NodeContext context) {
+        if (context.cancelled()) {
+            return stopped(NormalizedError.ErrorCategory.CANCELLED);
+        }
+        return context.deadline().expired() ? stopped(NormalizedError.ErrorCategory.TIMEOUT) : null;
+    }
+
+    private static OperationResult stopped(NormalizedError.ErrorCategory category) {
+        return OperationResult.failure(new NormalizedError(category,
+                category == NormalizedError.ErrorCategory.TIMEOUT ? "DEADLINE_EXCEEDED" : "CANCELLED",
+                category == NormalizedError.ErrorCategory.TIMEOUT
+                        ? "Operation deadline exhausted" : "Operation cancelled",
+                false, Map.of()), 0);
     }
 
 }
