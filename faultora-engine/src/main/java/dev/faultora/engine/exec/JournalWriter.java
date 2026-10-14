@@ -43,7 +43,8 @@ public final class JournalWriter {
 
     public void runStarted(String scenarioDigest, String catalogDigest, long seed) {
         append(new RunEvent.RunStarted(
-                "RUN_STARTED", now(), runId, scenarioDigest, catalogDigest, seed, Map.of()));
+                "RUN_STARTED", now(), runId, scenarioDigest, catalogDigest, seed,
+                Map.of("requestBudgetUnit", "connector-attempt")));
     }
 
     public void runCompleted(int totalNodes, int passed, int failed, long durationMs) {
@@ -94,6 +95,11 @@ public final class JournalWriter {
         append(new RunEvent.OperationRetried(
                 "OPERATION_RETRIED", now(), runId, nodeId,
                 failedAttempt, maxAttempts, nextDelayMs, errorCode));
+    }
+
+    public void operationAttempted(NodeId nodeId, OperationId operationId, long attemptNumber) {
+        append(new RunEvent.OperationAttempted(
+                "OPERATION_ATTEMPTED", now(), runId, nodeId, operationId, attemptNumber));
     }
 
     /** A generated request value, referenced by digest rather than recorded. */

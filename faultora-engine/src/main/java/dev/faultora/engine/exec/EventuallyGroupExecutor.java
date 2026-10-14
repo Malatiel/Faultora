@@ -93,6 +93,9 @@ public final class EventuallyGroupExecutor {
 
             evidence = new NodeEvidence(context.connectorContext().evidencePolicy());
             OperationResult result = invoker.invoke(child, context, inputs);
+            if (result.error() != null && "REQUEST_BUDGET_EXCEEDED".equals(result.error().code())) {
+                return failed(context, groupId, child, result.error(), System.currentTimeMillis() - groupStart);
+            }
             OperationInvoker.populateEvidence(evidence, result);
             // Every poll is an execution, so every poll's evidence reaches the
             // journal. A polling block is the usual way to observe an

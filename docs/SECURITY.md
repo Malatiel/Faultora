@@ -344,6 +344,19 @@ origin cannot restore headers stripped on the first hop. Returning to the
 initial origin permits those headers again; HTTPS-to-HTTP downgrades remain
 blocked.
 
+**Request counts mean connector attempts (ADR-025).** `maxRequests` includes
+setup, execution, retries, polls and declared cleanup. Compilation admits the
+worst-case count; runtime grants each attempt atomically before connector
+preparation, even for manually assembled plans. An extra attempt fails with
+nonretryable `POLICY_VIOLATION` / `REQUEST_BUDGET_EXCEEDED` before preparation.
+Main work cannot spend the cleanup share reserved within that same limit.
+Granted attempts remain charged after failure; a missing connector or target
+does not spend one. HTTP redirects and internal Kafka/JDBC client exchanges
+remain within an attempt, so this policy is not a physical traffic ceiling.
+The journal and report metric count `OPERATION_ATTEMPTED` grants, including
+failed preparation and cleanup, instead of inferring traffic from retries or
+completed nodes. Old journals without that metric leave it unknown.
+
 **HTTP transport has one monotonic total budget per connector operation.** It
 covers connection acquisition, response headers, fixed-length and chunked body
 reads, and every redirect in that operation. Expiry cancels the active exchange

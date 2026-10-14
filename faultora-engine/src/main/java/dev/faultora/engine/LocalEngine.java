@@ -191,7 +191,7 @@ public class LocalEngine {
             if (!cleanupNodes.isEmpty()) {
                 boolean interrupted = Thread.interrupted();
                 try {
-                    runCleanup(cleanupNodes, nodeContext.withCancellation(new AtomicBoolean(false))
+                    runCleanup(cleanupNodes, nodeContext.forCleanup().withCancellation(new AtomicBoolean(false))
                                     .withDeadline(Deadline.start(cleanupTimeoutMs)),
                             currentContext, nodeResults, tally);
                 } finally {

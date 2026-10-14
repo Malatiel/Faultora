@@ -77,6 +77,11 @@ public final class OperationInvoker {
         if (operationContext == null) {
             return stopped(NormalizedError.ErrorCategory.TIMEOUT);
         }
+        long attempt = context.requestBudget().startAttempt();
+        if (attempt == 0) {
+            return budgetExhausted();
+        }
+        context.journal().operationAttempted(node.nodeId(), node.operationId(), attempt);
         var prepared = connector.prepare(target, operationContext);
         try {
             halt = halt(context);
@@ -117,6 +122,9 @@ public final class OperationInvoker {
             }
             if (result.error() == null || !result.error().retryable()) {
                 return result;
+            }
+            if (context.requestBudget().exhausted()) {
+                return budgetExhausted();
             }
             long delayMs = RetryBackoff.delayMs(
                     retry, context.plan().seed(), node.nodeId(), failedAttempt);
@@ -193,6 +201,11 @@ public final class OperationInvoker {
                 category == NormalizedError.ErrorCategory.TIMEOUT
                         ? "Operation deadline exhausted" : "Operation cancelled",
                 false, Map.of()), 0);
+    }
+
+    private static OperationResult budgetExhausted() {
+        return OperationResult.failure(new NormalizedError(NormalizedError.ErrorCategory.POLICY_VIOLATION,
+                "REQUEST_BUDGET_EXCEEDED", "Connector-attempt budget exhausted", false, Map.of()), 0);
     }
 
 }

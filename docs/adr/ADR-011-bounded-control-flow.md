@@ -66,11 +66,12 @@ budget would let a scenario hang instead of failing.
 
 ## Consequences
 
-- The worst-case request count of any scenario is still knowable from the
-  compiled plan alone, which keeps `maxRequests` a real control.
+- The worst-case connector-attempt count of any scenario is still knowable
+  from the compiled plan. ADR-025 fixes this unit and adds runtime admission;
+  retries, polls and cleanup consume attempts, while transport exchanges inside
+  a connector remain separate.
 - Data-driven repeats cover fixed matrices (currencies, amounts, regions) but
-  not runtime-sized collections; the documentation states this limit instead
-  of implying general iteration.
+  not runtime-sized collections; runtime admission does not add such syntax.
 - Reports gained a second per-node counter (`CONDITION_POLLED`) alongside
   retries, and nodes can now carry several assertion outcomes, which the
   console and HTML renderers list individually.

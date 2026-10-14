@@ -187,7 +187,8 @@ public final class NodeExecutor {
         context.journal().evidenceOf(nodeId, evidence);
 
         boolean expectError = node instanceof PlanNode.OperationNode operation
-                && operation.expectError();
+                && operation.expectError()
+                && !evidence.error().map(error -> "REQUEST_BUDGET_EXCEEDED".equals(error.code())).orElse(false);
 
         if (evidence.hasError() && !expectError) {
             NormalizedError error = evidence.error().orElse(null);

@@ -24,6 +24,7 @@ import java.util.Map;
         @JsonSubTypes.Type(value = RunEvent.NodeFailed.class, name = "NODE_FAILED"),
         @JsonSubTypes.Type(value = RunEvent.NodeSkipped.class, name = "NODE_SKIPPED"),
         @JsonSubTypes.Type(value = RunEvent.OperationRetried.class, name = "OPERATION_RETRIED"),
+        @JsonSubTypes.Type(value = RunEvent.OperationAttempted.class, name = "OPERATION_ATTEMPTED"),
         @JsonSubTypes.Type(value = RunEvent.ConditionPolled.class, name = "CONDITION_POLLED"),
         @JsonSubTypes.Type(value = RunEvent.InputsGenerated.class, name = "INPUTS_GENERATED"),
         @JsonSubTypes.Type(value = RunEvent.MessagePublished.class, name = "MESSAGE_PUBLISHED"),
@@ -146,7 +147,19 @@ public sealed interface RunEvent {
         }
     }
 
-    /** An operation attempt failed with a retryable error and will be retried. */
+    /** A connector attempt was granted its budget before preparation; no request data is recorded. */
+    record OperationAttempted(
+            String eventType,
+            long timestamp,
+            RunId runId,
+            NodeId nodeId,
+            OperationId operationId,
+            long attemptNumber
+    ) implements RunEvent {
+        public OperationAttempted { eventType = "OPERATION_ATTEMPTED"; }
+    }
+
+    /** An operation attempt failed with a retryable error and a retry was scheduled. */
     record OperationRetried(
             String eventType,
             long timestamp,
