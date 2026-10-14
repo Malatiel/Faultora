@@ -321,8 +321,11 @@ connected to.** A host is refused when any address it resolves to is private,
 loopback, link-local, or otherwise reserved. The addresses that passed
 classification are then pinned for the connection, so a name that resolves
 again — to something else — cannot be reached on the second answer. Redirects
-are re-checked against the same policy, and a change of origin strips
-credentials.
+are re-checked against the same policy. HTTP credential headers remain bound
+to the initial request's origin throughout the chain: a second hop on another
+origin cannot restore headers stripped on the first hop. Returning to the
+initial origin permits those headers again; HTTPS-to-HTTP downgrades remain
+blocked.
 
 **Classification cannot be assumed uniform across protocols.** It is a property
 of each connector, not of the engine, because each client resolves its own
