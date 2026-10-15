@@ -59,6 +59,27 @@ project's "no implicit egress" and "safe defaults" principles.
 - Future out-of-process extensions will use a versioned RPC contract; the SPI
   interface design must be compatible with this evolution.
 
+### In-process artifact trust boundary
+
+Operators must restrict write access to the runtime, bootstrap classpath, and
+plugin directories to the operator or deployment mechanism. A concurrent local
+writer with access to those locations can replace the runtime itself. Such a
+writer is outside the in-process discovery threat model: filesystem write
+access is a requirement on the deployment environment, not a security boundary
+enforced by Faultora.
+
+Under that requirement, a grant for an expected artifact digest detects an
+artifact replaced before startup or a different artifact supplied as the
+permitted plugin. A class-name grant alone does not pin artifact bytes. These
+checks do not protect against concurrent modification of the classpath or
+plugin directories.
+
+The provider class is loaded, without initialization, before its artifact
+digest is calculated. The digest identifies the file read on disk, not the
+class bytes already read by the classloader. Manifest inspection and class
+loading are separate reads; the current in-process path does not bind them to
+one immutable artifact snapshot.
+
 ## Rejected alternatives
 
 - **Spring auto-configuration**: Requires Spring Framework dependency.

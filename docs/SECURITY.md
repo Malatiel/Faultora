@@ -249,6 +249,25 @@ contents. These checks do not sandbox an allowed in-process plugin;
 policies requiring process isolation or resource controls are still refused
 until ADR-023's isolation slice is implemented.
 
+**In-process artifact trust boundary.** Operators must restrict write access
+to the runtime, bootstrap classpath, and plugin directories to the operator
+or deployment mechanism. A concurrent local writer with access to these
+locations can also replace the runtime itself. Such a writer is outside the
+in-process discovery threat model: this write-access requirement belongs to
+the deployment environment and is not a boundary enforced by Faultora.
+
+Under that requirement, a grant for an expected artifact digest detects an
+artifact replaced before startup or a different artifact supplied as the
+permitted plugin. A class-name grant alone does not pin artifact bytes.
+Identity and digest checks do not protect against concurrent local writes to
+the classpath or plugin directories.
+
+The provider class is loaded, without initialization, before its artifact
+digest is calculated. The digest identifies the file read on disk, not the
+class bytes already read by the classloader. Manifest inspection and class
+loading use separate reads; the current in-process path does not bind them
+to one immutable artifact snapshot. See [ADR-004](adr/ADR-004-extension-discovery.md).
+
 ### SEC-09 — Verifiable releases
 
 Each release provides checksums, signatures, a CycloneDX SBOM, build provenance,
