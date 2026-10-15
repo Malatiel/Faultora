@@ -22,6 +22,14 @@ preview difficult to compare with execution.
   policy; it neither authenticates callers nor grants permissions. The verified
   dispatch catalog digest keeps its document-list meaning. Local runs retain
   the digest of their assembled catalog.
+- Local catalog fingerprints use the UTF-8 preimage
+  `faultora.catalog.v1\n` followed by compact JSON of the assembled catalog.
+  Every JSON object's keys are sorted by their natural Java String order,
+  including record fields and nested maps. Arrays retain their order; integer
+  and decimal precision and decimal scale are preserved. This is a versioned
+  Faultora representation, not an implementation of RFC 8785. A format change
+  needs a new domain version. Signed dispatch document-list digests are not
+  computed by this algorithm and keep their existing wire meaning.
 - `RuntimeCapabilities` describes installed, admitted contract types. Advertised
   fault types are the intersection of deployment availability and target policy.
   Discovery uses the same artifact, origin, manifest and permission checks as

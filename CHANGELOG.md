@@ -10,6 +10,10 @@ ADR-023 exists to stop. What has landed so far:
 
 ### Changed
 
+- **Locally prepared catalog fingerprints use a versioned, deterministic JSON
+  representation.** Object keys, including nested maps, are ordered; array
+  order and exact numeric values remain significant. Existing local digest
+  values change. Signed dispatch document-list digests keep their wire meaning.
 - **A non-built-in extension without a manifest is refused.** This is a
   breaking change for a third-party extension permitted by class name today: it
   will stop loading, and a scenario naming its assertion type will fail with an

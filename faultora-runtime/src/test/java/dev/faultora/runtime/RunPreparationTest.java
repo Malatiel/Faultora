@@ -44,8 +44,7 @@ class RunPreparationTest {
         assertThat(plan.runId().value()).isEqualTo("run-preview");
         assertThat(plan.seed()).isEqualTo(42);
         assertThat(plan.scenarioDigest()).isEqualTo(ContentDigest.sha256Uri(SCENARIO));
-        assertThat(plan.catalogDigest()).isEqualTo(ContentDigest.sha256Uri(
-                new ObjectMapper().writeValueAsString(result.catalog())));
+        assertThat(plan.catalogDigest()).isEqualTo(RunPreparation.digest(result.catalog()));
         assertThat(plan.nodes()).hasSize(1);
         assertThat(plan.targetPolicy()).isEqualTo(POLICY);
     }
