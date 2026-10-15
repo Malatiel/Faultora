@@ -23,6 +23,15 @@ import java.util.*;
  * Usage: faultora init --from-openapi &lt;path&gt; [--output &lt;dir&gt;]
  */
 public class InitCommand implements Command {
+    private final CommandOutput output;
+
+    public InitCommand() {
+        this(CommandOutput.human());
+    }
+
+    InitCommand(CommandOutput output) {
+        this.output = output;
+    }
 
     @Override
     public int execute(List<String> args) {
@@ -40,23 +49,27 @@ public class InitCommand implements Command {
                     return FaultoraCli.EXIT_PASS;
                 }
                 default -> {
-                    System.err.println("Unknown option: " + arg);
+                    output.error(CliDiagnostic.Code.INVALID_ARGUMENT, null, null);
+                    output.err().println("Unknown option: " + arg);
                     return FaultoraCli.EXIT_INVALID_CONFIG;
                 }
             }
         }
 
         if (openApiPath == null) {
-            System.err.println("Error: --from-openapi is required");
+            output.error(CliDiagnostic.Code.INVALID_ARGUMENT, null, null);
+            output.err().println("Error: --from-openapi is required");
             return FaultoraCli.EXIT_INVALID_CONFIG;
         }
 
+        CliDiagnostic.Code ioStage = CliDiagnostic.Code.FILE_READ_FAILED;
         try {
             // Read and import OpenAPI
             String content = Files.readString(openApiPath, StandardCharsets.UTF_8);
             SourceImporter importer = ExtensionRegistry.importerFor("openapi", null);
             if (importer == null) {
-                System.err.println("No importer for OpenAPI documents is installed");
+                output.error(CliDiagnostic.Code.CAPABILITY_UNAVAILABLE, null, null);
+                output.err().println("No importer for OpenAPI documents is installed");
                 return FaultoraCli.EXIT_RUNNER_FAILURE;
             }
             ImportContext context = new ImportContext(
@@ -64,24 +77,27 @@ public class InitCommand implements Command {
             ImportResult result = importer.importSource(content, context);
 
             if (!result.isSuccess()) {
-                System.err.println("Failed to import OpenAPI document:");
-                result.errors().forEach(e -> System.err.println("  " + e.code() + ": " + e.message()));
+                output.error(CliDiagnostic.Code.CATALOG_IMPORT_FAILED, null, null);
+                output.err().println("Failed to import OpenAPI document:");
+                result.errors().forEach(e -> output.err().println("  " + e.code() + ": " + e.message()));
                 return FaultoraCli.EXIT_INVALID_CONFIG;
             }
 
             ApiCatalog catalog = result.catalog();
-            System.out.println("Imported " + catalog.operations().size() + " operations from " + openApiPath);
+            output.out().println("Imported " + catalog.operations().size() + " operations from " + openApiPath);
 
             // Generate scenario
             String scenario = generateScenario(catalog);
             Path scenarioPath = outputDir.resolve("scenario.yaml");
+            ioStage = CliDiagnostic.Code.ARTIFACT_WRITE_FAILED;
             Files.createDirectories(scenarioPath.getParent());
             Files.writeString(scenarioPath, scenario);
-            System.out.println("Generated scenario: " + scenarioPath);
+            output.out().println("Generated scenario: " + scenarioPath);
 
             return FaultoraCli.EXIT_PASS;
         } catch (IOException e) {
-            System.err.println("I/O error: " + e.getMessage());
+            output.error(ioStage, null, null);
+            output.err().println("I/O error: " + e.getMessage());
             return FaultoraCli.EXIT_RUNNER_FAILURE;
         }
     }
@@ -120,13 +136,13 @@ public class InitCommand implements Command {
     }
 
     private void printHelp() {
-        System.out.println("Usage: faultora init --from-openapi <path> [--output <dir>]");
-        System.out.println();
-        System.out.println("Imports an OpenAPI document and generates a starter scenario.");
-        System.out.println();
-        System.out.println("Options:");
-        System.out.println("  -o, --from-openapi <path>  OpenAPI 3.x file (required)");
-        System.out.println("  --output <dir>             Output directory (default: .)");
-        System.out.println("  -h, --help                 Show this help");
+        output.out().println("Usage: faultora init --from-openapi <path> [--output <dir>]");
+        output.out().println();
+        output.out().println("Imports an OpenAPI document and generates a starter scenario.");
+        output.out().println();
+        output.out().println("Options:");
+        output.out().println("  -o, --from-openapi <path>  OpenAPI 3.x file (required)");
+        output.out().println("  --output <dir>             Output directory (default: .)");
+        output.out().println("  -h, --help                 Show this help");
     }
 }

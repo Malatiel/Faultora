@@ -19,6 +19,15 @@ import java.util.List;
  * Usage: faultora validate --scenario &lt;path&gt;
  */
 public class ValidateCommand implements Command {
+    private final CommandOutput output;
+
+    public ValidateCommand() {
+        this(CommandOutput.human());
+    }
+
+    ValidateCommand(CommandOutput output) {
+        this.output = output;
+    }
 
     @Override
     public int execute(List<String> args) {
@@ -34,14 +43,16 @@ public class ValidateCommand implements Command {
                     return FaultoraCli.EXIT_PASS;
                 }
                 default -> {
-                    System.err.println("Unknown option: " + arg);
+                    output.error(CliDiagnostic.Code.INVALID_ARGUMENT, null, null);
+                    output.err().println("Unknown option: " + arg);
                     return FaultoraCli.EXIT_INVALID_CONFIG;
                 }
             }
         }
 
         if (scenarioPath == null) {
-            System.err.println("Error: --scenario is required");
+            output.error(CliDiagnostic.Code.INVALID_ARGUMENT, null, "scenario");
+            output.err().println("Error: --scenario is required");
             return FaultoraCli.EXIT_INVALID_CONFIG;
         }
 
@@ -49,36 +60,39 @@ public class ValidateCommand implements Command {
             String content = Files.readString(scenarioPath, StandardCharsets.UTF_8);
             ScenarioParser parser = new ScenarioParser();
             ParseResult<ScenarioDocument> parseResult = parser.parse(content);
+            output.scenario(parseResult.diagnostics());
 
             if (!parseResult.isSuccess()) {
-                System.err.println("Scenario is INVALID:");
-                parseResult.errors().forEach(d -> System.err.println("  ERROR: " + d.message()));
-                parseResult.warnings().forEach(d -> System.err.println("  WARN:  " + d.message()));
+                output.err().println("Scenario is INVALID:");
+                parseResult.errors().forEach(d -> output.err().println("  ERROR: " + d.message()));
+                parseResult.warnings().forEach(d -> output.err().println("  WARN:  " + d.message()));
                 return FaultoraCli.EXIT_INVALID_CONFIG;
             }
 
             // Structural validation
             ScenarioValidator validator = new ScenarioValidator();
             ParseResult<ScenarioDocument> validationResult = validator.validate(parseResult.document());
+            output.scenario(validationResult.diagnostics());
 
             if (!validationResult.isSuccess()) {
-                System.err.println("Scenario is INVALID:");
-                validationResult.errors().forEach(d -> System.err.println("  ERROR: " + d.message()));
-                validationResult.warnings().forEach(d -> System.err.println("  WARN:  " + d.message()));
+                output.err().println("Scenario is INVALID:");
+                validationResult.errors().forEach(d -> output.err().println("  ERROR: " + d.message()));
+                validationResult.warnings().forEach(d -> output.err().println("  WARN:  " + d.message()));
                 return FaultoraCli.EXIT_INVALID_CONFIG;
             }
 
-            validationResult.warnings().forEach(d -> System.err.println("Warning: " + d.message()));
+            validationResult.warnings().forEach(d -> output.err().println("Warning: " + d.message()));
 
             ScenarioDocument doc = validationResult.document();
-            System.out.println("Scenario is VALID: " + scenarioPath);
-            System.out.println("  Name: " + doc.metadata().name());
-            System.out.println("  Description: " + doc.metadata().description());
-            System.out.println("  Steps: " + countSteps(doc));
+            output.out().println("Scenario is VALID: " + scenarioPath);
+            output.out().println("  Name: " + doc.metadata().name());
+            output.out().println("  Description: " + doc.metadata().description());
+            output.out().println("  Steps: " + countSteps(doc));
 
             return FaultoraCli.EXIT_PASS;
         } catch (IOException e) {
-            System.err.println("Cannot read scenario file: " + e.getMessage());
+            output.error(CliDiagnostic.Code.FILE_READ_FAILED, null, null);
+            output.err().println("Cannot read scenario file: " + e.getMessage());
             return FaultoraCli.EXIT_INVALID_CONFIG;
         }
     }
@@ -101,12 +115,12 @@ public class ValidateCommand implements Command {
     }
 
     private void printHelp() {
-        System.out.println("Usage: faultora validate --scenario <path>");
-        System.out.println();
-        System.out.println("Validates a scenario document for structural correctness.");
-        System.out.println();
-        System.out.println("Options:");
-        System.out.println("  -s, --scenario <path>  Scenario YAML file (required)");
-        System.out.println("  -h, --help             Show this help");
+        output.out().println("Usage: faultora validate --scenario <path>");
+        output.out().println();
+        output.out().println("Validates a scenario document for structural correctness.");
+        output.out().println();
+        output.out().println("Options:");
+        output.out().println("  -s, --scenario <path>  Scenario YAML file (required)");
+        output.out().println("  -h, --help             Show this help");
     }
 }

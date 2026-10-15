@@ -1,5 +1,7 @@
 package dev.faultora.cli;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.PrintWriter;
 import java.util.*;
 
@@ -38,19 +40,22 @@ public class FaultoraCli {
 
     private final PrintWriter out;
     private final PrintWriter err;
-    private final Map<String, Command> commands;
 
     public FaultoraCli(PrintWriter out, PrintWriter err) {
         this.out = out;
         this.err = err;
-        this.commands = new LinkedHashMap<>();
-        commands.put("init", new InitCommand());
-        commands.put("validate", new ValidateCommand());
-        commands.put("discover", new DiscoverCommand());
-        commands.put("test", new TestCommand());
-        commands.put("runner", new RunnerCommand(out, err));
-        commands.put("health", new HealthCommand(out, err));
-        commands.put("migrate", new MigrateCommand(out, err));
+    }
+
+    private Map<String, Command> commands(CommandOutput output) {
+        Map<String, Command> commands = new LinkedHashMap<>();
+        commands.put("init", new InitCommand(output));
+        commands.put("validate", new ValidateCommand(output));
+        commands.put("discover", new DiscoverCommand(output));
+        commands.put("test", new TestCommand(output));
+        commands.put("runner", new RunnerCommand(output.out(), output.err()));
+        commands.put("health", new HealthCommand(output.out(), output.err()));
+        commands.put("migrate", new MigrateCommand(output.out(), output.err()));
+        return commands;
     }
 
     /**
@@ -68,8 +73,38 @@ public class FaultoraCli {
      * Run the CLI with the given arguments. Returns the exit code.
      */
     public int run(String[] args) {
+        boolean machine = args.length > 0 && "--diagnostics=json".equals(args[0]);
+        String[] commandLine = machine ? Arrays.copyOfRange(args, 1, args.length) : args;
+        CommandOutput output = new CommandOutput(out, err, machine);
+        Map<String, Command> commands = commands(output);
+        int exitCode = execute(commandLine, commands, output);
+        String command = commandLine.length == 0 ? null : commandLine[0];
+        if (command != null && !commands.containsKey(command)) {
+            command = switch (command) {
+                case "--help", "-h" -> "help";
+                case "--version", "-v" -> "version";
+                default -> null;
+            };
+        }
+        CommandOutput.Result result = output.finish(command, exitCode);
+        if (machine) {
+            try {
+                out.println(new ObjectMapper().writeValueAsString(result));
+                out.flush();
+            } catch (JsonProcessingException impossible) {
+                err.println("Cannot encode CLI diagnostics");
+                return EXIT_RUNNER_FAILURE;
+            }
+        }
+        return exitCode;
+    }
+
+    private int execute(String[] args, Map<String, Command> commands, CommandOutput output) {
+        PrintWriter out = output.out();
+        PrintWriter err = output.err();
         if (args.length == 0) {
-            printUsage();
+            output.error(CliDiagnostic.Code.COMMAND_REQUIRED, null, null);
+            printUsage(out);
             return EXIT_INVALID_CONFIG;
         }
 
@@ -82,24 +117,27 @@ public class FaultoraCli {
                 return EXIT_PASS;
             }
             case "--help", "-h" -> {
-                printUsage();
+                printUsage(out);
                 return EXIT_PASS;
             }
         }
 
         Command command = commands.get(commandName);
         if (command == null) {
+            output.error(CliDiagnostic.Code.UNKNOWN_COMMAND, null, null);
             err.println("Unknown command: " + commandName);
-            printUsage();
+            printUsage(out);
             return EXIT_INVALID_CONFIG;
         }
 
         try {
             return command.execute(commandArgs);
         } catch (CliException e) {
+            if (!output.hasErrors()) { output.error(CliDiagnostic.Code.INVALID_ARGUMENT, null, null); }
             err.println("Error: " + e.getMessage());
             return e.exitCode();
         } catch (Exception e) {
+            output.error(CliDiagnostic.Code.COMMAND_FAILED, null, null);
             err.println("Unexpected error: " + e.getMessage());
             return EXIT_RUNNER_FAILURE;
         }
@@ -108,8 +146,8 @@ public class FaultoraCli {
     PrintWriter out() { return out; }
     PrintWriter err() { return err; }
 
-    private void printUsage() {
-        out.println("Usage: faultora <command> [options]");
+    private void printUsage(PrintWriter out) {
+        out.println("Usage: faultora [--diagnostics=json] <command> [options]");
         out.println();
         out.println("Commands:");
         out.println("  init       --from-openapi <file> [--output <dir>]   Import OpenAPI and generate scenario");
@@ -124,6 +162,7 @@ public class FaultoraCli {
         out.println("Options:");
         out.println("  -v, --version   Show version");
         out.println("  -h, --help      Show help");
+        out.println("  --diagnostics=json  Emit one machine diagnostic result (before the command)");
         out.println();
         out.println("Exit codes: 0 = pass, 1 = test failure, 2 = config error, 3 = runner error");
     }

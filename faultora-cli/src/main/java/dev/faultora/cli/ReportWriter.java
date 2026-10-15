@@ -30,19 +30,20 @@ final class ReportWriter {
             List<String> formats,
             Map<String, ReportRenderer> renderers,
             List<RunEvent> events,
-            Path outputDir
+            Path outputDir,
+            PrintWriter out
     ) throws IOException {
         for (String format : formats) {
             ReportRenderer renderer = renderers.get(format);
             if ("console".equals(format)) {
-                renderer.render(events, new PrintWriter(System.out, true));
+                renderer.render(events, out);
                 continue;
             }
             Path reportPath = outputDir.resolve("report" + extensionOf(format));
             try (Writer writer = Files.newBufferedWriter(reportPath, StandardCharsets.UTF_8)) {
                 renderer.render(events, writer);
             }
-            System.out.println("Report written: " + reportPath);
+            out.println("Report written: " + reportPath);
         }
     }
 

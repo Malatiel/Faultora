@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -35,9 +36,11 @@ class ReportWriterFailureTest {
             RunResult result = JournalWriter.closeJournal(journal,
                     new RunResult(run, RunResult.Status.PASSED, 0, 0, 0, Map.of(), 1, null));
             assertThat(result.status()).isEqualTo(RunResult.Status.ERROR);
+            StringWriter notices = new StringWriter();
             ReportWriter.writeAll(List.of("json", "html", "junit"),
                     Map.of("json", new JsonRenderer(), "html", new HtmlRenderer(), "junit", new JUnitXmlRenderer()),
-                    journal.events(), directory);
+                    journal.events(), directory, new PrintWriter(notices));
+            assertThat(notices.toString()).contains("Report written:");
             assertThat(Files.readString(directory.resolve("report.html"))).contains("badge fail\">FAILED")
                     .doesNotContain("badge pass\">PASSED", "SYNTHETIC_PRIVATE_CLOSE_MESSAGE");
             assertThat(Files.readString(directory.resolve("report.json"))).contains("JOURNAL_WRITE_FAILED")

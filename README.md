@@ -189,6 +189,12 @@ but it takes `--allow-destructive` to permit it.
 
 ### Plan preview
 
+For scripts, put `--diagnostics=json` before the command to receive one versioned
+JSON diagnostic result on stdout. It includes stable codes, node/document
+locations, hints and the existing exit code; technical logs remain on stderr.
+With `test --preview`, the preview is nested in the same result. See the
+[machine diagnostic contract](docs/CLI_DIAGNOSTICS.md) for fields and limits.
+
 Add `--preview` to `test` to inspect the compiled plan without running it:
 
 ```bash
