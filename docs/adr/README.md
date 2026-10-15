@@ -27,3 +27,4 @@
 | [ADR-023](ADR-023-extension-isolation.md) | What an extension policy promises, and when | Accepted |
 | [ADR-024](ADR-024-bounded-cleanup.md) | A separate finite budget for declared cleanup | Accepted |
 | [ADR-025](ADR-025-request-budget-unit.md) | Request budgets count connector attempts | Accepted |
+| [ADR-026](ADR-026-evidence-disclosure.md) | Evidence availability and structural exports | Accepted |

@@ -33,36 +33,19 @@ final class AssertionParameters {
     /**
      * Why these parameters cannot be compared with, or null when they can.
      * <p>
-     * Both refusals exist because the alternative is worse than a failure. A
-     * value that resolved to nothing would let the assertion provider decide
-     * what null means, and the answer would not be the author's. A value
-     * derived from a secret would be compared, and then written into the
-     * assertion's message — which reaches the journal, the console, and the
-     * HTML report. An assertion is not a place to move a secret to.
+     * A template resolving to null cannot establish a comparison. Secret
+     * references remain outside assertion capabilities even though the export
+     * boundary now also withholds provider comparison details.
      */
     String refusal(
             Map<String, Object> declared,
             Map<String, Object> resolved,
             ExpressionContext context
     ) {
-        String secret = firstSecretReference(declared, context);
-        if (secret != null) {
-            return "Parameter '" + secret + "' reads a secret. An assertion compares by "
-                    + "writing what it compared into its message, which the journal and "
-                    + "the report keep, so a secret cannot be one of its parameters";
+        if (namesASecret(declared, context)) {
+            return "An assertion parameter reads a secret; secret references are not allowed in assertions";
         }
-        return firstReferenceResolvingToNothing(null, declared, resolved);
-    }
-
-    /** The name of the first parameter whose expression names a secret. */
-    private String firstSecretReference(
-            Map<String, Object> declared, ExpressionContext context) {
-        for (Map.Entry<String, Object> parameter : declared.entrySet()) {
-            if (namesASecret(parameter.getValue(), context)) {
-                return parameter.getKey();
-            }
-        }
-        return null;
+        return firstReferenceResolvingToNothing(declared, resolved);
     }
 
     private boolean namesASecret(Object value, ExpressionContext context) {
@@ -85,7 +68,7 @@ final class AssertionParameters {
     }
 
     /**
-     * The first template that resolved to null, described by where it sits.
+     * A refusal when a template resolved to null, without repeating its expression.
      * <p>
      * A template naming something absent no longer reaches here: it fails
      * during resolution, in both step inputs and assertion parameters
@@ -101,21 +84,15 @@ final class AssertionParameters {
      * literal null is left alone: it says null on purpose.
      */
     private String firstReferenceResolvingToNothing(
-            String path, Object declared, Object resolved) {
+            Object declared, Object resolved) {
         return switch (declared) {
             case String text when text.contains("{{") && resolved == null ->
-                    "Parameter '" + path + "' reads " + text + ", which is null. An "
-                            + "assertion compares against a value, and null is the "
-                            + "absence of one — ask for it with exists: false rather "
-                            + "than comparing to it";
+                    "An assertion parameter reads a value which is null; ask for it with exists: false";
             case Map<?, ?> map -> {
                 Map<?, ?> resolvedMap = resolved instanceof Map<?, ?> other ? other : Map.of();
                 for (Map.Entry<?, ?> entry : map.entrySet()) {
-                    String nestedPath = path == null
-                            ? String.valueOf(entry.getKey())
-                            : path + "." + entry.getKey();
                     String refusal = firstReferenceResolvingToNothing(
-                            nestedPath, entry.getValue(), resolvedMap.get(entry.getKey()));
+                            entry.getValue(), resolvedMap.get(entry.getKey()));
                     if (refusal != null) {
                         yield refusal;
                     }
@@ -128,7 +105,6 @@ final class AssertionParameters {
                     Object resolvedItem = index < resolvedList.size()
                             ? resolvedList.get(index) : null;
                     String refusal = firstReferenceResolvingToNothing(
-                            (path == null ? "" : path) + "[" + index + "]",
                             list.get(index), resolvedItem);
                     if (refusal != null) {
                         yield refusal;

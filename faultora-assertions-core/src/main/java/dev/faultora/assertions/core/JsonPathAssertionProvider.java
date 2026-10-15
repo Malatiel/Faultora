@@ -45,6 +45,9 @@ public class JsonPathAssertionProvider implements AssertionProvider {
             EvidenceView evidence,
             AssertionContext context
     ) {
+        if (!evidence.bodyComplete()) {
+            return AssertionResult.indeterminate("The response body was withheld, redacted or truncated");
+        }
         String path = toString(params.get("path"));
         if (path == null || path.isBlank()) {
             return AssertionResult.indeterminate("JSONPath expression is required");

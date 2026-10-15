@@ -28,10 +28,18 @@ import java.util.Optional;
  * The body travels base64-encoded because it is bytes and the transport is
  * text. That is the only transformation: everything else is the value the view
  * returned.
+ * <p>
+ * Header readability is the one answer that does not travel exactly. Whether
+ * a missing header was absent or withheld depends on the evidence policy, which
+ * the view does not expose and the snapshot does not carry. A header that
+ * crossed is readable; any other is not, so an assertion about it is
+ * indeterminate rather than failed on a policy's say-so.
  *
  * @param statusCode      HTTP status, or null for a non-HTTP operation
  * @param responseHeaders headers the evidence policy permitted keeping
  * @param responseBody    the body, base64, or null when none was kept
+ * @param bodyComplete    whether the body is the whole, unredacted document;
+ *                        false when a snapshot does not say
  * @param durationMs      how long the operation took
  * @param error           what went wrong, or null
  * @param protocolEvidence protocol-specific values, already plain data
@@ -40,6 +48,7 @@ public record EvidenceSnapshot(
         @JsonProperty("statusCode") Integer statusCode,
         @JsonProperty("responseHeaders") Map<String, List<String>> responseHeaders,
         @JsonProperty("responseBody") String responseBody,
+        @JsonProperty("bodyComplete") boolean bodyComplete,
         @JsonProperty("durationMs") long durationMs,
         @JsonProperty("error") NormalizedError error,
         @JsonProperty("protocolEvidence") Map<String, Object> protocolEvidence
@@ -60,6 +69,7 @@ public record EvidenceSnapshot(
                 view.statusCode().orElse(null),
                 view.responseHeaders(),
                 view.responseBody().map(Base64.getEncoder()::encodeToString).orElse(null),
+                view.bodyComplete(),
                 view.durationMs(),
                 view.error().orElse(null),
                 view.protocolEvidence());
@@ -100,6 +110,16 @@ public record EvidenceSnapshot(
                 } catch (Exception notJson) {
                     return Optional.empty();
                 }
+            }
+
+            @Override
+            public boolean bodyComplete() {
+                return bodyComplete;
+            }
+
+            @Override
+            public boolean headerReadable(String name) {
+                return responseHeaders.keySet().stream().anyMatch(name::equalsIgnoreCase);
             }
 
             @Override

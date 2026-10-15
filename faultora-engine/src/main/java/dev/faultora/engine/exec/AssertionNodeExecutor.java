@@ -6,9 +6,11 @@ import dev.faultora.engine.run.RunResult;
 import dev.faultora.model.catalog.NormalizedError;
 import dev.faultora.model.identifier.NodeId;
 import dev.faultora.spec.expression.ExpressionContext;
+import dev.faultora.spec.expression.ExpressionEvaluationException;
 import dev.faultora.spi.contract.AssertionProvider;
 import dev.faultora.spi.context.AssertionContext;
 import dev.faultora.spi.result.AssertionResult;
+import dev.faultora.spi.evidence.EvidenceExport;
 
 import java.util.List;
 import java.util.Map;
@@ -63,7 +65,9 @@ final class AssertionNodeExecutor {
             // compare against nothing, and pass or fail for a reason its author
             // never wrote.
             return NodeResults.failed(node,
-                    "Cannot resolve this assertion's parameters: " + unresolvable.getMessage(),
+                    "Cannot resolve this assertion's parameters"
+                            + (unresolvable instanceof ExpressionEvaluationException expression
+                                    ? ": " + expression.diagnostic() : ""),
                     NormalizedError.ErrorCategory.VALIDATION, startedAtMs);
         }
 
@@ -73,9 +77,9 @@ final class AssertionNodeExecutor {
                     NormalizedError.ErrorCategory.VALIDATION, startedAtMs);
         }
 
-        AssertionResult result = provider.evaluate(
+        AssertionResult result = EvidenceExport.assertion(provider.evaluate(
                 node.assertionType(), params, targetEvidence,
-                new AssertionContext(nodeId.value(), params, node.schema()));
+                new AssertionContext(nodeId.value(), params, node.schema())));
 
         ownEvidence.durationMs(System.currentTimeMillis() - startedAtMs);
         context.journal().assertionEvaluated(

@@ -99,8 +99,7 @@ public final class NodeExecutor {
             NormalizedError error = new NormalizedError(
                     NormalizedError.ErrorCategory.VALIDATION,
                     "INPUTS_UNRESOLVABLE",
-                    "Cannot resolve what this step is invoked with: "
-                            + unresolvable.getMessage(),
+                    "Cannot resolve what this step is invoked with: " + unresolvable.diagnostic(),
                     false, Map.of());
             context.journal().nodeFailed(nodeId, error, durationMs);
             return new RunResult.NodeResult(
@@ -111,7 +110,7 @@ public final class NodeExecutor {
             NormalizedError error = new NormalizedError(
                     NormalizedError.ErrorCategory.INTERNAL,
                     "EXECUTION_ERROR",
-                    "Node execution failed: " + e.getMessage(),
+                    "Node execution failed; provider details withheld by export policy",
                     false, Map.of());
             context.journal().nodeFailed(nodeId, error, durationMs);
             return new RunResult.NodeResult(

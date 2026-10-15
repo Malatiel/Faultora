@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 
 import dev.faultora.engine.LocalEngine;
+import dev.faultora.engine.exec.JournalWriter;
 import dev.faultora.engine.journal.RunJournal;
 import dev.faultora.engine.plan.PlanCompilationResult;
 import dev.faultora.engine.plan.PlanCompiler;
@@ -38,7 +39,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -126,12 +126,13 @@ public class TestCommand implements Command {
             Path journalPath = options.outputDir().resolve("events.ndjson");
             Files.deleteIfExists(journalPath);
 
-            RunResult result = run(
+            ExecutedRun executed = run(
                     options, compilation, faultProviders, connectorContext,
                     expressionContext, journalPath, scenario, extensionPolicy);
+            RunResult result = executed.result();
 
             ReportWriter.writeAll(
-                    options.formats(), renderers, loadEvents(journalPath), options.outputDir());
+                    options.formats(), renderers, executed.events(), options.outputDir());
 
             System.out.printf("%nResult: %s — %d nodes, %d passed, %d failed (%dms)%n",
                     result.status(), result.totalNodes(),
@@ -148,10 +149,12 @@ public class TestCommand implements Command {
         } catch (CliException e) {
             throw e;
         } catch (Exception e) {
-            System.err.println("Runner error: " + e.getMessage());
+            System.err.println("Runner error; provider details withheld by export policy");
             return FaultoraCli.EXIT_RUNNER_FAILURE;
         }
     }
+
+    private record ExecutedRun(RunResult result, List<RunEvent> events) { }
 
     /**
      * Execute the compiled plan.
@@ -161,7 +164,7 @@ public class TestCommand implements Command {
      * may reach and what may be broken, so they are the operator's choice, not
      * the classpath's.
      */
-    private RunResult run(
+    private ExecutedRun run(
             TestOptions options,
             PlanCompilationResult compilation,
             Map<String, FaultProvider> faultProviders,
@@ -179,13 +182,15 @@ public class TestCommand implements Command {
                 compilation.plan(), faultProviders, extensionPolicy, options.allowPrivate());
              RunJournal journal = new RunJournal(journalPath, true)) {
             System.out.println("Running scenario: " + scenario.metadata().name());
-            System.out.println("Target: " + options.targetUrl());
+            System.out.println("Target: configured for this run");
             System.out.println("Seed: " + options.seed());
             System.out.println();
 
-            return executeCancellably(
+            RunResult result = executeCancellably(
                     environment.engine(), compilation, journal,
                     expressionContext, connectorContext);
+            result = JournalWriter.closeJournal(journal, result);
+            return new ExecutedRun(result, journal.events());
         }
     }
 
@@ -296,19 +301,6 @@ public class TestCommand implements Command {
             }
         }
         return resolved;
-    }
-
-    private List<RunEvent> loadEvents(Path journalPath) throws IOException {
-        List<RunEvent> events = new ArrayList<>();
-        try (var reader = Files.newBufferedReader(journalPath)) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (!line.isBlank()) {
-                    events.add(MAPPER.readValue(line, RunEvent.class));
-                }
-            }
-        }
-        return events;
     }
 
     private void printHelp() {

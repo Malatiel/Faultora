@@ -16,9 +16,10 @@ import java.util.Map;
 /**
  * Renders the requested reports from the run journal.
  * <p>
- * Reports are derived artifacts: they are produced from the recorded events
- * after the run, never from live engine state, so a report can always be
- * regenerated from the journal alone.
+ * Reports are derived artifacts, produced from the run's event snapshot.
+ * Normally it matches the durable journal; after a write failure it also
+ * retains events that could not reach disk, including the infrastructure
+ * failure. Such partial reports cannot be regenerated from the damaged file.
  */
 final class ReportWriter {
 

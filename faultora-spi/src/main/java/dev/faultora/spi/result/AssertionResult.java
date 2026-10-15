@@ -4,10 +4,13 @@ import java.util.Map;
 
 /**
  * Result of evaluating an assertion against collected evidence.
+ * Provider diagnostics may contain values authorized for in-memory computation.
+ * Apply {@link dev.faultora.spi.evidence.EvidenceExport#assertion(AssertionResult)}
+ * before journaling, reporting, or otherwise exporting a provider result.
  *
  * @param outcome    assertion outcome
- * @param message    human-readable message (sanitized, no secrets)
- * @param details    additional structured details
+ * @param message    provider's human-readable diagnostic
+ * @param details    provider's structured comparison details, internal until projected
  */
 public record AssertionResult(
         Outcome outcome,

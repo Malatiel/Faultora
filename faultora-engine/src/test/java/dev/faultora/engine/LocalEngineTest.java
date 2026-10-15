@@ -1625,7 +1625,8 @@ class LocalEngineTest {
                 result.nodeResults().get(new NodeId("expects-a-ghost"));
         assertThat(assertion.status()).isEqualTo(RunResult.Status.FAILED);
         assertThat(assertion.error().message())
-                .contains("expected", "steps.never-bound.status", "Nothing is bound");
+                .contains("Cannot resolve this assertion's parameters", "input 'expected'")
+                .doesNotContain("steps.never-bound.status");
     }
 
     @Test
@@ -1658,8 +1659,9 @@ class LocalEngineTest {
                 result.nodeResults().get(new NodeId("nested-ghost"));
         assertThat(assertion.status()).isEqualTo(RunResult.Status.FAILED);
         assertThat(assertion.error().message())
-                .as("the message names where the template sits")
-                .contains("match.id", "Nothing is bound");
+                .as("runtime diagnostics retain parameter locations without their expressions")
+                .contains("Cannot resolve this assertion's parameters", "input 'match.id'")
+                .doesNotContain("steps.never-bound.body.id");
     }
 
     @Test

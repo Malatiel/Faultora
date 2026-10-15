@@ -155,7 +155,17 @@ public final class EvidenceCapture {
                             ? REDACTED_MARKER : value);
             redacted.add(copy);
         }
-        return new TableEvidence(columns, redacted, truncated, false);
+        return new TableEvidence(columns, redacted, truncated, false, redactedColumns);
+    }
+
+    /**
+     * Full-document assertions must not reason about a truncated prefix or a redaction marker.
+     * Redaction is conservative even when a named path was absent: expressions may derive
+     * values from the whole document, so a path-prefix comparison is not sufficient.
+     */
+    public static boolean complete(byte[] original, byte[] kept, EvidencePolicy policy) {
+        return original != null && kept != null && effective(policy).redactPaths().isEmpty()
+                && Arrays.equals(original, kept);
     }
 
     /** The first segment of each redact path, lowercased. */

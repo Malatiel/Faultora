@@ -31,6 +31,16 @@ public interface EvidenceView {
      */
     Optional<com.fasterxml.jackson.databind.JsonNode> responseJson();
 
+    /** Whether body-based assertions see the complete, unredacted document. */
+    default boolean bodyComplete() {
+        return true;
+    }
+
+    /** Whether absence of this header is evidence of absence, rather than policy withholding. */
+    default boolean headerReadable(String name) {
+        return true;
+    }
+
     /**
      * Get the elapsed duration of the operation in milliseconds.
      */

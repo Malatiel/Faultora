@@ -4,6 +4,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.Locale;
 
 /**
  * The rows an observation returned.
@@ -31,12 +33,14 @@ import java.util.Map;
  *                       result did
  * @param valuesWithheld whether the evidence policy kept the counts and
  *                       withheld the values
+ * @param redactedColumns lowercased column names whose values were replaced by policy
  */
 public record TableEvidence(
         List<String> columns,
         List<Map<String, Object>> rows,
         boolean truncated,
-        boolean valuesWithheld
+        boolean valuesWithheld,
+        Set<String> redactedColumns
 ) {
     /** Protocol-evidence key under which observed rows are published. */
     public static final String OBSERVED = "rows";
@@ -53,6 +57,18 @@ public record TableEvidence(
     public TableEvidence {
         columns = columns == null ? List.of() : List.copyOf(columns);
         rows = rows == null ? List.of() : copyRows(rows);
+        redactedColumns = redactedColumns == null ? Set.of() : redactedColumns.stream()
+                .map(name -> name.toLowerCase(Locale.ROOT)).collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
+
+    /** Compatibility constructor for complete or wholly withheld rows. */
+    public TableEvidence(List<String> columns, List<Map<String, Object>> rows,
+            boolean truncated, boolean valuesWithheld) {
+        this(columns, rows, truncated, valuesWithheld, Set.of());
+    }
+
+    public boolean columnReadable(String name) {
+        return !valuesWithheld && !redactedColumns.contains(name.toLowerCase(Locale.ROOT));
     }
 
     /** Rows whose values the policy permitted keeping. */

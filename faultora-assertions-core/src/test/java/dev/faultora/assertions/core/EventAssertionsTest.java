@@ -200,7 +200,7 @@ class EventAssertionsTest {
                 .satisfies(result -> {
                     assertThat(result.outcome())
                             .isEqualTo(AssertionResult.Outcome.INDETERMINATE);
-                    assertThat(result.message()).contains("No headers were captured");
+                    assertThat(result.message()).contains("withheld the requested message header");
                 });
         assertThat(unique.evaluate("event-unique",
                 Map.of("by", "header:correlation-id"), evidence, CONTEXT).outcome())
@@ -218,7 +218,7 @@ class EventAssertionsTest {
                 evidence, CONTEXT);
 
         assertThat(result.outcome()).isEqualTo(AssertionResult.Outcome.INDETERMINATE);
-        assertThat(result.message()).contains("payload was not captured");
+        assertThat(result.message()).contains("payload was withheld, redacted or truncated");
     }
 
     @Test

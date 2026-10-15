@@ -115,8 +115,9 @@ public final class JdbcConnector implements Connector {
                 java.util.Arrays.fill(password, '\0');
             }
         }
+        Connection connection = null;
         try {
-            Connection connection = DriverManager.getConnection(url.value(), properties);
+            connection = DriverManager.getConnection(url.value(), properties);
             // A driver that can refuse writes on a read-only connection now
             // will. One that cannot leaves the statement check and the grant.
             connection.setReadOnly(true);
@@ -131,8 +132,11 @@ public final class JdbcConnector implements Connector {
             connection.setAutoCommit(false);
             return connection;
         } catch (SQLException unreachable) {
-            throw new DestinationPolicyViolation(
-                    "Cannot connect to " + url.redacted() + ": " + unreachable.getMessage());
+            boolean closeFailed = false;
+            if (connection != null) {
+                try { connection.close(); } catch (SQLException closeFailure) { closeFailed = true; }
+            }
+            throw JdbcErrors.unavailable(unreachable, closeFailed);
         }
     }
 
@@ -211,6 +215,8 @@ public final class JdbcConnector implements Connector {
             return OperationResult.failure(new NormalizedError(
                     NormalizedError.ErrorCategory.VALIDATION,
                     "OBSERVATION_REFUSED", refused.getMessage(), false, Map.of()), 0);
+        } catch (JdbcErrors.ConnectionFailure unreachable) {
+            return OperationResult.failure(unreachable.error(), 0);
         } catch (DestinationPolicyViolation unreachable) {
             return OperationResult.failure(new NormalizedError(
                     NormalizedError.ErrorCategory.NETWORK,

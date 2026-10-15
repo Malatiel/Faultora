@@ -113,6 +113,19 @@ class DispatchedRunTest {
     }
 
     @Test
+    void failureAfterStartupDoesNotExportCallbackExceptionText() {
+        String marker = "SYNTHETIC_PRIVATE_RUNNER_VALUE";
+        DispatchedRun.Outcome outcome = runner().execute(
+                dispatchOf("run-private-failure", scenarioOfWaits(1, "1ms"),
+                        new Lease(System.currentTimeMillis(), 60_000, 10_000)),
+                Map.of(), EXTENSIONS, (lease, journal) -> { throw new IllegalStateException(marker); });
+        assertThat(outcome.didRun()).isTrue();
+        assertThat(outcome.completed()).isFalse();
+        assertThat(outcome.journalPath()).exists();
+        assertThat(outcome.failure()).contains("stopped part-way").doesNotContain(marker);
+    }
+
+    @Test
     void aDispatchedRunCompilesAndExecutesHere() throws Exception {
         String scenario = scenarioOfWaits(3, "20ms");
 

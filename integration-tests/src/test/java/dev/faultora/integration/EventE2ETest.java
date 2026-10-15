@@ -1,13 +1,16 @@
 package dev.faultora.integration;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.faultora.cli.FaultoraCli;
 import dev.faultora.examples.payment.events.PaymentWorker;
+import dev.faultora.model.events.RunEvent;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.condition.EnabledIf;
 import org.testcontainers.DockerClientFactory;
 import org.testcontainers.kafka.KafkaContainer;
@@ -21,6 +24,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.ArrayList;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -42,12 +46,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 @EnabledIf("dockerIsAvailable")
 class EventE2ETest {
 
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
     /** The broker image the disposable Kafka runs. */
     private static final DockerImageName KAFKA_IMAGE =
             DockerImageName.parse("apache/kafka:3.8.0");
 
     private KafkaContainer kafka;
     private PaymentWorker worker;
+    @TempDir Path replayDirectory;
 
     @SuppressWarnings("unused")
     static boolean dockerIsAvailable() {
@@ -211,20 +218,57 @@ class EventE2ETest {
         assertThat(exit).as(this::whatTheRunSaid).isEqualTo(FaultoraCli.EXIT_TEST_FAILURE);
         String events = Files.readString(outputDir.resolve("events.ndjson"));
         assertThat(events).contains("one-effect-per-command");
-        assertThat(events).contains("observed 2");
+        List<RunEvent> journal = readEvents(outputDir);
+        assertThat(journal.stream().filter(RunEvent.MessagesObserved.class::isInstance)
+                .map(RunEvent.MessagesObserved.class::cast)
+                .filter(observed -> observed.nodeId().value().equals("read-settlements")))
+                .singleElement().satisfies(observed -> assertThat(observed.matched()).isEqualTo(2));
+        assertThat(journal.stream().filter(RunEvent.AssertionEvaluated.class::isInstance)
+                .map(RunEvent.AssertionEvaluated.class::cast)
+                .filter(assertion -> assertion.outcome().equals("FAIL"))
+                .map(assertion -> assertion.nodeId().value()))
+                .containsExactly("one-effect-per-command", "no-payment-settled-twice");
     }
 
     @Test
     void theSameSeedReplaysTheSameExchange() throws Exception {
         startBroker(true);
-        Path first = Path.of(System.getProperty("java.io.tmpdir"), "faultora-e2e-events-1");
+        Path first = replayDirectory.resolve("first");
 
         assertThat(run(first, "77003")).as(this::whatTheRunSaid)
                 .isEqualTo(FaultoraCli.EXIT_PASS);
 
-        // The payment id is derived from the seed, so the run names the same
-        // exchange every time — which is what makes a failure investigable.
-        assertThat(Files.readString(first.resolve("events.ndjson")))
-                .contains("pay-77003");
+        List<String> firstDigests = publishedDigests(first);
+        assertThat(firstDigests).hasSize(2).allMatch(digest -> digest.matches("sha256:[a-f0-9]{64}"));
+        assertThat(firstDigests.get(0)).isEqualTo(firstDigests.get(1));
+        assertThat(worker.settledCount()).isEqualTo(1);
+
+        // Replay with fresh broker and worker state; idempotence from the first
+        // exchange must not prevent the second exchange from producing evidence.
+        stopEverything();
+        noLeftovers();
+        startBroker(true);
+        Path second = replayDirectory.resolve("second");
+        assertThat(run(second, "77003")).as(this::whatTheRunSaid).isEqualTo(FaultoraCli.EXIT_PASS);
+        assertThat(publishedDigests(second)).containsExactlyElementsOf(firstDigests);
+        assertThat(worker.settledCount()).isEqualTo(1);
+        for (Path output : List.of(first, second)) {
+            assertThat(Files.readString(output.resolve("events.ndjson"))).doesNotContain("pay-77003");
+            assertThat(readEvents(output).stream().filter(RunEvent.MessagePublished.class::isInstance)
+                    .map(RunEvent.MessagePublished.class::cast)).allSatisfy(published -> assertThat(published.key()).isNull());
+        }
+    }
+
+    private static List<String> publishedDigests(Path outputDir) throws IOException {
+        return readEvents(outputDir).stream().filter(RunEvent.MessagePublished.class::isInstance)
+                .map(RunEvent.MessagePublished.class::cast).map(RunEvent.MessagePublished::digest).toList();
+    }
+
+    private static List<RunEvent> readEvents(Path outputDir) throws IOException {
+        List<RunEvent> events = new ArrayList<>();
+        for (String line : Files.readAllLines(outputDir.resolve("events.ndjson"))) {
+            if (!line.isBlank()) { events.add(MAPPER.readValue(line, RunEvent.class)); }
+        }
+        return List.copyOf(events);
     }
 }

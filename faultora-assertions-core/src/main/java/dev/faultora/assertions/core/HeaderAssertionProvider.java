@@ -7,6 +7,7 @@ import dev.faultora.spi.result.AssertionResult;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Locale;
 
 /**
  * Asserts response headers.
@@ -30,10 +31,14 @@ public class HeaderAssertionProvider implements AssertionProvider {
         if (headerName == null || headerName.isBlank()) {
             return AssertionResult.indeterminate("Header name is required");
         }
+        if (!evidence.headerReadable(headerName)) {
+            return AssertionResult.indeterminate("The evidence policy withheld the requested header");
+        }
 
         Map<String, List<String>> headers = evidence.responseHeaders();
-        String lowerName = headerName.toLowerCase();
-        List<String> values = headers.get(lowerName);
+        List<String> values = headers.entrySet().stream()
+                .filter(entry -> entry.getKey().toLowerCase(Locale.ROOT).equals(headerName.toLowerCase(Locale.ROOT)))
+                .map(Map.Entry::getValue).findFirst().orElse(null);
 
         // Existence check
         if (params.containsKey("exists")) {

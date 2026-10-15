@@ -24,6 +24,7 @@ public class NodeEvidence implements EvidenceView {
     private int statusCode = -1;
     private Map<String, List<String>> headers = Map.of();
     private byte[] body;
+    private boolean bodyComplete;
     private JsonNode responseJson;
     private long durationMs;
     private NormalizedError error;
@@ -52,16 +53,17 @@ public class NodeEvidence implements EvidenceView {
      * @param contentType MIME type from the response headers, may be null
      */
     public void body(byte[] body, String contentType) {
-        keep(EvidenceCapture.content(body, contentType, evidencePolicy));
+        keep(body, EvidenceCapture.content(body, contentType, evidencePolicy));
     }
 
     public void body(byte[] body) {
-        keep(EvidenceCapture.content(body, evidencePolicy));
+        keep(body, EvidenceCapture.content(body, evidencePolicy));
     }
 
     /** Hold what the policy permitted, parsed when it happens to be JSON. */
-    private void keep(byte[] permitted) {
+    private void keep(byte[] original, byte[] permitted) {
         this.body = permitted;
+        this.bodyComplete = EvidenceCapture.complete(original, permitted, evidencePolicy);
         if (permitted == null) {
             this.responseJson = null;
             return;
@@ -106,7 +108,18 @@ public class NodeEvidence implements EvidenceView {
 
     @Override
     public Optional<JsonNode> responseJson() {
-        return responseJson != null ? Optional.of(responseJson) : Optional.empty();
+        return responseJson != null ? Optional.of(responseJson.deepCopy()) : Optional.empty();
+    }
+
+    @Override
+    public boolean bodyComplete() {
+        return bodyComplete;
+    }
+
+    @Override
+    public boolean headerReadable(String name) {
+        return evidencePolicy.captureHeaders()
+                && !evidencePolicy.headerDenylist().contains(name.toLowerCase(Locale.ROOT));
     }
 
     @Override

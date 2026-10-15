@@ -1,6 +1,7 @@
 package dev.faultora.engine.exec;
 
 import dev.faultora.engine.evidence.NodeEvidence;
+import dev.faultora.engine.run.RunResult;
 import dev.faultora.engine.journal.RunJournal;
 import dev.faultora.model.catalog.NormalizedError;
 import dev.faultora.model.events.RunEvent;
@@ -15,13 +16,16 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * The only place that turns execution facts into run events.
  * <p>
  * Executors describe what happened; this writer owns the event shapes, the
- * run identity, and the fact that journal I/O must never fail a run. Keeping
+ * run identity, and recording mandatory journal I/O failures. Keeping
  * that in one class is what lets the event schema evolve without touching the
  * executors.
  */
@@ -31,6 +35,7 @@ public final class JournalWriter {
 
     private final RunJournal journal;
     private final RunId runId;
+    private final AtomicReference<String> failure = new AtomicReference<>();
 
     public JournalWriter(RunJournal journal, RunId runId) {
         this.journal = journal;
@@ -173,7 +178,7 @@ public final class JournalWriter {
     public void messagePublished(NodeId nodeId, MessageEvidence message) {
         append(new RunEvent.MessagePublished(
                 "MESSAGE_PUBLISHED", now(), runId, nodeId, message.topic(),
-                message.partition(), message.offset(), message.key(), message.digest()));
+                message.partition(), message.offset(), null, message.digest()));
     }
 
     /** What an observation window contained, and how much of it the step claimed. */
@@ -206,7 +211,8 @@ public final class JournalWriter {
         try {
             journal.flush();
         } catch (IOException e) {
-            LOG.warn("Failed to flush journal: {}", e.getMessage());
+            failure.compareAndSet(null, "flush");
+            LOG.warn("Failed to flush run journal");
         }
     }
 
@@ -214,8 +220,41 @@ public final class JournalWriter {
         try {
             journal.append(event);
         } catch (IOException e) {
-            LOG.warn("Failed to emit event: {}", e.getMessage());
+            failure.compareAndSet(null, "append");
+            LOG.warn("Failed to append run journal event");
         }
+    }
+
+    public boolean failed() { return failure.get() != null; }
+
+    /** Owners finalize storage before publishing the outcome, preserving partial events after a close failure. */
+    public static RunResult closeJournal(RunJournal journal, RunResult result) {
+        try {
+            journal.close();
+            return result;
+        } catch (IOException closeFailure) {
+            LOG.warn("Failed to close run journal");
+            if (result.error() != null && "JOURNAL_WRITE_FAILED".equals(result.error().code())) { return result; }
+            Map<String, Object> fields = new LinkedHashMap<>();
+            fields.put("journalOperation", "close");
+            if (result.error() != null && result.error().metadata() != null) {
+                for (String key : List.of("rollbackFailures", "unconfirmedRollbacks")) {
+                    if (result.error().metadata().get(key) instanceof Number count) { fields.put(key, count.intValue()); }
+                }
+            }
+            NormalizedError error = new NormalizedError(NormalizedError.ErrorCategory.INTERNAL, "JOURNAL_WRITE_FAILED",
+                    "Mandatory run journal could not be closed", false, Map.copyOf(fields));
+            new JournalWriter(journal, result.runId()).runFailed(error, result.durationMs());
+            return new RunResult(result.runId(), RunResult.Status.ERROR, result.totalNodes(),
+                    result.passedAssertions(), result.failedAssertions(), result.nodeResults(), result.durationMs(), error);
+        }
+    }
+
+    public NormalizedError failureError(int rollbackFailures, int unconfirmedRollbacks) {
+        return new NormalizedError(NormalizedError.ErrorCategory.INTERNAL, "JOURNAL_WRITE_FAILED",
+                "Mandatory run journal could not be written", false,
+                Map.of("journalOperation", failure.get(), "rollbackFailures", rollbackFailures,
+                        "unconfirmedRollbacks", unconfirmedRollbacks));
     }
 
     private static long now() {

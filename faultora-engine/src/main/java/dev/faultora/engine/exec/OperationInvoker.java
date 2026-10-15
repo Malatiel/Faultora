@@ -7,6 +7,7 @@ import dev.faultora.model.catalog.TargetDefinition;
 import dev.faultora.spi.contract.Connector;
 import dev.faultora.spi.context.ConnectorContext;
 import dev.faultora.spi.result.OperationResult;
+import dev.faultora.spi.evidence.EvidenceExport;
 
 import java.util.List;
 import java.util.Map;
@@ -94,7 +95,10 @@ public final class OperationInvoker {
             }
             OperationResult result = connector.execute(prepared, node.operation(), inputs, operationContext);
             halt = halt(context);
-            return halt == null ? result : OperationResult.failure(halt.error(), result.durationMs());
+            if (halt != null) { return OperationResult.failure(halt.error(), result.durationMs()); }
+            return result.error() == null ? result : new OperationResult(
+                    result.statusCode(), result.headers(), result.body(), result.durationMs(),
+                    EvidenceExport.connectorError(result.error()), result.protocolEvidence(), result.evidenceDigests());
         } finally {
             connector.release(prepared);
         }
@@ -148,14 +152,16 @@ public final class OperationInvoker {
         evidence.headers(result.headers());
         String contentType = null;
         if (result.headers() != null) {
-            List<String> values = result.headers().get("content-type");
+            List<String> values = result.headers().entrySet().stream()
+                    .filter(entry -> "content-type".equalsIgnoreCase(entry.getKey()))
+                    .map(Map.Entry::getValue).findFirst().orElse(null);
             if (values != null && !values.isEmpty()) {
                 contentType = values.get(0);
             }
         }
         evidence.body(result.body(), contentType);
         evidence.durationMs(result.durationMs());
-        evidence.error(result.error());
+        evidence.error(EvidenceExport.connectorError(result.error()));
         // Whatever the protocol contributed beyond a response: broker offsets,
         // observed messages, anything a later protocol adds. The engine does
         // not interpret it; assertions and later steps do.

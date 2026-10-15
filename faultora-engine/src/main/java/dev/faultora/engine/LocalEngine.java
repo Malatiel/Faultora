@@ -141,6 +141,7 @@ public class LocalEngine {
         boolean deadlineExceeded = false;
         try {
             for (PlanNode node : nodes) {
+                if (writer.failed()) { break; }
                 if (nodeContext.cancelled()) {
                     cancellation.set(true);
                     break;
@@ -211,7 +212,9 @@ public class LocalEngine {
             }
         }
 
-        return finish(plan, writer, nodeResults, tally, startTime, cancellation, deadlineExceeded);
+        FaultSession.RollbackOutcome rollbackOutcome = faultSession.outcome();
+        return finish(plan, writer, nodeResults, tally, startTime, cancellation, deadlineExceeded,
+                rollbackOutcome.failures(), rollbackOutcome.unconfirmed());
     }
 
     /**
@@ -284,7 +287,7 @@ public class LocalEngine {
         } catch (RuntimeException unexpected) {
             NormalizedError error = new NormalizedError(
                     NormalizedError.ErrorCategory.INTERNAL, "GROUP_EXECUTION_ERROR",
-                    "Group execution failed: " + unexpected, false, Map.of());
+                    "Group execution failed; provider details withheld by export policy", false, Map.of());
             context.journal().nodeFailed(group.nodeId(), error, 0);
             return new GroupOutcome(new RunResult.NodeResult(
                     group.nodeId(), NodeResults.typeOf(group), RunResult.Status.FAILED,
@@ -343,7 +346,9 @@ public class LocalEngine {
             Tally tally,
             long startTime,
             AtomicBoolean cancellation,
-            boolean deadlineExceeded
+            boolean deadlineExceeded,
+            int rollbackFailures,
+            int unconfirmedRollbacks
     ) {
         long totalDuration = System.currentTimeMillis() - startTime;
 
@@ -357,7 +362,15 @@ public class LocalEngine {
         }
 
         NormalizedError runError = null;
-        if (status == RunResult.Status.PASSED) {
+        if (writer.failed() || rollbackFailures > 0 || unconfirmedRollbacks > 0) {
+            status = RunResult.Status.ERROR;
+            runError = writer.failed() ? writer.failureError(rollbackFailures, unconfirmedRollbacks)
+                    : new NormalizedError(NormalizedError.ErrorCategory.INTERNAL,
+                            rollbackFailures > 0 ? "FAULT_ROLLBACK_FAILED" : "FAULT_ROLLBACK_UNCONFIRMED",
+                            "Fault rollback did not complete successfully", false,
+                            Map.of("rollbackFailures", rollbackFailures, "unconfirmedRollbacks", unconfirmedRollbacks));
+            writer.runFailed(runError, totalDuration);
+        } else if (status == RunResult.Status.PASSED) {
             writer.runCompleted(nodeResults.size(), tally.passedAssertions(),
                     tally.failedAssertions(), totalDuration);
         } else {
@@ -388,6 +401,12 @@ public class LocalEngine {
         }
 
         writer.flush();
+        if (writer.failed() && (runError == null || !"JOURNAL_WRITE_FAILED".equals(runError.code()))) {
+            status = RunResult.Status.ERROR;
+            runError = writer.failureError(rollbackFailures, unconfirmedRollbacks);
+            writer.runFailed(runError, totalDuration);
+            writer.flush();
+        }
 
         return new RunResult(
                 plan.runId(), status, nodeResults.size(),

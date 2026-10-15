@@ -70,7 +70,10 @@ final class Messages {
                 topic, partition, offset, timestampMs, key,
                 permittedHeaders(headers, policy),
                 parsed(kept),
-                payload == null ? null : ContentDigest.sha256Uri(payload));
+                payload == null ? null : ContentDigest.sha256Uri(payload),
+                EvidenceCapture.complete(payload, kept, policy),
+                policy != null && policy.captureHeaders(),
+                policy == null ? EvidencePolicy.MINIMAL.headerDenylist() : policy.headerDenylist());
     }
 
     /**
