@@ -77,7 +77,7 @@ public final class ExtensionRegistry {
             OpenApiImporter.class, AsyncApiImporter.class, ObservationImporter.class);
 
     private static final String RUNTIME_ORIGIN = originOf(ExtensionRegistry.class);
-    private static final boolean MERGED_RELEASE = mergedRelease();
+    private static final RuntimeLayout RUNTIME_LAYOUT = runtimeLayout();
 
     private ExtensionRegistry() {
     }
@@ -122,6 +122,7 @@ public final class ExtensionRegistry {
 
     /** Stop before a run starts when the policy describes something imaginary. */
     static void refuseWhatIsNotEnforced(ExtensionPolicy policy) {
+        requireSupportedRuntime();
         List<String> requests = notYetEnforced(policy);
         if (!requests.isEmpty()) {
             throw new UnenforceablePolicy(requests);
@@ -130,6 +131,7 @@ public final class ExtensionRegistry {
 
     /** Assertion providers, keyed by the assertion type they evaluate. */
     public static Map<String, AssertionProvider> assertionProviders(ExtensionPolicy policy) {
+        requireSupportedRuntime();
         Map<String, AssertionProvider> providers = new LinkedHashMap<>();
         ServiceLoader.load(AssertionProvider.class).stream()
                 .filter(candidate -> isAllowed(candidate.type(), policy, "assertion provider"))
@@ -140,6 +142,7 @@ public final class ExtensionRegistry {
 
     /** Report renderers, keyed by the {@code --format} value that selects them. */
     public static Map<String, ReportRenderer> renderers(ExtensionPolicy policy) {
+        requireSupportedRuntime();
         Map<String, ReportRenderer> renderers = new LinkedHashMap<>();
         ServiceLoader.load(ReportRenderer.class).stream()
                 .filter(candidate -> isAllowed(candidate.type(), policy, "report renderer"))
@@ -221,28 +224,39 @@ public final class ExtensionRegistry {
     private static boolean isBuiltIn(Class<?> extensionType) {
         String origin = originOf(extensionType);
         return BUILT_INS.contains(extensionType) && origin != null && RUNTIME_ORIGIN != null
-                && (!MERGED_RELEASE || RUNTIME_ORIGIN.equals(origin));
+                && (!RUNTIME_LAYOUT.merged() || RUNTIME_ORIGIN.equals(origin));
     }
 
     /** Inspect our own artifact; a copied SPI class cannot choose this trust mode. */
-    private static boolean mergedRelease() {
+    private static RuntimeLayout runtimeLayout() {
         if (RUNTIME_ORIGIN == null) {
-            return false;
+            return new RuntimeLayout(false, "Cannot verify the runtime artifact's origin");
         }
-        URI origin = URI.create(RUNTIME_ORIGIN);
-        if (!"file".equals(origin.getScheme())) {
-            throw new IllegalStateException("Cannot verify the runtime artifact's origin");
+        try {
+            URI origin = URI.create(RUNTIME_ORIGIN);
+            if (!"file".equals(origin.getScheme())) {
+                return new RuntimeLayout(false, "Cannot verify the runtime artifact's origin");
+            }
+            Path artifact = Path.of(origin);
+            String spiClass = "dev/faultora/spi/contract/AssertionProvider.class";
+            if (Files.isDirectory(artifact)) {
+                return new RuntimeLayout(Files.isRegularFile(artifact.resolve(spiClass)), null);
+            }
+            try (JarFile shipped = new JarFile(artifact.toFile())) {
+                return new RuntimeLayout(shipped.getJarEntry(spiClass) != null, null);
+            }
+        } catch (IOException | IllegalArgumentException | SecurityException unreadable) {
+            return new RuntimeLayout(false, "Cannot verify the runtime artifact's contents");
         }
-        Path artifact = Path.of(origin);
-        String spiClass = "dev/faultora/spi/contract/AssertionProvider.class";
-        if (Files.isDirectory(artifact)) {
-            return Files.isRegularFile(artifact.resolve(spiClass));
+    }
+
+    private static void requireSupportedRuntime() {
+        if (RUNTIME_LAYOUT.refusal() != null) {
+            throw new IllegalStateException(RUNTIME_LAYOUT.refusal());
         }
-        try (JarFile shipped = new JarFile(artifact.toFile())) {
-            return shipped.getJarEntry(spiClass) != null;
-        } catch (IOException unreadable) {
-            throw new IllegalStateException("Cannot verify the runtime artifact's contents", unreadable);
-        }
+    }
+
+    private record RuntimeLayout(boolean merged, String refusal) {
     }
 
     /** A URL string comparison avoids DNS resolution while checking origins. */
@@ -300,6 +314,7 @@ public final class ExtensionRegistry {
      * after the importer has read it.
      */
     public static SourceImporter importerFor(String sourceFamily, ExtensionPolicy policy) {
+        requireSupportedRuntime();
         return ServiceLoader.load(SourceImporter.class).stream()
                 .filter(candidate -> isAllowed(candidate.type(), policy, "source importer"))
                 .map(ServiceLoader.Provider::get)
@@ -311,6 +326,7 @@ public final class ExtensionRegistry {
 
     /** Installed importers admitted by the same checks used when importing. */
     public static List<SourceImporter> importers(ExtensionPolicy policy) {
+        requireSupportedRuntime();
         return ServiceLoader.load(SourceImporter.class).stream()
                 .filter(candidate -> isAllowed(candidate.type(), policy, "source importer"))
                 .map(ServiceLoader.Provider::get).toList();
