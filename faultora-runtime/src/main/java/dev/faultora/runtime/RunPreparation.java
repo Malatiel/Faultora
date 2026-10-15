@@ -2,6 +2,8 @@ package dev.faultora.runtime;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.cfg.JsonNodeFeature;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import dev.faultora.engine.plan.PlanCompilationResult;
 import dev.faultora.engine.plan.PlanCompiler;
 import dev.faultora.model.catalog.ApiCatalog;
@@ -19,7 +21,11 @@ import java.util.List;
 
 /** Prepares a run without opening connectors, resolving secrets or activating faults. */
 public final class RunPreparation {
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final String CATALOG_DIGEST_DOMAIN = "faultora.catalog.v1\n";
+    private static final ObjectMapper MAPPER = JsonMapper.builder()
+            .enable(JsonNodeFeature.WRITE_PROPERTIES_SORTED)
+            .disable(JsonNodeFeature.STRIP_TRAILING_BIGDECIMAL_ZEROES)
+            .build();
 
     private RunPreparation() { }
 
@@ -70,9 +76,10 @@ public final class RunPreparation {
         return new Result(scenario, catalog, diagnostics, compilation);
     }
 
-    private static String digest(ApiCatalog catalog) {
+    static String digest(ApiCatalog catalog) {
         try {
-            return ContentDigest.sha256Uri(MAPPER.writeValueAsString(catalog));
+            String canonical = MAPPER.writeValueAsString(MAPPER.valueToTree(catalog));
+            return ContentDigest.sha256Uri(CATALOG_DIGEST_DOMAIN + canonical);
         } catch (JsonProcessingException impossible) {
             throw new IllegalStateException("Catalog cannot be fingerprinted", impossible);
         }
