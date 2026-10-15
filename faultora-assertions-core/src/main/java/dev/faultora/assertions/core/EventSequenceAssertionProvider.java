@@ -72,16 +72,16 @@ public class EventSequenceAssertionProvider implements AssertionProvider {
     }
 
     /**
-     * The first locator the sequence names that no observed message can answer,
-     * or null when every one of them is readable.
+     * The first locator unreadable in any observed message, or null when the
+     * complete sequence can be checked without treating hidden values as absent.
      */
     private String unreadableLocator(
             List<Map<String, String>> expected, List<MessageEvidence> messages) {
         for (Map<String, String> clauses : expected) {
             for (String locator : clauses.keySet()) {
-                boolean readableSomewhere = messages.stream()
-                        .anyMatch(message -> ObservedMessages.isReadable(message, locator));
-                if (!messages.isEmpty() && !readableSomewhere) {
+                boolean unreadableSomewhere = messages.stream()
+                        .anyMatch(message -> !ObservedMessages.isReadable(message, locator));
+                if (unreadableSomewhere) {
                     return locator;
                 }
             }

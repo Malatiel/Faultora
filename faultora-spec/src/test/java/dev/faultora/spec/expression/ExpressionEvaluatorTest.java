@@ -357,6 +357,27 @@ class ExpressionEvaluatorTest {
     }
 
     @Test
+    void exportedResolutionDiagnosticRetainsInputLocationWithoutItsTemplateOrValues() {
+        String marker = "SYNTHETIC_PRIVATE_EXPRESSION_VALUE";
+        assertThatThrownBy(() -> evaluator.resolveInputs(Map.of("body",
+                Map.of("items", java.util.List.of(Map.of("reference", marker + "{{inputs.absent}}")))), context))
+                .isInstanceOfSatisfying(ExpressionEvaluationException.class, failure -> {
+                    assertThat(failure.diagnostic()).contains("body.items[0].reference").doesNotContain(marker, "inputs.absent");
+                });
+    }
+
+    @Test
+    void malformedDiagnosticLocationAndRawExceptionTextAreWithheld() {
+        String marker = "SYNTHETIC_PRIVATE_EXPRESSION_VALUE";
+        assertThatThrownBy(() -> evaluator.resolveInputs(Map.of("bad location '" + marker, "{{inputs.absent}}"), context))
+                .isInstanceOfSatisfying(ExpressionEvaluationException.class, failure -> {
+                    assertThat(failure.diagnostic()).isEqualTo("Expression could not be resolved");
+                });
+        assertThat(new ExpressionEvaluationException(marker, marker, new IllegalStateException(marker)).diagnostic())
+                .isEqualTo("Expression could not be resolved");
+    }
+
+    @Test
     void resolvePathHandlesPlainHyphens() {
         ObjectMapper mapper = new ObjectMapper();
         ObjectNode root = mapper.createObjectNode();

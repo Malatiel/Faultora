@@ -75,11 +75,9 @@ final class ObservedMessages {
      * missing a field, and an assertion that cannot see what it is checking
      * must say so rather than fail.
      * <p>
-     * Headers are the ambiguous case: a message that carried none and a policy
-     * that captured none look identical in the evidence. Erring towards
-     * unreadable is the safe side, because both outcomes fail the node — an
-     * assertion that could not be evaluated is not a silent pass — and only one
-     * of the two messages is accurate.
+     * Header capture and denials are explicit even when other headers survived.
+     * Legacy producers without provenance retain conservative empty-header
+     * semantics through the compatibility constructor of MessageEvidence.
      */
     static boolean isReadable(MessageEvidence message, String locator) {
         if (locator == null || locator.isBlank()) {
@@ -90,18 +88,16 @@ final class ObservedMessages {
             return true;
         }
         if (trimmed.startsWith(HEADER)) {
-            return !message.headers().isEmpty();
+            return message.headerReadable(trimmed.substring(HEADER.length()));
         }
-        return message.payload() != null;
+        return message.payload() != null && message.payloadComplete();
     }
 
     /** Why a locator could not be read, for an indeterminate verdict. */
     static String unreadable(String locator) {
         return locator != null && locator.trim().startsWith(HEADER)
-                ? "No headers were captured for this message, so '" + locator
-                        + "' cannot be read"
-                : "The message payload was not captured, so '" + locator
-                        + "' cannot be read";
+                ? "The evidence policy withheld the requested message header"
+                : "The message payload was withheld, redacted or truncated";
     }
 
     private static String field(JsonNode payload, String path) {

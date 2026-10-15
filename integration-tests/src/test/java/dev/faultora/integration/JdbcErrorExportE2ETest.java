@@ -5,7 +5,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.PrintWriter;
-import java.io.StringWriter;
+import java.io.PrintStream;
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.*;
@@ -73,13 +75,24 @@ class JdbcErrorExportE2ETest {
                             type: string
                             required: true
                     """);
-            StringWriter diagnostics = new StringWriter();
+            ByteArrayOutputStream diagnosticBytes = new ByteArrayOutputStream();
             Path output = directory.resolve("reports");
-            int exit = new FaultoraCli(new PrintWriter(diagnostics, true), new PrintWriter(diagnostics, true)).run(
+            PrintStream originalOut = System.out;
+            PrintStream originalErr = System.err;
+            int exit;
+            try (PrintStream capture = new PrintStream(diagnosticBytes, true, StandardCharsets.UTF_8)) {
+                System.setOut(capture);
+                System.setErr(capture);
+                exit = new FaultoraCli(new PrintWriter(capture, true), new PrintWriter(capture, true)).run(
                     new String[]{"test", "--scenario", scenario.toString(), "--observations", observations.toString(),
                             "--allow-private", "--seed", "42", "--format", "console,json,html,junit", "--output", output.toString()});
-            assertThat(exit).as(diagnostics::toString).isEqualTo(FaultoraCli.EXIT_TEST_FAILURE);
-            assertThat(diagnostics.toString()).doesNotContain(marker, "Cannot cast");
+            } finally {
+                System.setOut(originalOut);
+                System.setErr(originalErr);
+            }
+            String diagnostics = diagnosticBytes.toString(StandardCharsets.UTF_8);
+            assertThat(exit).as(diagnostics).isEqualTo(FaultoraCli.EXIT_TEST_FAILURE);
+            assertThat(diagnostics).contains("Result:", "OBSERVATION_FAILED").doesNotContain(marker, "Cannot cast");
             for (String file : java.util.List.of("events.ndjson", "report.json", "report.html", "report.xml")) {
                 assertThat(Files.readString(output.resolve(file))).as(file).doesNotContain(marker, "Cannot cast");
             }

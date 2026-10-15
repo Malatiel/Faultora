@@ -287,7 +287,7 @@ public class LocalEngine {
         } catch (RuntimeException unexpected) {
             NormalizedError error = new NormalizedError(
                     NormalizedError.ErrorCategory.INTERNAL, "GROUP_EXECUTION_ERROR",
-                    "Group execution failed: " + unexpected, false, Map.of());
+                    "Group execution failed; provider details withheld by export policy", false, Map.of());
             context.journal().nodeFailed(group.nodeId(), error, 0);
             return new GroupOutcome(new RunResult.NodeResult(
                     group.nodeId(), NodeResults.typeOf(group), RunResult.Status.FAILED,

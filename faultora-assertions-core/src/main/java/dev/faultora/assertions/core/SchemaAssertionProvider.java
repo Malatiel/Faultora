@@ -44,6 +44,9 @@ public class SchemaAssertionProvider implements AssertionProvider {
             EvidenceView evidence,
             AssertionContext context
     ) {
+        if (!evidence.bodyComplete()) {
+            return AssertionResult.indeterminate("The response body was withheld, redacted or truncated");
+        }
         if (context == null || context.schema() == null || context.schema().isEmpty()) {
             return AssertionResult.indeterminate(
                     "No response schema is declared for this step in the catalog");

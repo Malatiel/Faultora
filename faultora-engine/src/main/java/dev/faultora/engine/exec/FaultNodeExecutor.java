@@ -46,7 +46,7 @@ final class FaultNodeExecutor {
                     node.targetScope(), node.params(), node.durationMs());
         } catch (IllegalArgumentException rejected) {
             return Optional.of(NodeResults.failed(node,
-                    "Fault injection rejected: " + rejected.getMessage(),
+                    "Fault injection rejected; provider details withheld by export policy",
                     NormalizedError.ErrorCategory.VALIDATION, startedAtMs));
         }
         context.journal().faultInjected(fault);

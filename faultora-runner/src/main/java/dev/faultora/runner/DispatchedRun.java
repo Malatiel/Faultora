@@ -150,8 +150,7 @@ public final class DispatchedRun {
             // useful thing it produced.
             return Outcome.broke(
                     workingDirectory.resolve(dispatch.runId() + ".ndjson"),
-                    "run '" + dispatch.runId() + "' stopped part-way: "
-                            + broke.getMessage());
+                    "run stopped part-way; provider details withheld by export policy");
         }
     }
 

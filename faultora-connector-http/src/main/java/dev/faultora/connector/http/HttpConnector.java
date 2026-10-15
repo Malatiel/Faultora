@@ -354,7 +354,7 @@ public class HttpConnector implements Connector {
                     try {
                         response.close();
                     } catch (IOException closeFailure) {
-                        LOG.debug("Failed to close HTTP response: {}", closeFailure.getMessage());
+                        LOG.debug("Failed to close HTTP response");
                     }
                 }
             } finally {

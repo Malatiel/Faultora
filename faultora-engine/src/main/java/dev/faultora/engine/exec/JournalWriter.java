@@ -178,7 +178,7 @@ public final class JournalWriter {
     public void messagePublished(NodeId nodeId, MessageEvidence message) {
         append(new RunEvent.MessagePublished(
                 "MESSAGE_PUBLISHED", now(), runId, nodeId, message.topic(),
-                message.partition(), message.offset(), message.key(), message.digest()));
+                message.partition(), message.offset(), null, message.digest()));
     }
 
     /** What an observation window contained, and how much of it the step claimed. */

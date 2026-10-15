@@ -149,7 +149,7 @@ public class TestCommand implements Command {
         } catch (CliException e) {
             throw e;
         } catch (Exception e) {
-            System.err.println("Runner error: " + e.getMessage());
+            System.err.println("Runner error; provider details withheld by export policy");
             return FaultoraCli.EXIT_RUNNER_FAILURE;
         }
     }
@@ -182,7 +182,7 @@ public class TestCommand implements Command {
                 compilation.plan(), faultProviders, extensionPolicy, options.allowPrivate());
              RunJournal journal = new RunJournal(journalPath, true)) {
             System.out.println("Running scenario: " + scenario.metadata().name());
-            System.out.println("Target: " + options.targetUrl());
+            System.out.println("Target: configured for this run");
             System.out.println("Seed: " + options.seed());
             System.out.println();
 

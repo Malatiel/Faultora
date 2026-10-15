@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.Locale;
 
 /**
  * One message a run published or observed.
@@ -30,6 +32,9 @@ import java.util.Map;
  * @param payload     payload the evidence policy permitted, parsed when it is
  *                    JSON and held as text when it is not, null when withheld
  * @param digest      {@code sha256:} digest of the raw payload bytes
+ * @param payloadComplete whether the payload was captured without redaction or truncation
+ * @param headersCaptured whether absence of a permitted header can be established
+ * @param withheldHeaders lowercased header names withheld by policy
  */
 public record MessageEvidence(
         String topic,
@@ -39,7 +44,10 @@ public record MessageEvidence(
         String key,
         Map<String, String> headers,
         JsonNode payload,
-        String digest
+        String digest,
+        boolean payloadComplete,
+        boolean headersCaptured,
+        Set<String> withheldHeaders
 ) {
     /** Protocol-evidence key under which observed messages are published. */
     public static final String OBSERVED = "messages";
@@ -49,6 +57,19 @@ public record MessageEvidence(
 
     public MessageEvidence {
         headers = headers == null ? Map.of() : Map.copyOf(headers);
+        withheldHeaders = withheldHeaders == null ? Set.of() : withheldHeaders.stream()
+                .map(name -> name.toLowerCase(Locale.ROOT)).collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
+
+    /** Existing producers that have no capture provenance retain their conservative header semantics. */
+    public MessageEvidence(String topic, int partition, long offset, long timestampMs,
+            String key, Map<String, String> headers, JsonNode payload, String digest) {
+        this(topic, partition, offset, timestampMs, key, headers, payload, digest,
+                payload != null, headers != null && !headers.isEmpty(), Set.of());
+    }
+
+    public boolean headerReadable(String name) {
+        return headersCaptured && !withheldHeaders.contains(name.toLowerCase(Locale.ROOT));
     }
 
     /**

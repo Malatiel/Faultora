@@ -6,10 +6,12 @@ import dev.faultora.engine.run.RunResult;
 import dev.faultora.model.catalog.NormalizedError;
 import dev.faultora.model.identifier.NodeId;
 import dev.faultora.spec.expression.ExpressionContext;
+import dev.faultora.spec.expression.ExpressionEvaluationException;
 import dev.faultora.spi.contract.AssertionProvider;
 import dev.faultora.spi.context.AssertionContext;
 import dev.faultora.spi.result.AssertionResult;
 import dev.faultora.spi.result.OperationResult;
+import dev.faultora.spi.evidence.EvidenceExport;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -79,7 +81,9 @@ public final class EventuallyGroupExecutor {
             // group keeps cleanup and the run's terminal event intact.
             return failed(context, groupId, child, new NormalizedError(
                     NormalizedError.ErrorCategory.VALIDATION, "INPUTS_UNRESOLVABLE",
-                    "Cannot resolve what this block polls with: " + unresolvable.getMessage(),
+                    "Cannot resolve what this block polls with"
+                            + (unresolvable instanceof ExpressionEvaluationException expression
+                                    ? ": " + expression.diagnostic() : ""),
                     false, Map.of()), System.currentTimeMillis() - groupStart);
         }
 
@@ -231,9 +235,9 @@ public final class EventuallyGroupExecutor {
             PlanNode.Condition condition = group.conditions().get(index);
             Map<String, Object> params = conditionParams.get(index);
             AssertionProvider provider = assertionProviders.get(condition.assertionType());
-            results.add(provider.evaluate(
+            results.add(EvidenceExport.assertion(provider.evaluate(
                     condition.assertionType(), params, evidence,
-                    new AssertionContext(group.nodeId().value(), params)));
+                    new AssertionContext(group.nodeId().value(), params))));
         }
         return results;
     }

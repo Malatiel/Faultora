@@ -203,6 +203,15 @@ Capture policy supports:
 - retention class and expiry;
 - disabled body previews in console output.
 
+Capture permission is separate from export permission. The engine may compare
+bounded evidence authorized by `EvidencePolicy`, while journal events, reports,
+node results, and polling diagnostics use a structural export policy: outcomes,
+fixed descriptions, bounded classifier metadata, counts, sizes, and digests.
+Assertion values, provider prose, arbitrary error metadata, and published
+message keys are withheld. Redacted or incomplete evidence cannot establish a
+body-based assertion. [ADR-026](adr/ADR-026-evidence-disclosure.md) defines the
+boundary, public topology metadata, compatibility, and remaining limitations.
+
 ### SEC-07 — No arbitrary code in scenarios
 
 The scenario expression language is deterministic, side-effect free, bounded,

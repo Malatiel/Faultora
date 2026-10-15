@@ -184,7 +184,7 @@ public final class ExpressionEvaluator {
             } catch (ExpressionEvaluationException unresolvable) {
                 throw new ExpressionEvaluationException(
                         "'" + path + "' reads " + s + ": " + unresolvable.getMessage(),
-                        unresolvable.expression(), unresolvable);
+                        unresolvable.expression(), unresolvable, path);
             }
         }
         if (value instanceof java.util.Map<?, ?> map) {

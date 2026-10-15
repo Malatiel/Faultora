@@ -64,10 +64,11 @@ final class ObservedRows {
                     "The observation returned no column '" + column + "'; it returned "
                             + rows.columns(), Map.of("columns", rows.columns()));
         }
-        if (rows.valuesWithheld()) {
+        if (!rows.columnReadable(column)) {
             return AssertionResult.indeterminate(
-                    "The evidence policy captured no bodies, so the values of '" + column
-                            + "' were not kept and this assertion cannot read them");
+                    rows.valuesWithheld()
+                            ? "The evidence policy captured no bodies; column values were not kept"
+                            : "The evidence policy redacted the requested column values");
         }
         return null;
     }
