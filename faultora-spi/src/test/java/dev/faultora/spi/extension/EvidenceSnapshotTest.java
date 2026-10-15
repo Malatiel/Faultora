@@ -156,11 +156,93 @@ class EvidenceSnapshotTest {
                 "The target did not answer", true, Map.of());
 
         EvidenceSnapshot snapshot = new EvidenceSnapshot(
-                null, Map.of(), null, 5000, failed, Map.of());
+                null, Map.of(), null, true, 5000, failed, Map.of());
         EvidenceView after = JSON.readValue(
                 JSON.writeValueAsString(snapshot), EvidenceSnapshot.class).asView();
 
         assertThat(after.error()).contains(failed);
+    }
+
+    @Test
+    void aBodyThePolicyCutShortStaysIncompleteAcrossTheTrip() throws Exception {
+        // A redacted or truncated body is not the document. An assertion that
+        // took it for one would fail, or pass, on what the policy removed.
+        EvidenceView redacted = new EvidenceView() {
+            @Override
+            public Optional<Integer> statusCode() {
+                return Optional.of(200);
+            }
+
+            @Override
+            public Map<String, List<String>> responseHeaders() {
+                return Map.of();
+            }
+
+            @Override
+            public Optional<byte[]> responseBody() {
+                return Optional.of(BODY);
+            }
+
+            @Override
+            public Optional<JsonNode> responseJson() {
+                return Optional.empty();
+            }
+
+            @Override
+            public boolean bodyComplete() {
+                return false;
+            }
+
+            @Override
+            public long durationMs() {
+                return 1;
+            }
+
+            @Override
+            public Optional<NormalizedError> error() {
+                return Optional.empty();
+            }
+
+            @Override
+            public Map<String, Object> protocolEvidence() {
+                return Map.of();
+            }
+        };
+
+        EvidenceView after = JSON.readValue(
+                JSON.writeValueAsString(EvidenceSnapshot.of(redacted)), EvidenceSnapshot.class).asView();
+
+        assertThat(after.bodyComplete()).isFalse();
+        assertThat(everythingAfterTheTrip().bodyComplete()).isTrue();
+    }
+
+    @Test
+    void aSnapshotWithoutTheFlagIsNotTakenForAComplete() throws Exception {
+        // A snapshot written before the flag existed says nothing about it,
+        // and saying nothing must not read as "complete".
+        EvidenceView after = JSON.readValue("""
+                {"statusCode":200,"responseHeaders":{},"responseBody":null,
+                 "durationMs":1,"error":null,"protocolEvidence":{}}""",
+                EvidenceSnapshot.class).asView();
+
+        assertThat(after.bodyComplete()).isFalse();
+    }
+
+    @Test
+    void onlyAHeaderThatCrossedCanBeReadAsPresentOrAbsent() throws Exception {
+        // Whether a missing header was missing or withheld depends on a policy
+        // the snapshot does not carry. Out of process, absence is therefore
+        // not evidence of absence: the header is unreadable, and an assertion
+        // about it is indeterminate rather than failed.
+        EvidenceView after = everythingAfterTheTrip();
+
+        assertThat(after.headerReadable("Content-Type")).isTrue();
+        assertThat(after.headerReadable("x-request-id")).isFalse();
+    }
+
+    private static EvidenceView everythingAfterTheTrip() throws Exception {
+        return JSON.readValue(JSON.writeValueAsString(EvidenceSnapshot.of(everything())),
+                EvidenceSnapshot.class).asView();
     }
 
     @Test
@@ -182,7 +264,8 @@ class EvidenceSnapshotTest {
                         same assertion running here. Add the field to the snapshot and \
                         to this list, or ADR-023's claim that assertions are pure \
                         functions over data stops being true.""")
-                .containsExactly("durationMs", "error", "protocolEvidence",
-                        "responseBody", "responseHeaders", "responseJson", "statusCode");
+                .containsExactly("bodyComplete", "durationMs", "error", "headerReadable",
+                        "protocolEvidence", "responseBody", "responseHeaders", "responseJson",
+                        "statusCode");
     }
 }
