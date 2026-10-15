@@ -90,12 +90,7 @@ final class RunPolicies {
      * is not something a run should be able to do because an operation
      * happened to be described in the catalog.
      */
-    static TargetPolicy targetPolicy(
-            TestOptions options, Map<String, FaultProvider> faultProviders) {
-        Set<String> allowedFaultTypes = new LinkedHashSet<>();
-        faultProviders.values().forEach(provider ->
-                allowedFaultTypes.addAll(provider.capabilities()));
-
+    static TargetPolicy targetPolicy(TestOptions options) {
         Set<SafetyClassification> allowedOperations = new LinkedHashSet<>(
                 Set.of(SafetyClassification.READ_ONLY, SafetyClassification.MUTATING));
         if (options.allowDestructive()) {
@@ -104,7 +99,16 @@ final class RunPolicies {
         return new TargetPolicy(
                 Set.of(), allowedOperations,
                 MAX_REQUESTS, MAX_CONCURRENCY, MAX_DURATION_MS, MAX_PAYLOAD_BYTES,
-                allowedFaultTypes, Set.of());
+                faultTypes(options), Set.of());
+    }
+
+    /** Available fault contracts, without constructing providers or management clients. */
+    static Set<String> faultTypes(TestOptions options) {
+        Set<String> types = new LinkedHashSet<>(LocalFaultProvider.supportedFaultTypes());
+        if (options.toxiproxyUrl() != null) {
+            types.addAll(ToxiproxyFaultProvider.supportedFaultTypes());
+        }
+        return Set.copyOf(types);
     }
 
     /**

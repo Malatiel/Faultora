@@ -308,4 +308,11 @@ public final class ExtensionRegistry {
                                 || supported.startsWith(sourceFamily + "-")))
                 .findFirst().orElse(null);
     }
+
+    /** Installed importers admitted by the same checks used when importing. */
+    public static List<SourceImporter> importers(ExtensionPolicy policy) {
+        return ServiceLoader.load(SourceImporter.class).stream()
+                .filter(candidate -> isAllowed(candidate.type(), policy, "source importer"))
+                .map(ServiceLoader.Provider::get).toList();
+    }
 }

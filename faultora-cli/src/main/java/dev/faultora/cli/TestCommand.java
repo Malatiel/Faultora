@@ -1,35 +1,25 @@
 package dev.faultora.cli;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-
-
-
-
 import dev.faultora.engine.LocalEngine;
 import dev.faultora.engine.exec.JournalWriter;
 import dev.faultora.engine.journal.RunJournal;
 import dev.faultora.engine.plan.PlanCompilationResult;
-import dev.faultora.engine.plan.PlanCompiler;
 import dev.faultora.engine.plan.PlanDiagnostic;
 import dev.faultora.engine.run.RunResult;
-
-
-import dev.faultora.model.catalog.ApiCatalog;
 import dev.faultora.model.events.RunEvent;
 import dev.faultora.model.identifier.RunId;
-import dev.faultora.model.security.ContentDigest;
 import dev.faultora.model.security.ExtensionPolicy;
 import dev.faultora.model.security.TargetPolicy;
-import dev.faultora.net.HostPolicy;
 import dev.faultora.spec.expression.ExpressionContext;
 import dev.faultora.spec.model.InputDeclaration;
 import dev.faultora.runtime.ExtensionRegistry;
 import dev.faultora.runtime.RunEnvironment;
+import dev.faultora.runtime.RunPreparation;
+import dev.faultora.runtime.RuntimeCapabilities;
+import dev.faultora.runtime.PlanPreview;
+import dev.faultora.runtime.CatalogAssembly;
 import dev.faultora.spec.model.ScenarioDocument;
-import dev.faultora.spec.parser.ParseResult;
-import dev.faultora.spec.parser.ScenarioParser;
-import dev.faultora.spec.validator.ScenarioValidator;
-import dev.faultora.spi.contract.AssertionProvider;
 
 import dev.faultora.spi.contract.FaultProvider;
 import dev.faultora.spi.contract.ReportRenderer;
@@ -60,6 +50,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *                      [--seed &lt;n&gt;]
  */
 public class TestCommand implements Command {
+    private final CommandOutput output;
+
+    public TestCommand() {
+        this(CommandOutput.human());
+    }
+
+    TestCommand(CommandOutput output) {
+        this.output = output;
+    }
 
     /** How long an interrupted run is given to roll back and report. */
     private static final long SHUTDOWN_GRACE_SECONDS = 20;
@@ -72,7 +71,8 @@ public class TestCommand implements Command {
         try {
             options = TestOptions.parse(args);
         } catch (CliException e) {
-            System.err.println(e.getMessage());
+            output.error(CliDiagnostic.Code.INVALID_ARGUMENT, null, null);
+            output.err().println(e.getMessage());
             return e.exitCode();
         }
         if (options.helpRequested()) {
@@ -83,58 +83,78 @@ public class TestCommand implements Command {
         ExtensionPolicy extensionPolicy = RunPolicies.extensionPolicy(options);
         Map<String, ReportRenderer> renderers = ExtensionRegistry.renderers(extensionPolicy);
         if (!renderers.keySet().containsAll(options.formats())) {
-            System.err.println("Unknown format. Supported formats: "
+            output.error(CliDiagnostic.Code.CAPABILITY_UNAVAILABLE, null, null);
+            output.err().println("Unknown format. Supported formats: "
                     + String.join(",", renderers.keySet()));
             return FaultoraCli.EXIT_INVALID_CONFIG;
         }
 
+        CliDiagnostic.Code failureStage = CliDiagnostic.Code.FILE_READ_FAILED;
         try {
             String scenarioContent = Files.readString(
                     options.scenarioPath(), StandardCharsets.UTF_8);
-            ScenarioDocument scenario = loadScenario(scenarioContent);
-            if (scenario == null) {
+            var documents = CatalogLoader.documents(options);
+            failureStage = CliDiagnostic.Code.PREPARATION_FAILED;
+            TargetPolicy targetPolicy = RunPolicies.targetPolicy(options);
+            RunId runId = new RunId("run-" + options.seed());
+            RunPreparation.Result prepared = RunPreparation.prepare(new RunPreparation.Request(
+                    scenarioContent, documents, options.targetUrl(),
+                    extensionPolicy, targetPolicy, runId, options.seed(), null));
+            output.scenario(prepared.diagnostics());
+            if (prepared.compilation() != null) { output.plan(prepared.compilation().diagnostics()); }
+            if (options.preview()) {
+                if (prepared.isSuccess()) {
+                    resolveDeclaredInputs(prepared.scenario(), options.inputs());
+                }
+                PlanPreview preview = PlanPreview.describe(prepared,
+                        RuntimeCapabilities.describe(extensionPolicy, targetPolicy, RunPolicies.faultTypes(options)),
+                        targetPolicy);
+                output.preview(preview);
+                output.out().println(MAPPER.writeValueAsString(preview));
+                return prepared.isSuccess() ? FaultoraCli.EXIT_PASS : FaultoraCli.EXIT_INVALID_CONFIG;
+            }
+            prepared.diagnostics().forEach(diagnostic -> output.err().println(
+                    diagnostic.severity() + ": " + diagnostic.message()));
+            if (prepared.compilation() == null) {
                 return FaultoraCli.EXIT_INVALID_CONFIG;
             }
-
-            ApiCatalog catalog = CatalogLoader.load(options, scenario, extensionPolicy);
-            Map<String, FaultProvider> faultProviders = RunPolicies.faultProviders(options);
-            TargetPolicy targetPolicy = RunPolicies.targetPolicy(options, faultProviders);
-            ConnectorContext connectorContext = RunPolicies.connectorContext(
-                    options, targetPolicy, new EnvironmentSecretResolver());
+            ScenarioDocument scenario = prepared.scenario();
+            PlanCompilationResult compilation = prepared.compilation();
+            if (compilation.plan() == null) {
+                output.err().println("Plan compilation failed:");
+                compilation.diagnostics().forEach(d -> output.err().println("  " + d.message()));
+                return FaultoraCli.EXIT_INVALID_CONFIG;
+            }
+            compilation.diagnostics().stream()
+                    .filter(d -> d.severity() == PlanDiagnostic.Severity.WARNING)
+                    .forEach(d -> output.err().println("Warning: " + d.message()));
 
             ExpressionContext expressionContext = ExpressionContext.builder()
                     .inputs(resolveDeclaredInputs(scenario, options.inputs()))
                     .runMetadata(Map.of("seed", options.seed(), "target", options.targetUrl()))
                     .build();
+            failureStage = CliDiagnostic.Code.RUN_ERROR;
+            Map<String, FaultProvider> faultProviders = RunPolicies.faultProviders(options);
+            ConnectorContext connectorContext = RunPolicies.connectorContext(
+                    options, targetPolicy, new EnvironmentSecretResolver());
 
-            RunId runId = new RunId("run-" + options.seed());
-            PlanCompilationResult compilation = new PlanCompiler().compile(
-                    scenario, catalog, targetPolicy, runId, options.seed(),
-                    ContentDigest.sha256Uri(scenarioContent),
-                    ContentDigest.sha256Uri(MAPPER.writeValueAsString(catalog)));
-
-            if (compilation.plan() == null) {
-                System.err.println("Plan compilation failed:");
-                compilation.diagnostics().forEach(d -> System.err.println("  " + d.message()));
-                return FaultoraCli.EXIT_INVALID_CONFIG;
-            }
-            compilation.diagnostics().stream()
-                    .filter(d -> d.severity() == PlanDiagnostic.Severity.WARNING)
-                    .forEach(d -> System.err.println("Warning: " + d.message()));
-
+            failureStage = CliDiagnostic.Code.ARTIFACT_WRITE_FAILED;
             Files.createDirectories(options.outputDir());
             Path journalPath = options.outputDir().resolve("events.ndjson");
             Files.deleteIfExists(journalPath);
 
+            failureStage = CliDiagnostic.Code.RUN_ERROR;
             ExecutedRun executed = run(
                     options, compilation, faultProviders, connectorContext,
                     expressionContext, journalPath, scenario, extensionPolicy);
             RunResult result = executed.result();
+            output.run(result);
 
+            failureStage = CliDiagnostic.Code.REPORT_WRITE_FAILED;
             ReportWriter.writeAll(
-                    options.formats(), renderers, executed.events(), options.outputDir());
+                    options.formats(), renderers, executed.events(), options.outputDir(), output.out());
 
-            System.out.printf("%nResult: %s — %d nodes, %d passed, %d failed (%dms)%n",
+            output.out().printf("%nResult: %s — %d nodes, %d passed, %d failed (%dms)%n",
                     result.status(), result.totalNodes(),
                     result.passedAssertions(), result.failedAssertions(),
                     result.durationMs());
@@ -146,10 +166,15 @@ public class TestCommand implements Command {
                 case ERROR, CANCELLED, SKIPPED -> FaultoraCli.EXIT_RUNNER_FAILURE;
             };
 
+        } catch (CatalogAssembly.AssemblyException refused) {
+            output.error(CliDiagnostic.Code.CATALOG_IMPORT_FAILED, null, null);
+            throw new CliException(refused.getMessage(), FaultoraCli.EXIT_INVALID_CONFIG);
         } catch (CliException e) {
+            if (!output.hasErrors()) { output.error(CliDiagnostic.Code.INVALID_ARGUMENT, null, null); }
             throw e;
         } catch (Exception e) {
-            System.err.println("Runner error; provider details withheld by export policy");
+            output.error(failureStage, null, null);
+            output.err().println("Runner error; provider details withheld by export policy");
             return FaultoraCli.EXIT_RUNNER_FAILURE;
         }
     }
@@ -181,10 +206,10 @@ public class TestCommand implements Command {
         try (RunEnvironment environment = RunEnvironment.open(
                 compilation.plan(), faultProviders, extensionPolicy, options.allowPrivate());
              RunJournal journal = new RunJournal(journalPath, true)) {
-            System.out.println("Running scenario: " + scenario.metadata().name());
-            System.out.println("Target: configured for this run");
-            System.out.println("Seed: " + options.seed());
-            System.out.println();
+            output.out().println("Running scenario: " + scenario.metadata().name());
+            output.out().println("Target: configured for this run");
+            output.out().println("Seed: " + options.seed());
+            output.out().println();
 
             RunResult result = executeCancellably(
                     environment.engine(), compilation, journal,
@@ -216,11 +241,11 @@ public class TestCommand implements Command {
         AtomicBoolean cancellation = new AtomicBoolean(false);
         CountDownLatch finished = new CountDownLatch(1);
         Thread interruption = new Thread(() -> {
-            System.err.println("Interrupted: cancelling the run and rolling back faults");
+            output.err().println("Interrupted: cancelling the run and rolling back faults");
             cancellation.set(true);
             try {
                 if (!finished.await(SHUTDOWN_GRACE_SECONDS, TimeUnit.SECONDS)) {
-                    System.err.println("Run did not stop within "
+                    output.err().println("Run did not stop within "
                             + SHUTDOWN_GRACE_SECONDS + "s; faults may remain active");
                 }
             } catch (InterruptedException stopWaiting) {
@@ -245,27 +270,6 @@ public class TestCommand implements Command {
         }
     }
 
-    /** Parse and validate the scenario, or null when it is not runnable. */
-    private ScenarioDocument loadScenario(String scenarioContent) {
-        ParseResult<ScenarioDocument> parsed = new ScenarioParser().parse(scenarioContent);
-        if (!parsed.isSuccess()) {
-            System.err.println("Scenario validation failed:");
-            parsed.errors().forEach(d -> System.err.println("  " + d.message()));
-            return null;
-        }
-        parsed.warnings().forEach(d -> System.err.println("Warning: " + d.message()));
-
-        ParseResult<ScenarioDocument> validated =
-                new ScenarioValidator().validate(parsed.document());
-        if (!validated.isSuccess()) {
-            System.err.println("Scenario validation failed:");
-            validated.errors().forEach(d -> System.err.println("  " + d.message()));
-            return null;
-        }
-        validated.warnings().forEach(d -> System.err.println("Warning: " + d.message()));
-        return validated.document();
-    }
-
     /**
      * Merge CLI-provided inputs with the scenario's declared defaults.
      * Unknown input names and missing required inputs are configuration errors.
@@ -277,6 +281,7 @@ public class TestCommand implements Command {
 
         for (String name : cliInputs.keySet()) {
             if (!declared.containsKey(name)) {
+                output.error(CliDiagnostic.Code.INPUT_UNKNOWN, null, "inputs." + name);
                 throw new CliException(
                         "Unknown input '" + name + "'. Declared inputs: "
                                 + (declared.isEmpty() ? "(none)"
@@ -294,6 +299,7 @@ public class TestCommand implements Command {
             } else if (declaration.defaultValue() != null) {
                 resolved.put(name, declaration.defaultValue());
             } else if (declaration.required()) {
+                output.error(CliDiagnostic.Code.INPUT_REQUIRED, null, "inputs." + name);
                 throw new CliException(
                         "Required input '" + name + "' is missing. Provide it with --input "
                                 + name + "=<value>",
@@ -304,34 +310,35 @@ public class TestCommand implements Command {
     }
 
     private void printHelp() {
-        System.out.println("Usage: faultora test --scenario <path> [options]");
-        System.out.println();
-        System.out.println("Options:");
-        System.out.println("  -s, --scenario <path>      Scenario YAML file (required)");
-        System.out.println("  -o, --openapi <path>       OpenAPI document for catalog");
-        System.out.println("  -a, --asyncapi <path>      AsyncAPI 3.0 document for catalog");
-        System.out.println("      --observations <path>  Observation catalog: the read-only");
-        System.out.println("                             queries a run is permitted to make");
-        System.out.println("      --db-user <name>       User the observations connect as");
-        System.out.println("      --db-secret-id <id>    Secret handle supplying its password");
-        System.out.println("  -t, --target <url>         Base URL for every catalog target");
-        System.out.println("                             (default: " + TestOptions.DEFAULT_TARGET_URL + ")");
-        System.out.println("  -t, --target <id>=<url>    Base URL for one catalog target (repeatable)");
-        System.out.println("  -f, --format <formats>     Output formats: console,json,junit,html (default: console)");
-        System.out.println("      --output <dir>         Output directory (default: faultora-results)");
-        System.out.println("      --seed <n>             Random seed (default: current time)");
-        System.out.println("      --allow-private        Allow connections to private/local networks");
-        System.out.println("      --allow-destructive    Allow operations classified as destructive");
-        System.out.println("      --auth-secret-id <id>  Secret handle ID for Authorization header (resolved from env)");
-        System.out.println("      --toxiproxy-url <url>  Toxiproxy admin endpoint; enables network-* fault types");
-        System.out.println("      --allow-extension <class>  Permit a non-built-in extension (repeatable)");
-        System.out.println("  -i, --input <key=value>    Value for a declared scenario input (repeatable)");
-        System.out.println("  -h, --help                 Show this help");
-        System.out.println();
-        System.out.println("Exit codes:");
-        System.out.println("  0  All tests passed");
-        System.out.println("  1  Test failure (assertion failed)");
-        System.out.println("  2  Invalid configuration");
-        System.out.println("  3  Runner failure");
+        output.out().println("Usage: faultora test --scenario <path> [options]");
+        output.out().println();
+        output.out().println("Options:");
+        output.out().println("  -s, --scenario <path>      Scenario YAML file (required)");
+        output.out().println("  -o, --openapi <path>       OpenAPI document for catalog");
+        output.out().println("  -a, --asyncapi <path>      AsyncAPI 3.0 document for catalog");
+        output.out().println("      --observations <path>  Observation catalog: the read-only");
+        output.out().println("                             queries a run is permitted to make");
+        output.out().println("      --db-user <name>       User the observations connect as");
+        output.out().println("      --db-secret-id <id>    Secret handle supplying its password");
+        output.out().println("  -t, --target <url>         Base URL for every catalog target");
+        output.out().println("                             (default: " + TestOptions.DEFAULT_TARGET_URL + ")");
+        output.out().println("  -t, --target <id>=<url>    Base URL for one catalog target (repeatable)");
+        output.out().println("  -f, --format <formats>     Output formats: console,json,junit,html (default: console)");
+        output.out().println("      --output <dir>         Output directory (default: faultora-results)");
+        output.out().println("      --seed <n>             Random seed (default: current time)");
+        output.out().println("      --preview              Print structural JSON without executing or writing reports");
+        output.out().println("      --allow-private        Allow connections to private/local networks");
+        output.out().println("      --allow-destructive    Allow operations classified as destructive");
+        output.out().println("      --auth-secret-id <id>  Secret handle ID for Authorization header (resolved from env)");
+        output.out().println("      --toxiproxy-url <url>  Toxiproxy admin endpoint; enables network-* fault types");
+        output.out().println("      --allow-extension <class>  Permit a non-built-in extension (repeatable)");
+        output.out().println("  -i, --input <key=value>    Value for a declared scenario input (repeatable)");
+        output.out().println("  -h, --help                 Show this help");
+        output.out().println();
+        output.out().println("Exit codes:");
+        output.out().println("  0  All tests passed");
+        output.out().println("  1  Test failure (assertion failed)");
+        output.out().println("  2  Invalid configuration");
+        output.out().println("  3  Runner failure");
     }
 }

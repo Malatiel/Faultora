@@ -187,6 +187,37 @@ Operations the description classifies as destructive are withheld in the same
 way: a cleanup that deletes what its setup created is ordinary and supported,
 but it takes `--allow-destructive` to permit it.
 
+### Plan preview
+
+For scripts, put `--diagnostics=json` before the command to receive one versioned
+JSON diagnostic result on stdout. It includes stable codes, node/document
+locations, hints and the existing exit code; technical logs remain on stderr.
+With `test --preview`, the preview is nested in the same result. See the
+[machine diagnostic contract](docs/CLI_DIAGNOSTICS.md) for fields and limits.
+
+Add `--preview` to `test` to inspect the compiled plan without running it:
+
+```bash
+java -jar faultora-cli/target/faultora-0.10.1.jar \
+  test --preview \
+  --scenario examples/payment-service/scenarios/passing.yaml \
+  --openapi examples/payment-service/openapi.yaml
+```
+
+The JSON on stdout contains catalog target/operation identities, admitted
+capability types, actions, fault types/durations, request/concurrency/time/payload
+budgets and located scenario/compiler refusals. Group children include retry
+attempts and repeat/poll multipliers. It omits endpoint URLs, request values,
+credentials and fault parameters. No target or fault management requests are
+sent, and existing journals and reports are untouched. A compiled plan returns
+exit 0; a scenario/compiler refusal returns exit 2. Option, file, catalog-import
+and input-binding errors keep the ordinary CLI error handling.
+
+`compiled: true` describes static compilation. Credentials, reachability and
+provider-specific runtime parameters are checked during execution. A preview
+does not authorize or reserve a later run. Explicitly admitted plugins execute
+in-process and remain subject to the limitations in [ADR-027](docs/adr/ADR-027-run-preparation.md).
+
 ### Targets
 
 Target identity — name, protocols, authentication schemes — comes from the

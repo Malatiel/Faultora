@@ -47,6 +47,11 @@ public final class LocalFaultProvider implements FaultProvider {
 
     @Override
     public Set<String> capabilities() {
+        return supportedFaultTypes();
+    }
+
+    /** Describe the built-in provider without constructing a run instance. */
+    public static Set<String> supportedFaultTypes() {
         return CAPABILITIES;
     }
 

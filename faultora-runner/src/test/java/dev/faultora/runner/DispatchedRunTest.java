@@ -274,4 +274,42 @@ class DispatchedRunTest {
         assertThat(outcome.journalPath())
                 .as("nothing was written for a run that never started").isNull();
     }
+
+    @Test
+    void structuralValidationIsSharedWithLocalPreparation() throws Exception {
+        String duplicate = scenarioOfWaits(1, "1ms")
+                + "  - id: pause-0\n    type: wait\n    timeout: 1ms\n";
+        var outcome = runner().execute(dispatchOf("run-duplicate-step", duplicate,
+                new Lease(System.currentTimeMillis(), 60_000, 10_000)), Map.of(), EXTENSIONS);
+        assertThat(outcome.didRun()).isFalse();
+        assertThat(outcome.refusal().reason()).isEqualTo(Refusal.Reason.SCENARIO_INVALID);
+        try (var artifacts = Files.list(workingDirectory)) {
+            assertThat(artifacts).isEmpty();
+        }
+    }
+
+    @Test
+    void unsupportedExtensionControlsRefuseBeforeCreatingAJournal() throws Exception {
+        var outcome = runner().execute(dispatchOf("run-unsupported-control", scenarioOfWaits(1, "1ms"),
+                new Lease(System.currentTimeMillis(), 60_000, 10_000)), Map.of(),
+                new ExtensionPolicy(Set.of(), true, 0, Set.of(), Set.of()));
+        assertThat(outcome.didRun()).isFalse();
+        assertThat(outcome.refusal().reason()).isEqualTo(Refusal.Reason.MISSING_CAPABILITY);
+        try (var artifacts = Files.list(workingDirectory)) {
+            assertThat(artifacts).isEmpty();
+        }
+    }
+
+    @Test
+    void dispatchVerificationPrecedesPreparationAndItsExtensionChecks() {
+        String scenario = "[invalid";
+        var unsigned = dispatchOf("run-unverified", scenario,
+                new Lease(System.currentTimeMillis(), 60_000, 10_000));
+        var rejectingRunner = new DispatchedRun(new DispatchVerifier(LIMITS, policy -> false),
+                workingDirectory, handle -> { throw new AssertionError("No secret resolution allowed"); }, true);
+        var outcome = rejectingRunner.execute(unsigned, Map.of(),
+                new ExtensionPolicy(Set.of(), true, 0, Set.of(), Set.of()));
+        assertThat(outcome.refusal().reason()).isEqualTo(Refusal.Reason.UNVERIFIED_POLICY);
+        assertThat(outcome.journalPath()).isNull();
+    }
 }

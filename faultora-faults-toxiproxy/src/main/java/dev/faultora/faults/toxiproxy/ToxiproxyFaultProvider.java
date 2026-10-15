@@ -75,6 +75,11 @@ public final class ToxiproxyFaultProvider implements FaultProvider {
 
     @Override
     public Set<String> capabilities() {
+        return supportedFaultTypes();
+    }
+
+    /** Describe the provider without opening its management client. */
+    public static Set<String> supportedFaultTypes() {
         return CAPABILITIES;
     }
 
