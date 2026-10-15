@@ -47,6 +47,9 @@ public final class KafkaConnector implements Connector {
     /** Protocol identifier of operations this connector executes. */
     public static final String PROTOCOL = "kafka";
 
+    /** Aggregate encoded key/value/header bytes allowed in a published record. */
+    public static final String MAX_RECORD_BYTES = "maxRecordBytes";
+
     /** Prefix an operator's Kafka settings carry in the connector config. */
     static final String SETTING_PREFIX = PROTOCOL + ".";
 
@@ -62,12 +65,15 @@ public final class KafkaConnector implements Connector {
      * would reach a host the policy never saw, which is a bypass rather than a
      * configuration choice. The serializers are how bytes become evidence. The
      * client id is how a broker attributes this run's traffic.
+     * Interceptors could replace a record after its size was checked, so they
+     * cannot be passed through either.
      */
     private static final Set<String> RESERVED = Set.of(
             CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG,
             CommonClientConfigs.CLIENT_ID_CONFIG,
             ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG,
             ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG,
+            ProducerConfig.INTERCEPTOR_CLASSES_CONFIG,
             ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG,
             ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG);
 
@@ -239,7 +245,8 @@ public final class KafkaConnector implements Connector {
                             "The setting '" + setting + "' is decided by Faultora and cannot "
                                     + "be passed through: the broker list is the one the "
                                     + "destination policy verified, and the serializers are "
-                                    + "how a message becomes evidence");
+                                    + "how a message becomes evidence; interceptors could replace "
+                                    + "a size-checked record");
                 }
                 config.put(setting, value);
             });

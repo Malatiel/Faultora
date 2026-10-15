@@ -25,9 +25,10 @@ import java.util.concurrent.TimeoutException;
  * <p>
  * Children start together on a pool bounded by the execution policy and all
  * run to completion even if a sibling fails — a race is only meaningful when
- * every participant actually ran. A group timeout is a hard bound: children
- * still in flight when it elapses are cancelled and reported as deadline
- * failures rather than silently awaited.
+ * every participant actually ran. A group timeout bounds the parent's wait:
+ * children still in flight when it elapses are cancelled and reported as
+ * deadline failures. Their connectors must honour the remaining budget or
+ * interruption to stop their own work.
  */
 public final class ParallelGroupExecutor {
 
@@ -43,13 +44,13 @@ public final class ParallelGroupExecutor {
             ExpressionContext expressionContext
     ) {
         long groupStart = System.currentTimeMillis();
+        context = context.within(group.deadlineMs());
         context.journal().nodeStarted(group.nodeId(), "parallel", null);
 
         Map<NodeId, RunResult.NodeResult> childResults = new LinkedHashMap<>();
         ConcurrentMap<NodeId, NodeEvidence> childEvidence = new ConcurrentHashMap<>();
         NodeContext childContext = context.withEvidence(childEvidence);
 
-        long deadlineAtMs = group.deadlineMs() > 0 ? groupStart + group.deadlineMs() : 0;
         ExecutorService pool = newPool(group, context);
         List<Future<RunResult.NodeResult>> futures = new ArrayList<>();
         try {
@@ -61,11 +62,7 @@ public final class ParallelGroupExecutor {
                 PlanNode.OperationNode child = group.children().get(i);
                 try {
                     Future<RunResult.NodeResult> future = futures.get(i);
-                    childResults.put(child.nodeId(), deadlineAtMs > 0
-                            ? future.get(
-                                    Math.max(0, deadlineAtMs - System.currentTimeMillis()),
-                                    TimeUnit.MILLISECONDS)
-                            : future.get());
+                    childResults.put(child.nodeId(), await(future, context));
                 } catch (TimeoutException deadlineElapsed) {
                     futures.forEach(pending -> pending.cancel(true));
                     break;
@@ -96,23 +93,40 @@ public final class ParallelGroupExecutor {
                 .filter(result -> result == null || result.status() != RunResult.Status.PASSED)
                 .count();
 
-        if (failedChildren == 0) {
+        if (failedChildren == 0 && !context.deadline().expired() && !context.cancelled()) {
             context.journal().nodeCompleted(group.nodeId(), durationMs, -1, 0);
             return new GroupOutcome(new RunResult.NodeResult(
                     group.nodeId(), "parallel", RunResult.Status.PASSED,
                     -1, durationMs, List.of(), null), childResults);
         }
 
+        boolean expired = context.deadline().expired();
+        boolean cancelled = context.cancelled();
         NormalizedError groupError = new NormalizedError(
-                NormalizedError.ErrorCategory.INTERNAL,
-                "PARALLEL_CHILD_FAILED",
-                failedChildren + " of " + group.children().size()
-                        + " parallel children failed",
+                expired ? NormalizedError.ErrorCategory.TIMEOUT
+                        : cancelled ? NormalizedError.ErrorCategory.CANCELLED : NormalizedError.ErrorCategory.INTERNAL,
+                expired ? "DEADLINE_EXCEEDED" : cancelled ? "CANCELLED" : "PARALLEL_CHILD_FAILED",
+                expired ? "Parallel execution budget exhausted"
+                        : cancelled ? "Parallel group cancelled"
+                        : failedChildren + " of " + group.children().size() + " parallel children failed",
                 false, Map.of("failedChildren", failedChildren));
         context.journal().nodeFailed(group.nodeId(), groupError, durationMs);
         return new GroupOutcome(new RunResult.NodeResult(
                 group.nodeId(), "parallel", RunResult.Status.FAILED,
                 -1, durationMs, List.of(), groupError), childResults);
+    }
+
+    private RunResult.NodeResult await(Future<RunResult.NodeResult> future, NodeContext context)
+            throws InterruptedException, ExecutionException, TimeoutException {
+        while (!context.cancelled() && !context.deadline().expired()) {
+            try {
+                return future.get(Math.min(context.deadline().remainingNanos(),
+                        TimeUnit.MILLISECONDS.toNanos(100)), TimeUnit.NANOSECONDS);
+            } catch (TimeoutException sliceElapsed) {
+                // Re-check cancellation and the shared budget before waiting again.
+            }
+        }
+        throw new TimeoutException("Parallel execution stopped");
     }
 
     private ExecutorService newPool(PlanNode.ParallelNode group, NodeContext context) {
@@ -142,11 +156,12 @@ public final class ParallelGroupExecutor {
                 continue;
             }
             long durationSoFar = System.currentTimeMillis() - groupStart;
+            boolean cancelled = context.cancelled() && !context.deadline().expired();
             NormalizedError error = new NormalizedError(
-                    NormalizedError.ErrorCategory.TIMEOUT,
-                    "DEADLINE_EXCEEDED",
-                    "Parallel child did not finish within the group timeout of "
-                            + group.deadlineMs() + "ms",
+                    cancelled ? NormalizedError.ErrorCategory.CANCELLED : NormalizedError.ErrorCategory.TIMEOUT,
+                    cancelled ? "CANCELLED" : "DEADLINE_EXCEEDED",
+                    cancelled ? "Parallel child cancelled before completion"
+                            : "Parallel child did not finish within its execution budget",
                     false, Map.of());
             context.journal().nodeFailed(child.nodeId(), error, durationSoFar);
             childResults.put(child.nodeId(), new RunResult.NodeResult(

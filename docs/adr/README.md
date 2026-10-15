@@ -25,3 +25,5 @@
 | [ADR-021](ADR-021-runner-trust.md) | How a runner and a control plane come to trust each other | Accepted |
 | [ADR-022](ADR-022-freezing-the-scenario-api.md) | Freezing `faultora.dev/v1` | Accepted |
 | [ADR-023](ADR-023-extension-isolation.md) | What an extension policy promises, and when | Accepted |
+| [ADR-024](ADR-024-bounded-cleanup.md) | A separate finite budget for declared cleanup | Accepted |
+| [ADR-025](ADR-025-request-budget-unit.md) | Request budgets count connector attempts | Accepted |

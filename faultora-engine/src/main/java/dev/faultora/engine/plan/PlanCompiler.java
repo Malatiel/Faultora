@@ -111,8 +111,9 @@ public class PlanCompiler {
         scenarioTimeoutMs = boundedByPolicy(scenarioTimeoutMs, targetPolicy, diagnostics);
 
         if (targetPolicy != null) {
-            // Retrying nodes count once per allowed attempt, so retries cannot
-            // multiply traffic past the policy's request budget.
+            // Each allowed connector attempt is reserved, including retries,
+            // polls and cleanup. Redirects and client exchanges stay within
+            // one attempt; this is not a physical network-request count.
             long requestCount = nodes.stream()
                     .mapToLong(node -> switch (node) {
                         case PlanNode.OperationNode operation when operation.operation() != null ->
@@ -132,7 +133,7 @@ public class PlanCompiler {
             if (requestCount > targetPolicy.maxRequests()) {
                 diagnostics.add(PlanDiagnostic.error(
                         "policy", "",
-                        "Plan requires " + requestCount + " requests, policy allows "
+                        "Plan requires " + requestCount + " requests (connector attempts), policy allows "
                                 + targetPolicy.maxRequests()));
             }
         }

@@ -1,6 +1,7 @@
 package dev.faultora.engine;
 
 import dev.faultora.engine.evidence.NodeEvidence;
+import dev.faultora.engine.exec.Deadline;
 import dev.faultora.engine.exec.EventuallyGroupExecutor;
 import dev.faultora.engine.exec.GroupOutcome;
 import dev.faultora.engine.exec.JournalWriter;
@@ -45,6 +46,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class LocalEngine {
 
+    /** Shared budget for declared cleanup steps, independent of the main run. */
+    public static final long DEFAULT_CLEANUP_TIMEOUT_MS = 30_000;
+
+    private final long cleanupTimeoutMs;
     private final NodeExecutor nodeExecutor;
     private final ParallelGroupExecutor parallelGroups;
     private final RepeatGroupExecutor repeatGroups;
@@ -62,6 +67,20 @@ public class LocalEngine {
             Map<String, AssertionProvider> assertionProviders,
             Map<String, FaultProvider> faultProviders
     ) {
+        this(connectors, assertionProviders, faultProviders, DEFAULT_CLEANUP_TIMEOUT_MS);
+    }
+
+    /** Configure a finite cleanup phase without changing scenario or connector contracts. */
+    public LocalEngine(
+            Map<String, Connector> connectors,
+            Map<String, AssertionProvider> assertionProviders,
+            Map<String, FaultProvider> faultProviders,
+            long cleanupTimeoutMs
+    ) {
+        if (cleanupTimeoutMs <= 0) {
+            throw new IllegalArgumentException("cleanupTimeoutMs must be positive");
+        }
+        this.cleanupTimeoutMs = cleanupTimeoutMs;
         OperationInvoker invoker = new OperationInvoker(connectors);
         Map<String, AssertionProvider> assertions = Map.copyOf(assertionProviders);
         this.nodeExecutor = new NodeExecutor(
@@ -89,6 +108,7 @@ public class LocalEngine {
             AtomicBoolean cancellation
     ) {
         long startTime = System.currentTimeMillis();
+        Deadline runDeadline = Deadline.start(runTimeout(plan));
         RunId runId = plan.runId();
         JournalWriter writer = new JournalWriter(journal, runId);
 
@@ -114,14 +134,15 @@ public class LocalEngine {
         NodeContext nodeContext = new NodeContext(
                 plan, writer, connectorContext, evidence, faultSession,
                 new dev.faultora.schema.SchemaCatalog(plan.catalog().schemas()),
-                cancellation);
+                cancellation, runDeadline);
 
         // Step outputs accumulate into the expression context as nodes finish.
         ExpressionContext currentContext = context;
         boolean deadlineExceeded = false;
         try {
             for (PlanNode node : nodes) {
-                if (cancellation.get()) {
+                if (nodeContext.cancelled()) {
+                    cancellation.set(true);
                     break;
                 }
                 if (belongsToCleanup(node)) {
@@ -129,8 +150,7 @@ public class LocalEngine {
                 }
                 // The scenario deadline bounds the whole run: no further node
                 // starts once it elapses, and cleanup still runs below.
-                if (plan.scenarioTimeoutMs() > 0
-                        && System.currentTimeMillis() - startTime >= plan.scenarioTimeoutMs()) {
+                if (runDeadline.expired()) {
                     deadlineExceeded = true;
                     break;
                 }
@@ -150,6 +170,11 @@ public class LocalEngine {
                 tally.record(nodeResults.get(node.nodeId()));
             }
 
+            deadlineExceeded |= runDeadline.expired();
+            if (Thread.currentThread().isInterrupted()) {
+                cancellation.set(true);
+            }
+
             // Cleanup runs whatever stopped the run, which is what the
             // obligations were collected for. It runs against a cancellation
             // of its own, because the run's flag is set and every node checks
@@ -164,11 +189,26 @@ public class LocalEngine {
             // the failure mode a private-network runner can least afford.
             // Faults are rolled back either way, by the session's close below.
             if (!cleanupNodes.isEmpty()) {
-                runCleanup(cleanupNodes, nodeContext.withCancellation(new AtomicBoolean(false)),
-                        currentContext, nodeResults, tally);
+                boolean interrupted = Thread.interrupted();
+                try {
+                    runCleanup(cleanupNodes, nodeContext.forCleanup().withCancellation(new AtomicBoolean(false))
+                                    .withDeadline(Deadline.start(cleanupTimeoutMs)),
+                            currentContext, nodeResults, tally);
+                } finally {
+                    if (interrupted) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
             }
         } finally {
-            faultSession.close();
+            boolean interrupted = Thread.interrupted();
+            try {
+                faultSession.close();
+            } finally {
+                if (interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            }
         }
 
         return finish(plan, writer, nodeResults, tally, startTime, cancellation, deadlineExceeded);
@@ -268,7 +308,7 @@ public class LocalEngine {
         return bound;
     }
 
-    /** Cleanup runs after every other node, whether or not the run succeeded. */
+    /** Cleanup has one shared budget; exhausted obligations are reported as failures. */
     private void runCleanup(
             List<PlanNode> cleanupNodes,
             NodeContext nodeContext,
@@ -329,8 +369,8 @@ public class LocalEngine {
                     + ": " + failedNodes + " failed nodes, "
                     + tally.failedAssertions() + " failed assertions";
             if (deadlineExceeded) {
-                detail += "; scenario deadline of " + plan.scenarioTimeoutMs()
-                        + "ms elapsed before every node ran";
+                detail += "; scenario deadline of " + runTimeout(plan)
+                        + "ms elapsed during execution";
             }
             runError = new NormalizedError(
                     status == RunResult.Status.CANCELLED
@@ -353,6 +393,12 @@ public class LocalEngine {
                 plan.runId(), status, nodeResults.size(),
                 tally.passedAssertions(), tally.failedAssertions(),
                 nodeResults, totalDuration, runError);
+    }
+
+    private static long runTimeout(ExecutionPlan plan) {
+        long scenario = plan.scenarioTimeoutMs();
+        long policy = plan.targetPolicy() == null ? 0 : plan.targetPolicy().maxDurationMs();
+        return scenario > 0 && policy > 0 ? Math.min(scenario, policy) : Math.max(scenario, policy);
     }
 
     /**

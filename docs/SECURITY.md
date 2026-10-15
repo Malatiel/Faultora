@@ -344,6 +344,112 @@ origin cannot restore headers stripped on the first hop. Returning to the
 initial origin permits those headers again; HTTPS-to-HTTP downgrades remain
 blocked.
 
+**Request counts mean connector attempts (ADR-025).** `maxRequests` includes
+setup, execution, retries, polls and declared cleanup. Compilation admits the
+worst-case count; runtime grants each attempt atomically before connector
+preparation, even for manually assembled plans. An extra attempt fails with
+nonretryable `POLICY_VIOLATION` / `REQUEST_BUDGET_EXCEEDED` before preparation.
+Main work cannot spend the cleanup share reserved within that same limit.
+Granted attempts remain charged after failure; a missing connector or target
+does not spend one. HTTP redirects and internal Kafka/JDBC client exchanges
+remain within an attempt, so this policy is not a physical traffic ceiling.
+The journal and report metric count `OPERATION_ATTEMPTED` grants, including
+failed preparation and cleanup, instead of inferring traffic from retries or
+completed nodes. Old journals without that metric leave it unknown.
+
+**HTTP transport has one monotonic total budget per connector operation.** It
+covers connection acquisition, response headers, fixed-length and chunked body
+reads, and every redirect in that operation. Expiry cancels the active exchange
+and returns a retryable `TIMEOUT` with code `TOTAL_TIMEOUT`, without partial
+response evidence. A shorter socket inactivity timeout remains `REQUEST_TIMEOUT`.
+A nonpositive total budget is already exhausted and sends no request. Reported
+duration includes body reading; closing the connector aborts active exchanges
+and stops its deadline scheduler.
+
+Request preparation, policy DNS lookups, and secret-resolver callbacks remain
+synchronous: their elapsed time consumes the budget, checked before transport,
+but the transport cancellation cannot preempt arbitrary preparation code.
+
+The engine carries one monotonic execution budget narrowed by the scenario and
+target policy. Operation retries and backoff share their step budget; polling,
+repeat iterations and queued parallel children inherit the remaining group and
+run budget. Connect, request and total connector timeouts are clamped before
+preparation and recomputed before execution. An exhausted budget starts no new
+request or poll; a late successful callback cannot turn an expired parent
+scope into a passed group or run. Local waits and parallel future waits observe
+cancellation in bounded slices.
+
+This is cooperative deadline propagation: connectors and in-process callbacks
+must honour the budget they receive. It cannot forcibly stop arbitrary callback
+code that ignores timeouts or interruption. Cleanup still runs with a fresh
+cancellation context after execution stops. The caller's existing interrupt is
+cleared for cleanup and the final fault rollback sweep, then restored.
+
+Declared cleanup operations and waits share a separate monotonic budget that
+starts when cleanup begins. It defaults to 30 seconds in both CLI and runner;
+embedding callers may set a positive cleanup timeout on `LocalEngine`. Child
+timeouts can narrow that budget. Once exhausted, remaining obligations fail
+with `TIMEOUT` / `CLEANUP_DEADLINE_EXCEEDED` without sending another request,
+and the journal records cleanup completion with its failure count. Cleanup
+failures prevent a passed run; an already cancelled run stays cancelled.
+
+The final fault rollback sweep still runs even when declared cleanup exhausts
+its budget. It retains the fault providers' own I/O limits and is outside that
+budget: a cleanup timeout must not discard active faults. This does not promise
+a total bound on arbitrary in-process rollback callbacks or process shutdown.
+See ADR-024 for the phase boundary and remaining recovery limits.
+
+**HTTP request bodies are bounded before transport.** CLI and runner pass
+`TargetPolicy.maxPayloadBytes` as `maxRequestBytes` as well as the response
+limit. The HTTP connector checks bytes while encoding raw strings as UTF-8 or
+structured values as UTF-8 JSON; quotes, escaping and binary base64 expansion
+count toward the limit. Exactly the limit is allowed. An overflow returns
+nonretryable `POLICY_VIOLATION` / `REQUEST_TOO_LARGE` without sending headers,
+a body prefix or any other part of that HTTP request. The error carries the
+limit, not the rejected value.
+
+The connector body buffer grows only up to the limit, with fixed encoding
+buffers and a bounded final byte-array copy. It does not build an unlimited
+JSON string or fully encode an oversized raw string before checking. One
+validated byte array is reused for redirects that retain the body; redirects
+that change to GET discard it. GET, HEAD, DELETE and OPTIONS do not serialize
+an unused body. An absent limit defaults to 10 MiB; configured values must be
+exact positive integers at most 10 MiB, otherwise execution returns
+`VALIDATION` / `INVALID_PAYLOAD_LIMIT` before transport or secret resolution.
+
+This limit covers the emitted body bytes. Request lines, URLs and headers,
+already parsed input objects, generated-value snapshots and total process
+memory are separate controls; the body limit is not a claim about their size.
+
+**Kafka publication has an aggregate record-data limit.** CLI and runner pass
+`TargetPolicy.maxPayloadBytes` as `maxRecordBytes`. The unit is the sum of the
+encoded key, value, header names and header values; topic names, Kafka framing,
+batching and compression are outside this unit. Exactly the limit is allowed.
+A publish above it returns nonretryable `POLICY_VIOLATION` /
+`REQUEST_TOO_LARGE` before opening a producer or calling `send`. The error
+contains the limit, not message content. An absent setting defaults to 10 MiB;
+nonintegral, nonfinite, nonpositive or greater-than-10-MiB limits return
+`VALIDATION` / `INVALID_PAYLOAD_LIMIT`.
+
+Record fields share one remaining byte budget during construction. Raw binary
+values are checked before copying; text is encoded in bounded chunks; JSON is
+written to a bounded byte output using Kafka's existing representation. Null
+values retain tombstone semantics and differ from empty values. Headers are
+checked during traversal, not after an unrestricted map copy. Null names or
+values are omitted; normalized names keep their last value, with replacement
+refunding the previous contribution. Every candidate must fit during
+construction even if a later candidate might replace it. Size checking also
+bounds retained encoded field bytes, not arbitrary conversion callbacks,
+already parsed inputs, evidence snapshots or total process memory.
+
+The producer's serializers and operator-supplied interceptors cannot replace
+the checked representation: `interceptor.classes` is reserved alongside the
+serializers. Other Kafka transport and broker limits still apply and may
+reject a record that fits the policy; widening `max.request.size` cannot widen
+the record-data budget. Publication still waits for broker acknowledgement;
+the publication limit does not change observation selection or consumer
+ownership.
+
 **Classification cannot be assumed uniform across protocols.** It is a property
 of each connector, not of the engine, because each client resolves its own
 destinations. The HTTP connector classifies and pins; the Kafka and JDBC

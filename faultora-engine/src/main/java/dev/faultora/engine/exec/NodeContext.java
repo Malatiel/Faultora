@@ -23,6 +23,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * @param faults           the run's fault session (rollback obligations)
  * @param schemas          the catalog's schemas, resolved once for the run
  * @param cancellation     cooperative cancellation flag for the whole run
+ * @param deadline         monotonic parent budget shared across attempts and children
+ * @param requestBudget    shared connector-attempt budget, including a cleanup reserve
  */
 public record NodeContext(
         ExecutionPlan plan,
@@ -31,8 +33,38 @@ public record NodeContext(
         Map<NodeId, NodeEvidence> evidence,
         FaultSession faults,
         dev.faultora.schema.SchemaCatalog schemas,
-        AtomicBoolean cancellation
+        AtomicBoolean cancellation,
+        Deadline deadline,
+        RequestBudget requestBudget
 ) {
+    public NodeContext(ExecutionPlan plan, JournalWriter journal, ConnectorContext connectorContext,
+                       Map<NodeId, NodeEvidence> evidence, FaultSession faults,
+                       dev.faultora.schema.SchemaCatalog schemas, AtomicBoolean cancellation, Deadline deadline) {
+        this(plan, journal, connectorContext, evidence, faults, schemas, cancellation, deadline,
+                RequestBudget.forPlan(plan));
+    }
+
+    /** Existing callers without a parent scope acquire deadlines at node entry. */
+    public NodeContext(ExecutionPlan plan, JournalWriter journal, ConnectorContext connectorContext,
+                       Map<NodeId, NodeEvidence> evidence, FaultSession faults,
+                       dev.faultora.schema.SchemaCatalog schemas, AtomicBoolean cancellation) {
+        this(plan, journal, connectorContext, evidence, faults, schemas, cancellation, Deadline.none());
+    }
+
+    public NodeContext within(long timeoutMs) {
+        return withDeadline(deadline.limit(timeoutMs));
+    }
+
+    public NodeContext withDeadline(Deadline otherDeadline) {
+        return new NodeContext(plan, journal, connectorContext, evidence, faults,
+                schemas, cancellation, otherDeadline, requestBudget);
+    }
+
+    public NodeContext forCleanup() {
+        return new NodeContext(plan, journal, connectorContext, evidence, faults,
+                schemas, cancellation, deadline, requestBudget.forCleanup());
+    }
+
     /**
      * The same context writing evidence somewhere else — used by parallel
      * groups, whose children collect evidence concurrently before it is merged
@@ -40,7 +72,7 @@ public record NodeContext(
      */
     public NodeContext withEvidence(Map<NodeId, NodeEvidence> otherEvidence) {
         return new NodeContext(
-                plan, journal, connectorContext, otherEvidence, faults, schemas, cancellation);
+                plan, journal, connectorContext, otherEvidence, faults, schemas, cancellation, deadline, requestBudget);
     }
 
     /**
@@ -53,10 +85,10 @@ public record NodeContext(
      */
     public NodeContext withCancellation(AtomicBoolean otherCancellation) {
         return new NodeContext(
-                plan, journal, connectorContext, evidence, faults, schemas, otherCancellation);
+                plan, journal, connectorContext, evidence, faults, schemas, otherCancellation, deadline, requestBudget);
     }
 
     public boolean cancelled() {
-        return cancellation.get();
+        return cancellation.get() || Thread.currentThread().isInterrupted();
     }
 }

@@ -28,6 +28,9 @@ public class ConsoleRenderer implements ReportRenderer {
         output.write("Scenario digest: " + summary.scenarioDigest() + "\n");
         output.write("Catalog digest: " + summary.catalogDigest() + "\n");
         output.write("Seed: " + summary.seed() + "\n\n");
+        if (summary.connectorAttempts() != null) {
+            output.write("Connector attempts: " + summary.connectorAttempts() + "\n\n");
+        }
 
         output.write("--- Nodes ---\n");
         for (RunSummary.Node node : summary.nodes()) {

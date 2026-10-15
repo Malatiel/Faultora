@@ -43,6 +43,9 @@ public class HtmlRenderer implements ReportRenderer {
         output.write(metaRow("Scenario digest", summary.scenarioDigest()));
         output.write(metaRow("Catalog digest", summary.catalogDigest()));
         output.write(metaRow("Seed", String.valueOf(summary.seed())));
+        if (summary.connectorAttempts() != null) {
+            output.write(metaRow("Connector attempts", String.valueOf(summary.connectorAttempts())));
+        }
         output.write(metaRow("Duration", summary.durationMs() + "ms"));
         output.write(metaRow("Passed assertions", String.valueOf(summary.passedAssertions())));
         output.write(metaRow("Failed assertions", String.valueOf(summary.failedAssertions())));

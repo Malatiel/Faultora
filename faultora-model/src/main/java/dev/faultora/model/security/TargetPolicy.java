@@ -12,10 +12,10 @@ import java.util.Set;
  *
  * @param allowedTargets           explicit target allowlist (empty = all allowed)
  * @param allowedOperationClasses  permitted safety classifications
- * @param maxRequests              maximum total requests in a run
+ * @param maxRequests              maximum connector attempts across setup, execute, retries, polls and cleanup
  * @param maxConcurrency           maximum concurrent operations
- * @param maxDurationMs            maximum run duration in milliseconds
- * @param maxPayloadBytes          maximum request/response body size
+ * @param maxDurationMs            maximum execution duration in milliseconds, excluding cleanup and fault rollback
+ * @param maxPayloadBytes          maximum HTTP body bytes or aggregate Kafka publication key/value/header bytes
  * @param allowedFaultTypes        fault type allowlist (empty = no faults)
  * @param allowedEnvironments      environment name allowlist
  */

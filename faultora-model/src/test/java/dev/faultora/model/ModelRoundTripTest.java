@@ -151,6 +151,15 @@ class ModelRoundTripTest {
     }
 
     @Test
+    void connectorAttemptEventHasAStableDiscriminatorAndRoundTrips() throws IOException {
+        RunEvent event = new RunEvent.OperationAttempted("ignored", 1700000000000L,
+                new RunId("synthetic-run"), new NodeId("synthetic-node"), new OperationId("synthetic-operation"), 2);
+        String json = mapper.writeValueAsString(event);
+        assertThat(json).contains("OPERATION_ATTEMPTED", "attemptNumber");
+        assertThat(mapper.readValue(json, RunEvent.class)).isEqualTo(event);
+    }
+
+    @Test
     void typedIdRejectsInvalidValues() {
         assertThatThrownBy(() -> new OperationId("")).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new OperationId(null)).isInstanceOf(NullPointerException.class);

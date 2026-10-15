@@ -1,6 +1,7 @@
 package dev.faultora.runner;
 
 import dev.faultora.connector.http.HttpConnector;
+import dev.faultora.connector.kafka.KafkaConnector;
 import dev.faultora.connector.jdbc.JdbcConnector;
 import dev.faultora.engine.exec.TargetResolver;
 import dev.faultora.engine.journal.RunJournal;
@@ -249,6 +250,8 @@ public final class DispatchedRun {
                         ? TargetResolver.BASE_URL : TargetResolver.BASE_URL_PREFIX + targetId,
                 url));
         config.put("maxResponseBytes", policy.targets().maxPayloadBytes());
+        config.put(HttpConnector.MAX_REQUEST_BYTES, policy.targets().maxPayloadBytes());
+        config.put(KafkaConnector.MAX_RECORD_BYTES, policy.targets().maxPayloadBytes());
 
         Dispatch.Credentials credentials = dispatch.credentials();
         if (credentials.authSecretId() != null) {

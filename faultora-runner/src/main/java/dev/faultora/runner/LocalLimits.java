@@ -43,8 +43,8 @@ import java.util.stream.Collectors;
  *                                 all; empty permits <em>none</em>
  * @param maxConcurrency           the most parallel work it will do
  * @param maxDurationMs            the longest any run may take here
- * @param maxRequests              the most requests any run may make here
- * @param maxPayloadBytes          the largest body it will send or keep
+ * @param maxRequests              maximum connector attempts, including retries, polls and reserved cleanup
+ * @param maxPayloadBytes          maximum HTTP body bytes or aggregate Kafka publication key/value/header bytes
  */
 public record LocalLimits(
         Set<String> allowedTargets,

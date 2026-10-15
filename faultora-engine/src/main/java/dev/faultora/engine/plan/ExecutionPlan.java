@@ -62,9 +62,10 @@ public final class ExecutionPlan {
     public String catalogDigest() { return catalogDigest; }
 
     /**
-     * Scenario deadline in milliseconds from run start (0 = no deadline).
-     * Once it elapses the engine starts no further setup, execute, fault, or
-     * assertion node and proceeds to cleanup.
+     * Configured scenario deadline in milliseconds from run start (0 = absent).
+     * The effective run budget also respects the target policy. Its remaining
+     * time bounds child operations, retries, waits, and groups; once exhausted
+     * the engine proceeds to cleanup.
      */
     public long scenarioTimeoutMs() { return scenarioTimeoutMs; }
 

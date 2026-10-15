@@ -52,9 +52,9 @@ public final class NodeExecutor {
                 nodeId, NodeResults.typeOf(node), NodeResults.operationOf(node));
 
         try {
-            if (context.cancelled()) {
-                return NodeResults.failed(node, "Node cancelled",
-                        NormalizedError.ErrorCategory.CANCELLED, nodeStart);
+            RunResult.NodeResult stopped = stopped(node, context, nodeStart);
+            if (stopped != null) {
+                return stopped;
             }
 
             NodeEvidence evidence = new NodeEvidence(context.connectorContext().evidencePolicy());
@@ -88,6 +88,9 @@ public final class NodeExecutor {
 
             return report(node, context, evidence, nodeStart);
 
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return stopped(node, context, nodeStart);
         } catch (ExpressionEvaluationException unresolvable) {
             // An author's mistake, not the engine's: a template named something
             // this run has nothing bound at. Reporting it as INTERNAL would say
@@ -120,10 +123,10 @@ public final class NodeExecutor {
     private Optional<RunResult.NodeResult> awaitLocally(
             PlanNode.WaitNode node, NodeContext context,
             NodeEvidence evidence, long nodeStart) throws InterruptedException {
-        Waits.sleep(node.waitMs(), context.cancellation());
-        if (context.cancelled()) {
-            return Optional.of(NodeResults.failed(node, "Wait cancelled",
-                    NormalizedError.ErrorCategory.CANCELLED, nodeStart));
+        Waits.sleep(node.waitMs(), context.cancellation(), context.deadline());
+        RunResult.NodeResult stopped = stopped(node, context, nodeStart);
+        if (stopped != null) {
+            return Optional.of(stopped);
         }
         evidence.durationMs(System.currentTimeMillis() - nodeStart);
         return Optional.empty();
@@ -135,8 +138,9 @@ public final class NodeExecutor {
             throws InterruptedException {
         // Inputs are resolved once: every attempt of this node sends the
         // identical request.
+        NodeContext operationContext = context.within(node.deadlineMs());
         OperationResult result = invoker.invokeWithRetry(
-                node, context, inputResolver.resolve(node, context, expressionContext));
+                node, operationContext, inputResolver.resolve(node, operationContext, expressionContext));
         OperationInvoker.populateEvidence(evidence, result);
         return Optional.empty();
     }
@@ -172,6 +176,10 @@ public final class NodeExecutor {
      */
     private RunResult.NodeResult report(
             PlanNode node, NodeContext context, NodeEvidence evidence, long nodeStart) {
+        RunResult.NodeResult stopped = stopped(node, context, nodeStart);
+        if (stopped != null) {
+            return stopped;
+        }
         NodeId nodeId = node.nodeId();
         context.evidence().put(nodeId, evidence);
         long durationMs = System.currentTimeMillis() - nodeStart;
@@ -179,7 +187,8 @@ public final class NodeExecutor {
         context.journal().evidenceOf(nodeId, evidence);
 
         boolean expectError = node instanceof PlanNode.OperationNode operation
-                && operation.expectError();
+                && operation.expectError()
+                && !evidence.error().map(error -> "REQUEST_BUDGET_EXCEEDED".equals(error.code())).orElse(false);
 
         if (evidence.hasError() && !expectError) {
             NormalizedError error = evidence.error().orElse(null);
@@ -209,5 +218,23 @@ public final class NodeExecutor {
                 nodeId, NodeResults.typeOf(node), RunResult.Status.PASSED,
                 evidence.statusCode().orElse(-1), durationMs, List.of(),
                 expectError ? evidence.error().orElse(null) : null);
+    }
+
+    private RunResult.NodeResult stopped(PlanNode node, NodeContext context, long startedAt) {
+        boolean expired = context.deadline().expired();
+        if (!expired && !context.cancelled()) {
+            return null;
+        }
+        boolean cleanup = node instanceof PlanNode.CleanupNode
+                || node instanceof PlanNode.WaitNode wait && wait.cleanup();
+        NormalizedError error = new NormalizedError(
+                expired ? NormalizedError.ErrorCategory.TIMEOUT : NormalizedError.ErrorCategory.CANCELLED,
+                expired ? cleanup ? "CLEANUP_DEADLINE_EXCEEDED" : "DEADLINE_EXCEEDED" : "CANCELLED",
+                expired ? cleanup ? "Cleanup execution budget exhausted" : "Parent execution deadline exhausted"
+                        : "Node cancelled", false, Map.of());
+        long elapsed = System.currentTimeMillis() - startedAt;
+        context.journal().nodeFailed(node.nodeId(), error, elapsed);
+        return new RunResult.NodeResult(node.nodeId(), NodeResults.typeOf(node), RunResult.Status.FAILED,
+                -1, elapsed, List.of(), error);
     }
 }

@@ -37,10 +37,10 @@ public final class RepeatGroupExecutor {
             ExpressionContext expressionContext
     ) {
         long groupStart = System.currentTimeMillis();
+        context = context.within(group.deadlineMs());
         context.journal().nodeStarted(group.nodeId(), "repeat", null);
 
         Map<NodeId, RunResult.NodeResult> childResults = new LinkedHashMap<>();
-        long deadlineAtMs = group.deadlineMs() > 0 ? groupStart + group.deadlineMs() : 0;
         NormalizedError failure = null;
         int completedIterations = 0;
 
@@ -53,10 +53,10 @@ public final class RepeatGroupExecutor {
                         false, Map.of());
                 break;
             }
-            if (deadlineAtMs > 0 && System.currentTimeMillis() >= deadlineAtMs) {
+            if (context.deadline().expired()) {
                 failure = new NormalizedError(
                         NormalizedError.ErrorCategory.TIMEOUT, "DEADLINE_EXCEEDED",
-                        "Repeat group timeout of " + group.deadlineMs() + "ms elapsed after "
+                        "Repeat execution budget exhausted after "
                                 + completedIterations + " of " + group.iterations()
                                 + " iterations",
                         false, Map.of("completedIterations", completedIterations));
@@ -88,6 +88,13 @@ public final class RepeatGroupExecutor {
             completedIterations++;
         }
 
+        if (context.deadline().expired()) {
+            failure = new NormalizedError(NormalizedError.ErrorCategory.TIMEOUT, "DEADLINE_EXCEEDED",
+                    "Repeat group deadline exhausted", false, Map.of("completedIterations", completedIterations));
+        } else if (failure == null && context.cancelled()) {
+            failure = new NormalizedError(NormalizedError.ErrorCategory.CANCELLED, "CANCELLED",
+                    "Repeat group cancelled", false, Map.of());
+        }
         long durationMs = System.currentTimeMillis() - groupStart;
         if (failure == null) {
             context.journal().nodeCompleted(group.nodeId(), durationMs, -1, 0);

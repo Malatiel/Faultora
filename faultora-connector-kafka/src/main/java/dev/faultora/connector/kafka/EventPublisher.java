@@ -5,9 +5,7 @@ import dev.faultora.spi.evidence.MessageEvidence;
 import dev.faultora.spi.result.OperationResult;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
-import org.apache.kafka.common.header.internals.RecordHeader;
 
-import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
@@ -40,16 +38,18 @@ final class EventPublisher {
             ConnectorContext context
     ) {
         long startedAt = System.nanoTime();
-        byte[] payload = Messages.payloadOf(inputs.get(BODY));
-        Object declaredKey = inputs.get(KEY);
-        String key = declaredKey == null ? null : declaredKey.toString();
-        Map<String, String> headers = Messages.declaredHeaders(inputs.get(HEADERS));
+        RecordPayload encoded;
+        try {
+            encoded = RecordPayload.encode(inputs, context);
+        } catch (RecordPayload.TooLarge oversized) {
+            return OperationResult.failure(KafkaErrors.payloadLimit(oversized.limit()), elapsedMs(startedAt));
+        } catch (RecordPayload.InvalidLimit invalid) {
+            return OperationResult.failure(KafkaErrors.invalidPayloadLimit(invalid.getMessage()), elapsedMs(startedAt));
+        }
 
         ProducerRecord<byte[], byte[]> record = new ProducerRecord<>(
-                operation.topic(), null, key == null ? null
-                        : key.getBytes(StandardCharsets.UTF_8), payload);
-        headers.forEach((name, value) -> record.headers().add(new RecordHeader(
-                name, value == null ? null : value.getBytes(StandardCharsets.UTF_8))));
+                operation.topic(), null, encoded.key(), encoded.value());
+        encoded.headers().forEach(record.headers()::add);
 
         long timeoutMs = KafkaTimeouts.publish(context);
         try {
@@ -59,7 +59,7 @@ final class EventPublisher {
             MessageEvidence published = Messages.evidence(
                     metadata.topic(), metadata.partition(), metadata.offset(),
                     metadata.hasTimestamp() ? metadata.timestamp() : -1,
-                    key, headers, payload, context.evidencePolicy(), true);
+                    encoded.keyText(), encoded.headerText(), encoded.value(), context.evidencePolicy(), true);
 
             Map<String, Object> evidence = new LinkedHashMap<>();
             evidence.put(MessageEvidence.PUBLISHED, published);

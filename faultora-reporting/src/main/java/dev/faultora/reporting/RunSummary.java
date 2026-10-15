@@ -26,19 +26,22 @@ public final class RunSummary {
     private final RunEvent.RunFailed failed;
     private final List<Node> nodes;
     private final List<FaultTimeline.Window> faultWindows;
+    private final Long connectorAttempts;
 
     private RunSummary(
             RunEvent.RunStarted started,
             RunEvent.RunCompleted completed,
             RunEvent.RunFailed failed,
             List<Node> nodes,
-            List<FaultTimeline.Window> faultWindows
+            List<FaultTimeline.Window> faultWindows,
+            Long connectorAttempts
     ) {
         this.started = started;
         this.completed = completed;
         this.failed = failed;
         this.nodes = Collections.unmodifiableList(nodes);
         this.faultWindows = faultWindows;
+        this.connectorAttempts = connectorAttempts;
     }
 
     /** Fold a run's events into the reporting projection. */
@@ -46,6 +49,8 @@ public final class RunSummary {
         RunEvent.RunStarted started = null;
         RunEvent.RunCompleted completed = null;
         RunEvent.RunFailed failed = null;
+        long attempts = 0;
+        boolean attemptsKnown = false;
 
         List<Node> nodes = new ArrayList<>();
         Map<String, Node> byId = new LinkedHashMap<>();
@@ -59,7 +64,12 @@ public final class RunSummary {
 
         for (RunEvent event : events) {
             switch (event) {
-                case RunEvent.RunStarted runStarted -> started = runStarted;
+                case RunEvent.RunStarted runStarted -> {
+                    started = runStarted;
+                    attemptsKnown |= runStarted.resolvedConfig() != null
+                            && "connector-attempt".equals(runStarted.resolvedConfig().get("requestBudgetUnit"));
+                }
+                case RunEvent.OperationAttempted ignored -> { attempts++; attemptsKnown = true; }
                 case RunEvent.RunCompleted runCompleted -> completed = runCompleted;
                 case RunEvent.RunFailed runFailed -> failed = runFailed;
                 case RunEvent.OperationRetried retried ->
@@ -134,7 +144,7 @@ public final class RunSummary {
         }
 
         return new RunSummary(
-                started, completed, failed, nodes, FaultTimeline.windows(events));
+                started, completed, failed, nodes, FaultTimeline.windows(events), attemptsKnown ? attempts : null);
     }
 
     /** How a generated input is described in a report. */
@@ -227,6 +237,9 @@ public final class RunSummary {
     public int totalNodes() {
         return completed != null ? completed.totalNodes() : nodes.size();
     }
+
+    /** Granted connector attempts; null for old journals that did not record this metric. */
+    public Long connectorAttempts() { return connectorAttempts; }
 
     public int passedAssertions() {
         return completed != null ? completed.passedAssertions() : 0;
