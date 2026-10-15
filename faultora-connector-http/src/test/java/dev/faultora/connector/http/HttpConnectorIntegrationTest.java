@@ -10,6 +10,8 @@ import dev.faultora.model.security.SecretHandle;
 import dev.faultora.spi.context.ConnectorContext;
 import dev.faultora.spi.result.OperationResult;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.apache.hc.core5.http.ContentType;
 import org.apache.hc.core5.http.io.entity.InputStreamEntity;
 
@@ -361,6 +363,94 @@ class HttpConnectorIntegrationTest {
         } finally {
             connector.close();
         }
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {302, 307, 308})
+    void credentialsStayBoundToTheOriginalOriginAcrossMultipleRedirects(int status)
+            throws Exception {
+        AtomicReference<List<String>> originalHeaders = new AtomicReference<>();
+        AtomicReference<List<String>> firstForeignHeaders = new AtomicReference<>();
+        AtomicReference<List<String>> secondForeignHeaders = new AtomicReference<>();
+        AtomicReference<List<String>> returnedHeaders = new AtomicReference<>();
+        AtomicReference<String> foreignTrace = new AtomicReference<>();
+        HttpServer foreign = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        String foreignUrl = "http://127.0.0.1:" + foreign.getAddress().getPort();
+
+        server.createContext("/start", exchange -> {
+            originalHeaders.set(sensitiveHeadersOf(exchange));
+            exchange.getResponseHeaders().set("Location", foreignUrl + "/first");
+            exchange.sendResponseHeaders(status, -1);
+            exchange.close();
+        });
+        foreign.createContext("/first", exchange -> {
+            firstForeignHeaders.set(sensitiveHeadersOf(exchange));
+            exchange.getResponseHeaders().set("Location", "/second");
+            exchange.sendResponseHeaders(status, -1);
+            exchange.close();
+        });
+        foreign.createContext("/second", exchange -> {
+            secondForeignHeaders.set(sensitiveHeadersOf(exchange));
+            foreignTrace.set(exchange.getRequestHeaders().getFirst("X-Trace"));
+            exchange.getResponseHeaders().set("Location", baseUrl + "/returned");
+            exchange.sendResponseHeaders(status, -1);
+            exchange.close();
+        });
+        server.createContext("/returned", exchange -> {
+            returnedHeaders.set(sensitiveHeadersOf(exchange));
+            exchange.sendResponseHeaders(204, -1);
+            exchange.close();
+        });
+
+        SecretHandle handle = new SecretHandle(
+                "synthetic-auth", "***", "test", -1,
+                () -> "synthetic-token".toCharArray());
+        ConnectorContext context = new ConnectorContext(
+                EvidencePolicy.MINIMAL, handleId -> handle,
+                5000, 30000, 60000,
+                Map.of("baseUrl", baseUrl, "authSecretId", "synthetic-auth"));
+        TargetDefinition target = new TargetDefinition(
+                new TargetId("test"), "Test", baseUrl,
+                List.of(new ProtocolId("http")), List.of(), Map.of());
+        OperationDefinition operation = new OperationDefinition(
+                new OperationId("redirect-chain"), new ProtocolId("http"),
+                new TargetId("test"), SafetyClassification.READ_ONLY,
+                Map.of(), null, Map.of(), Map.of("method", "GET", "path", "/start"));
+
+        HttpConnector connector = new HttpConnector(DestinationPolicy.permissive());
+        try {
+            server.start();
+            foreign.start();
+            OperationResult result = connector.execute(
+                    connector.prepare(target, context), operation,
+                    Map.of("headers", Map.of(
+                            "Cookie", "synthetic-cookie",
+                            "Proxy-Authorization", "synthetic-proxy",
+                            "WWW-Authenticate", "synthetic-challenge",
+                            "X-Api-Key", "synthetic-key",
+                            "X-Trace", "synthetic-trace")), context);
+
+            assertThat(result.isSuccess()).isTrue();
+            assertThat(originalHeaders.get()).containsExactly(
+                    "Bearer synthetic-token", "synthetic-cookie", "synthetic-proxy",
+                    "synthetic-challenge", "synthetic-key");
+            assertThat(firstForeignHeaders.get()).hasSize(5)
+                    .allSatisfy(value -> assertThat(value).isNull());
+            assertThat(secondForeignHeaders.get()).hasSize(5)
+                    .allSatisfy(value -> assertThat(value).isNull());
+            assertThat(foreignTrace.get()).isEqualTo("synthetic-trace");
+            assertThat(returnedHeaders.get()).isEqualTo(originalHeaders.get());
+        } finally {
+            connector.close();
+            foreign.stop(0);
+        }
+    }
+
+    private static List<String> sensitiveHeadersOf(HttpExchange exchange) {
+        return List.of("Authorization", "Cookie", "Proxy-Authorization",
+                        "WWW-Authenticate", "X-Api-Key").stream()
+                .map(name -> exchange.getRequestHeaders().getFirst(name))
+                .toList();
     }
 
     // ---- HTTPS→HTTP downgrade blocking ----

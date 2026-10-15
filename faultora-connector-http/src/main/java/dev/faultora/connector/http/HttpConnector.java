@@ -267,8 +267,8 @@ public class HttpConnector implements Connector {
                 boolean schemeDowngrade = "https".equals(currentUri.getScheme())
                         && "http".equals(redirectScheme);
 
-                // Determine if this is a cross-origin redirect (scheme + host + port)
-                boolean crossOrigin = !originEquals(currentUri, redirectUri);
+                // Credentials belong to the original origin throughout the redirect chain.
+                boolean crossOrigin = !originEquals(resolvedUri, redirectUri);
 
                 // Block HTTPS→HTTP downgrade entirely (redirect itself is rejected)
                 if (schemeDowngrade) {
