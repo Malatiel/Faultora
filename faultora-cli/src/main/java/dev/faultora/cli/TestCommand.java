@@ -1,35 +1,25 @@
 package dev.faultora.cli;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-
-
-
-
 import dev.faultora.engine.LocalEngine;
 import dev.faultora.engine.exec.JournalWriter;
 import dev.faultora.engine.journal.RunJournal;
 import dev.faultora.engine.plan.PlanCompilationResult;
-import dev.faultora.engine.plan.PlanCompiler;
 import dev.faultora.engine.plan.PlanDiagnostic;
 import dev.faultora.engine.run.RunResult;
-
-
-import dev.faultora.model.catalog.ApiCatalog;
 import dev.faultora.model.events.RunEvent;
 import dev.faultora.model.identifier.RunId;
-import dev.faultora.model.security.ContentDigest;
 import dev.faultora.model.security.ExtensionPolicy;
 import dev.faultora.model.security.TargetPolicy;
-import dev.faultora.net.HostPolicy;
 import dev.faultora.spec.expression.ExpressionContext;
 import dev.faultora.spec.model.InputDeclaration;
 import dev.faultora.runtime.ExtensionRegistry;
 import dev.faultora.runtime.RunEnvironment;
+import dev.faultora.runtime.RunPreparation;
+import dev.faultora.runtime.RuntimeCapabilities;
+import dev.faultora.runtime.PlanPreview;
+import dev.faultora.runtime.CatalogAssembly;
 import dev.faultora.spec.model.ScenarioDocument;
-import dev.faultora.spec.parser.ParseResult;
-import dev.faultora.spec.parser.ScenarioParser;
-import dev.faultora.spec.validator.ScenarioValidator;
-import dev.faultora.spi.contract.AssertionProvider;
 
 import dev.faultora.spi.contract.FaultProvider;
 import dev.faultora.spi.contract.ReportRenderer;
@@ -91,28 +81,27 @@ public class TestCommand implements Command {
         try {
             String scenarioContent = Files.readString(
                     options.scenarioPath(), StandardCharsets.UTF_8);
-            ScenarioDocument scenario = loadScenario(scenarioContent);
-            if (scenario == null) {
+            TargetPolicy targetPolicy = RunPolicies.targetPolicy(options);
+            RunId runId = new RunId("run-" + options.seed());
+            RunPreparation.Result prepared = RunPreparation.prepare(new RunPreparation.Request(
+                    scenarioContent, CatalogLoader.documents(options), options.targetUrl(),
+                    extensionPolicy, targetPolicy, runId, options.seed(), null));
+            if (options.preview()) {
+                if (prepared.isSuccess()) {
+                    resolveDeclaredInputs(prepared.scenario(), options.inputs());
+                }
+                System.out.println(MAPPER.writeValueAsString(PlanPreview.describe(prepared,
+                        RuntimeCapabilities.describe(extensionPolicy, targetPolicy, RunPolicies.faultTypes(options)),
+                        targetPolicy)));
+                return prepared.isSuccess() ? FaultoraCli.EXIT_PASS : FaultoraCli.EXIT_INVALID_CONFIG;
+            }
+            prepared.diagnostics().forEach(diagnostic -> System.err.println(
+                    diagnostic.severity() + ": " + diagnostic.message()));
+            if (prepared.compilation() == null) {
                 return FaultoraCli.EXIT_INVALID_CONFIG;
             }
-
-            ApiCatalog catalog = CatalogLoader.load(options, scenario, extensionPolicy);
-            Map<String, FaultProvider> faultProviders = RunPolicies.faultProviders(options);
-            TargetPolicy targetPolicy = RunPolicies.targetPolicy(options, faultProviders);
-            ConnectorContext connectorContext = RunPolicies.connectorContext(
-                    options, targetPolicy, new EnvironmentSecretResolver());
-
-            ExpressionContext expressionContext = ExpressionContext.builder()
-                    .inputs(resolveDeclaredInputs(scenario, options.inputs()))
-                    .runMetadata(Map.of("seed", options.seed(), "target", options.targetUrl()))
-                    .build();
-
-            RunId runId = new RunId("run-" + options.seed());
-            PlanCompilationResult compilation = new PlanCompiler().compile(
-                    scenario, catalog, targetPolicy, runId, options.seed(),
-                    ContentDigest.sha256Uri(scenarioContent),
-                    ContentDigest.sha256Uri(MAPPER.writeValueAsString(catalog)));
-
+            ScenarioDocument scenario = prepared.scenario();
+            PlanCompilationResult compilation = prepared.compilation();
             if (compilation.plan() == null) {
                 System.err.println("Plan compilation failed:");
                 compilation.diagnostics().forEach(d -> System.err.println("  " + d.message()));
@@ -121,6 +110,14 @@ public class TestCommand implements Command {
             compilation.diagnostics().stream()
                     .filter(d -> d.severity() == PlanDiagnostic.Severity.WARNING)
                     .forEach(d -> System.err.println("Warning: " + d.message()));
+
+            ExpressionContext expressionContext = ExpressionContext.builder()
+                    .inputs(resolveDeclaredInputs(scenario, options.inputs()))
+                    .runMetadata(Map.of("seed", options.seed(), "target", options.targetUrl()))
+                    .build();
+            Map<String, FaultProvider> faultProviders = RunPolicies.faultProviders(options);
+            ConnectorContext connectorContext = RunPolicies.connectorContext(
+                    options, targetPolicy, new EnvironmentSecretResolver());
 
             Files.createDirectories(options.outputDir());
             Path journalPath = options.outputDir().resolve("events.ndjson");
@@ -146,6 +143,8 @@ public class TestCommand implements Command {
                 case ERROR, CANCELLED, SKIPPED -> FaultoraCli.EXIT_RUNNER_FAILURE;
             };
 
+        } catch (CatalogAssembly.AssemblyException refused) {
+            throw new CliException(refused.getMessage(), FaultoraCli.EXIT_INVALID_CONFIG);
         } catch (CliException e) {
             throw e;
         } catch (Exception e) {
@@ -245,27 +244,6 @@ public class TestCommand implements Command {
         }
     }
 
-    /** Parse and validate the scenario, or null when it is not runnable. */
-    private ScenarioDocument loadScenario(String scenarioContent) {
-        ParseResult<ScenarioDocument> parsed = new ScenarioParser().parse(scenarioContent);
-        if (!parsed.isSuccess()) {
-            System.err.println("Scenario validation failed:");
-            parsed.errors().forEach(d -> System.err.println("  " + d.message()));
-            return null;
-        }
-        parsed.warnings().forEach(d -> System.err.println("Warning: " + d.message()));
-
-        ParseResult<ScenarioDocument> validated =
-                new ScenarioValidator().validate(parsed.document());
-        if (!validated.isSuccess()) {
-            System.err.println("Scenario validation failed:");
-            validated.errors().forEach(d -> System.err.println("  " + d.message()));
-            return null;
-        }
-        validated.warnings().forEach(d -> System.err.println("Warning: " + d.message()));
-        return validated.document();
-    }
-
     /**
      * Merge CLI-provided inputs with the scenario's declared defaults.
      * Unknown input names and missing required inputs are configuration errors.
@@ -320,6 +298,7 @@ public class TestCommand implements Command {
         System.out.println("  -f, --format <formats>     Output formats: console,json,junit,html (default: console)");
         System.out.println("      --output <dir>         Output directory (default: faultora-results)");
         System.out.println("      --seed <n>             Random seed (default: current time)");
+        System.out.println("      --preview              Print structural JSON without executing or writing reports");
         System.out.println("      --allow-private        Allow connections to private/local networks");
         System.out.println("      --allow-destructive    Allow operations classified as destructive");
         System.out.println("      --auth-secret-id <id>  Secret handle ID for Authorization header (resolved from env)");

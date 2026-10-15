@@ -116,6 +116,7 @@ public class FaultoraCli {
         out.println("  validate   --scenario <file>                        Validate a scenario document");
         out.println("  discover   --from-openapi <file>                    List operations from OpenAPI");
         out.println("  test       --scenario <file> [options]              Run scenario against target");
+        out.println("             --preview                                Describe the plan without executing");
         out.println("  runner     --dispatcher <url> [options]             Serve a control plane, dialling out");
         out.println("  health     --file <status file>                     Is the runner in this container all right?");
         out.println("  migrate    <file or directory>... [--write]        Move documents to the current API version");

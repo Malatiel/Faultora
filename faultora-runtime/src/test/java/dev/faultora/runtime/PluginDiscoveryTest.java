@@ -252,7 +252,18 @@ class PluginDiscoveryTest {
                 assertThat(loader.loadClass(fixture.className())).isNotSameAs(StatusAssertionProvider.class);
             }
             Thread.currentThread().setContextClassLoader(loader);
-            return fixture.kind().discovered(new ExtensionPolicy(allowed, false, 0, Set.of(), Set.of()));
+            ExtensionPolicy policy = new ExtensionPolicy(allowed, false, 0, Set.of(), Set.of());
+            boolean discovered = fixture.kind().discovered(policy);
+            var capabilities = RuntimeCapabilities.describe(policy,
+                    new dev.faultora.model.security.TargetPolicy(Set.of(), Set.of(),
+                            10, 1, 1000, 1024, Set.of(), Set.of()), Set.of());
+            boolean advertised = switch (fixture.kind()) {
+                case ASSERTION -> capabilities.assertionTypes().contains("outside");
+                case RENDERER -> capabilities.reportFormats().contains("outside");
+                case IMPORTER -> capabilities.sourceTypes().contains("outside");
+            };
+            assertThat(advertised).as("capabilities must apply the execution discovery policy").isEqualTo(discovered);
+            return discovered;
         } finally {
             Thread.currentThread().setContextClassLoader(previous);
         }

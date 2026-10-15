@@ -7,7 +7,6 @@ import dev.faultora.engine.exec.TargetResolver;
 import dev.faultora.engine.journal.RunJournal;
 import dev.faultora.engine.exec.JournalWriter;
 import dev.faultora.engine.plan.PlanCompilationResult;
-import dev.faultora.engine.plan.PlanCompiler;
 import dev.faultora.engine.run.RunResult;
 import dev.faultora.model.identifier.RunId;
 import dev.faultora.model.security.ExtensionPolicy;
@@ -18,11 +17,10 @@ import dev.faultora.runner.protocol.DispatchedDocument;
 import dev.faultora.runner.protocol.Refusal;
 import dev.faultora.runtime.CatalogAssembly;
 import dev.faultora.runtime.RunEnvironment;
+import dev.faultora.runtime.RunPreparation;
+import dev.faultora.runtime.UnenforceablePolicy;
 import dev.faultora.runtime.RunEvidence;
 import dev.faultora.spec.expression.ExpressionContext;
-import dev.faultora.spec.model.ScenarioDocument;
-import dev.faultora.spec.parser.ParseResult;
-import dev.faultora.spec.parser.ScenarioParser;
 import dev.faultora.spi.context.ConnectorContext;
 import dev.faultora.spi.contract.FaultProvider;
 
@@ -124,18 +122,10 @@ public final class DispatchedRun {
             return Outcome.refused(verdict.refusal());
         }
 
-        ParseResult<ScenarioDocument> parsed = new ScenarioParser().parse(dispatch.scenario());
-        if (!parsed.isSuccess() || parsed.document() == null) {
-            return Outcome.refused(Refusal.of(Refusal.Reason.SCENARIO_INVALID,
-                    "the scenario arrived intact and does not parse: "
-                            + firstProblem(parsed)));
-        }
-        ScenarioDocument scenario = parsed.document();
-
         try {
-            return run(dispatch, scenario, verdict.policy(), faultProviders,
+            return run(dispatch, verdict.policy(), faultProviders,
                     extensions, receivedAt, whileRunning);
-        } catch (CatalogAssembly.AssemblyException cannotAssemble) {
+        } catch (CatalogAssembly.AssemblyException | UnenforceablePolicy cannotAssemble) {
             return Outcome.refused(Refusal.of(Refusal.Reason.MISSING_CAPABILITY,
                     cannotAssemble.getMessage()));
         } catch (StartupFailure notStarted) {
@@ -163,7 +153,6 @@ public final class DispatchedRun {
 
     private Outcome run(
             Dispatch dispatch,
-            ScenarioDocument scenario,
             EffectivePolicy policy,
             Map<String, FaultProvider> faultProviders,
             ExtensionPolicy extensions,
@@ -175,15 +164,15 @@ public final class DispatchedRun {
             documents.add(new CatalogAssembly.Document(
                     document.family(), document.content()));
         }
-        var catalog = documents.isEmpty()
-                ? CatalogAssembly.fromScenario(
-                        scenario, dispatch.targetRedirects().getOrDefault("", ""))
-                : CatalogAssembly.assemble(documents, extensions);
-
-        RunId runId = new RunId(dispatch.runId());
-        PlanCompilationResult compilation = new PlanCompiler().compile(
-                scenario, catalog, policy.targets(), runId, dispatch.seed(),
-                dispatch.scenarioDigest(), dispatch.catalogDigest());
+        RunPreparation.Result prepared = RunPreparation.prepare(new RunPreparation.Request(
+                dispatch.scenario(), documents, dispatch.targetRedirects().getOrDefault("", ""),
+                extensions, policy.targets(), new RunId(dispatch.runId()), dispatch.seed(),
+                dispatch.catalogDigest()));
+        if (prepared.compilation() == null) {
+            return Outcome.refused(Refusal.of(Refusal.Reason.SCENARIO_INVALID,
+                    "the scenario does not validate here"));
+        }
+        PlanCompilationResult compilation = prepared.compilation();
         if (compilation.plan() == null) {
             StringBuilder why = new StringBuilder("the scenario does not compile here:");
             compilation.diagnostics().forEach(
@@ -274,11 +263,6 @@ public final class DispatchedRun {
         return new ConnectorContext(
                 policy.evidence() == null ? RunEvidence.defaultPolicy() : policy.evidence(),
                 secrets::apply, 5000, 30000, 60000, config);
-    }
-
-    private static String firstProblem(ParseResult<ScenarioDocument> parsed) {
-        return parsed.diagnostics().isEmpty()
-                ? "no diagnostic" : parsed.diagnostics().get(0).message();
     }
 
     /**

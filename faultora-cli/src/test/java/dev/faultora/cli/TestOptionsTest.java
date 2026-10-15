@@ -10,6 +10,24 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class TestOptionsTest {
 
     @Test
+    void previewDoesNotEnableARealRun() {
+        assertThat(TestOptions.parse(List.of("--scenario", "scenario.yaml", "--preview")).preview()).isTrue();
+        assertThat(TestOptions.parse(List.of("--scenario", "scenario.yaml")).preview()).isFalse();
+    }
+
+    @Test
+    void faultDescriptionsMatchTheProvidersWithoutOpeningAManagementClient() {
+        var options = TestOptions.parse(List.of("--scenario", "scenario.yaml"));
+        assertThat(RunPolicies.faultTypes(options)).containsExactlyInAnyOrderElementsOf(
+                RunPolicies.faultProviders(options).get("local").capabilities());
+        var network = TestOptions.parse(List.of("--scenario", "scenario.yaml",
+                "--toxiproxy-url", "http://admin.example.com"));
+        assertThat(RunPolicies.faultTypes(network)).containsAll(RunPolicies.faultTypes(options))
+                .containsAll(dev.faultora.faults.toxiproxy.ToxiproxyFaultProvider.supportedFaultTypes());
+        assertThat(RunPolicies.faultTypes(options)).doesNotContain("network-reset");
+    }
+
+    @Test
     void aPlainTargetBindsEveryCatalogTarget() {
         TestOptions options = TestOptions.parse(List.of(
                 "--scenario", "scenario.yaml", "--target", "http://localhost:8081"));

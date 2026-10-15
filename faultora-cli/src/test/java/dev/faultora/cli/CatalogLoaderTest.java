@@ -1,7 +1,7 @@
 package dev.faultora.cli;
 
 import dev.faultora.model.catalog.ApiCatalog;
-import dev.faultora.spec.model.ScenarioDocument;
+import dev.faultora.runtime.CatalogAssembly;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -73,7 +73,7 @@ class CatalogLoaderTest {
         }
         TestOptions options = TestOptions.parse(
                 List.of(arguments(openApiPath, asyncApiPath)));
-        return CatalogLoader.load(options, scenario(), RunPolicies.extensionPolicy(options));
+        return CatalogAssembly.assemble(CatalogLoader.documents(options), RunPolicies.extensionPolicy(options));
     }
 
     private static String[] arguments(Path openApi, Path asyncApi) {
@@ -83,10 +83,6 @@ class CatalogLoaderTest {
         }
         return new String[]{"--scenario", "unused.yaml", "--openapi",
                 (openApi == null ? asyncApi : openApi).toString()};
-    }
-
-    private static ScenarioDocument scenario() {
-        return null;
     }
 
     @Test

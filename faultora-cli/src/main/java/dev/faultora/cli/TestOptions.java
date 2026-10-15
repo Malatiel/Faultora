@@ -34,6 +34,7 @@ import java.util.Map;
  * @param inputs        values for declared scenario inputs
  * @param allowedExtensions classes of non-built-in extensions this run permits
  * @param helpRequested whether the user asked for help instead of a run
+ * @param preview      whether to describe the plan without executing it
  */
 record TestOptions(
         Path scenarioPath,
@@ -53,7 +54,8 @@ record TestOptions(
         String toxiproxyUrl,
         Map<String, Object> inputs,
         List<String> allowedExtensions,
-        boolean helpRequested
+        boolean helpRequested,
+        boolean preview
 ) {
     static final String DEFAULT_TARGET_URL = "http://localhost:8080";
 
@@ -76,6 +78,7 @@ record TestOptions(
         long seed = System.currentTimeMillis();
         boolean allowPrivate = false;
         boolean allowDestructive = false;
+        boolean preview = false;
         String authSecretId = null;
         String toxiproxyUrl = null;
         Map<String, Object> inputs = new LinkedHashMap<>();
@@ -106,6 +109,7 @@ record TestOptions(
                 case "--seed" -> seed = parseSeed(requireNext(it, "--seed"));
                 case "--allow-private" -> allowPrivate = true;
                 case "--allow-destructive" -> allowDestructive = true;
+                case "--preview" -> preview = true;
                 case "--auth-secret-id" -> authSecretId = requireNext(it, "--auth-secret-id");
                 case "--toxiproxy-url" -> toxiproxyUrl = requireNext(it, "--toxiproxy-url");
                 case "--allow-extension" ->
@@ -141,7 +145,7 @@ record TestOptions(
                 scenarioPath, openApiPath, asyncApiPath, observationsPath,
                 databaseUser, databaseSecretId, targetUrl, Map.copyOf(targetUrls), formats,
                 outputDir, seed, allowPrivate, allowDestructive, authSecretId, toxiproxyUrl,
-                Map.copyOf(inputs), List.copyOf(allowedExtensions), false);
+                Map.copyOf(inputs), List.copyOf(allowedExtensions), false, preview);
     }
 
     /**
@@ -162,7 +166,7 @@ record TestOptions(
     private static TestOptions help() {
         return new TestOptions(
                 null, null, null, null, null, null, DEFAULT_TARGET_URL, Map.of(), List.of(), Path.of("."),
-                0, false, false, null, null, Map.of(), List.of(), true);
+                0, false, false, null, null, Map.of(), List.of(), true, false);
     }
 
     private static List<String> parseFormats(String value) {
