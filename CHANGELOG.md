@@ -10,6 +10,10 @@ ADR-023 exists to stop. What has landed so far:
 
 ### Changed
 
+- **A failed run-environment initialization releases the clients already
+  opened.** A later connector, provider discovery or engine-construction
+  failure no longer leaves earlier clients without an owning environment.
+  Close failures preserve the original initialization error.
 - **A non-built-in extension without a manifest is refused.** This is a
   breaking change for a third-party extension permitted by class name today: it
   will stop loading, and a scenario naming its assertion type will fail with an

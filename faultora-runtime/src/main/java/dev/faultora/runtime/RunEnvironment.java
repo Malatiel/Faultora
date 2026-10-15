@@ -18,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
  * The clients a compiled plan needs, and the engine over them.
@@ -78,6 +79,15 @@ public final class RunEnvironment implements AutoCloseable {
             ExtensionPolicy extensions,
             boolean allowPrivate
     ) {
+        return open(plan, faultProviders, extensions, protocol -> openConnector(protocol, allowPrivate));
+    }
+
+    static RunEnvironment open(
+            ExecutionPlan plan,
+            Map<String, FaultProvider> faultProviders,
+            ExtensionPolicy extensions,
+            Function<String, Connector> openConnector
+    ) {
         // Before anything is opened: a policy describing a control this build
         // does not have must stop the run rather than let it proceed looking
         // enforced. Here because this is the one composition root both the CLI
@@ -87,30 +97,49 @@ public final class RunEnvironment implements AutoCloseable {
         List<AutoCloseable> opened = new ArrayList<>();
         Map<String, Connector> connectors = new LinkedHashMap<>();
 
-        HttpConnector http = allowPrivate
-                ? new HttpConnector(DestinationPolicy.permissive())
-                : new HttpConnector();
-        opened.add(http);
-        LocalFaultProvider localFaults = (LocalFaultProvider) faultProviders.get("local");
-        connectors.put("http", localFaults == null
-                ? http : new FaultInjectingConnector(http, localFaults));
+        try {
+            Connector http = openConnector.apply("http");
+            opened.add(http);
+            LocalFaultProvider localFaults = (LocalFaultProvider) faultProviders.get("local");
+            connectors.put("http", localFaults == null
+                    ? http : new FaultInjectingConnector(http, localFaults));
 
-        HostPolicy hosts = allowPrivate ? HostPolicy.permissive() : HostPolicy.defaultPolicy();
-        if (speaks(plan, KafkaConnector.PROTOCOL)) {
-            KafkaConnector kafka = new KafkaConnector(hosts);
-            opened.add(kafka);
-            connectors.put(KafkaConnector.PROTOCOL, kafka);
-        }
-        if (speaks(plan, JdbcConnector.PROTOCOL)) {
-            JdbcConnector jdbc = new JdbcConnector(hosts);
-            opened.add(jdbc);
-            connectors.put(JdbcConnector.PROTOCOL, jdbc);
-        }
+            for (String protocol : List.of(KafkaConnector.PROTOCOL, JdbcConnector.PROTOCOL)) {
+                if (speaks(plan, protocol)) {
+                    Connector connector = openConnector.apply(protocol);
+                    opened.add(connector);
+                    connectors.put(protocol, connector);
+                }
+            }
 
-        return new RunEnvironment(
-                new LocalEngine(connectors,
-                        ExtensionRegistry.assertionProviders(extensions), faultProviders),
-                opened);
+            return new RunEnvironment(
+                    new LocalEngine(connectors,
+                            ExtensionRegistry.assertionProviders(extensions), faultProviders),
+                    opened);
+        } catch (RuntimeException | Error openingFailure) {
+            for (AutoCloseable client : opened.reversed()) {
+                try {
+                    client.close();
+                } catch (Exception closeFailure) {
+                    if (closeFailure != openingFailure) {
+                        openingFailure.addSuppressed(closeFailure);
+                    }
+                }
+            }
+            throw openingFailure;
+        }
+    }
+
+    private static Connector openConnector(String protocol, boolean allowPrivate) {
+        return switch (protocol) {
+            case "http" -> allowPrivate
+                    ? new HttpConnector(DestinationPolicy.permissive()) : new HttpConnector();
+            case KafkaConnector.PROTOCOL -> new KafkaConnector(
+                    allowPrivate ? HostPolicy.permissive() : HostPolicy.defaultPolicy());
+            case JdbcConnector.PROTOCOL -> new JdbcConnector(
+                    allowPrivate ? HostPolicy.permissive() : HostPolicy.defaultPolicy());
+            default -> throw new IllegalArgumentException("Unsupported connector protocol: " + protocol);
+        };
     }
 
     /** The engine to execute with. */
