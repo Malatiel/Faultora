@@ -6,7 +6,9 @@ This page assigns them to versions and says what must be true before 1.0.
 
 ## 1. The rule that shapes everything
 
-**1.0 freezes the scenario API and the result schema.** After it, the 1.x line
+**1.0 ships a frozen scenario API and result schema.** The scenario API was
+already frozen in 0.10.0 (ADR-022); result-schema compatibility and the remaining
+M6 gates still have to be qualified before 1.0. After it, the 1.x line
 carries fixes only: defects, security updates, and documentation. Anything that
 changes what a scenario may say, what a report contains, or what an extension
 implements has to land before 1.0 — or wait for 2.0.
@@ -24,7 +26,7 @@ Three consequences worth stating plainly:
   runners to execute exactly that. A team that invests in a scenario suite
   before 1.0 keeps it afterwards.
 
-## 2. Where 0.8.0 stands
+## 2. Where 0.10.1 stands
 
 | Milestone | State |
 |---|---|
@@ -32,9 +34,9 @@ Three consequences worth stating plainly:
 | M1 — HTTP vertical slice | complete |
 | M2 — Reliability engine | complete |
 | M3 — Event-driven and cross-component | complete |
-| M4 — Private-network runner | not started |
-| M5 — Distributed execution | not started |
-| M6 — 1.0 hardening | not started |
+| M4 — Private-network runner | shipped in 0.9.1; runner and image qualification suites exist |
+| M5 — Distributed execution | deferred to 2.0 |
+| M6 — 1.0 hardening | in progress: scenario API frozen; plugin manifest and artifact identity implemented |
 
 Shipped and working: OpenAPI, AsyncAPI and observation-catalog import into one
 catalog, HTTP, Kafka and JDBC connectors under one destination policy, scenario
@@ -49,6 +51,14 @@ events and a database against the payment recovery reference system, each one
 run again against the variant that removes the property it checks, and failing
 there.
 
+The remaining M6 work includes result and runner-protocol compatibility,
+out-of-process extensions and enforceable isolation, supply-chain qualification,
+operational readiness, security qualification, and user experience. ADR-023
+separates manifest and artifact identity from process isolation: the former
+already exists, while a policy requiring the latter is still refused. Existing
+tests must actually run before their guarantees count toward a release gate;
+a skipped container or operating-system check is not qualification.
+
 ## 3. Releases
 
 | Version | Milestone | User-visible outcome |
@@ -57,6 +67,7 @@ there.
 | 0.7 | M3 part 1 | A scenario can publish and observe Kafka events |
 | 0.8 | M3 part 2 | One scenario proves a business invariant across HTTP, events, and a database |
 | 0.9 | M4 | Runs execute inside a private network without inbound access |
+| 0.10 | M6 part 1 | Frozen scenario API, migration tooling, and compatibility diagnostics |
 | **1.0** | M6 | Frozen contracts, isolated extensions, signed artifacts, operational docs |
 | 2.0 | M5 | A controller shards one run across workers and returns one result |
 

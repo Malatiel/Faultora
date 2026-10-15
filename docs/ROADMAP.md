@@ -7,9 +7,12 @@ Primary delivery strategy: walking skeleton followed by vertical slices
 ## 1. Outcome
 
 Faultora reaches version 1.0 when a team can run it inside its own environment,
-import an API description, compose reliability scenarios, distribute execution
-when needed, inject bounded failures, verify business invariants, and receive
-reproducible CI-ready evidence.
+import an API description, compose reliability scenarios, execute locally or
+through a private-network runner, inject bounded failures, verify business
+invariants, and receive reproducible CI-ready evidence.
+
+Distributed execution is assigned to 2.0 by the release plan. Milestone IDs
+identify work packages; their numeric order does not override that assignment.
 
 The roadmap deliberately delivers a useful local product before adding a
 controller, runners, a web interface, or Kubernetes-specific features.
@@ -32,8 +35,8 @@ the [release plan](RELEASE_PLAN.md).
 | M2 — Reliability runner | Scenarios express concurrency, retries, eventual assertions, and network faults | Deterministic fault scenario suite |
 | M3 — Distributed systems | Kafka and database observations verify cross-component invariants | Payment workflow recovery suite |
 | M4 — Private runner | Tests run from a controlled runner inside another network | Remote run with policy enforcement |
-| M5 — Distributed execution | Controller schedules reproducible shards across workers | Multi-worker recovery and scale tests |
 | M6 — 1.0 hardening | Stable scenario API, extension contracts, packaging, and operational docs | Release qualification suite |
+| M5 — Distributed execution (2.0) | Controller schedules reproducible shards across workers | Multi-worker recovery and scale tests |
 
 In addition to the primary proof above, each milestone has a security gate from
 the security milestone matrix.
@@ -55,8 +58,8 @@ flowchart LR
     H --> I["Fault injection"]
     I --> J["Kafka and observations"]
     J --> K["Runner protocol"]
-    K --> L["Controller and workers"]
-    L --> M["1.0 hardening"]
+    K --> M["1.0 hardening"]
+    M --> L["Controller and workers (2.0)"]
 ```
 
 Work may proceed in parallel only after the upstream contract is merged or a
@@ -618,7 +621,8 @@ target, and the controller returns one reproducible result.
 - Signed artifacts, checksums, CycloneDX SBOM, and SLSA-compatible build
   provenance.
 - Verifiable offline bundle with no runtime downloads.
-- Helm chart for controller, workers, and runners.
+- Runner deployment packaging. Controller and worker Helm charts belong to
+  M5 in 2.0.
 - Upgrade and rollback documentation.
 
 #### M6-04 — Operational readiness
@@ -653,7 +657,8 @@ target, and the controller returns one reproducible result.
 
 - A new team completes the documented onboarding flow without source changes.
 - Scenario API and result schema compatibility are tested.
-- Local, CI, runner, and distributed modes pass the shared qualification suite.
+- Local, CI, and private-runner modes pass the shared qualification suite.
+  Distributed modes join this gate with M5 in 2.0.
 - Cleanup, cancellation, replay, and upgrade paths are verified.
 - The release has no unresolved critical security or data-integrity findings.
 - Release signatures, SBOM, provenance, and offline installation are verified
