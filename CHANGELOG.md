@@ -8,8 +8,41 @@ Extension isolation arrives as one release rather than a version per slice: a
 release shipping a manifest and calling it isolation would be the defect
 ADR-023 exists to stop. What has landed so far:
 
+### Added
+
+- **`faultora test --preview` prepares a scenario without executing it.** The
+  structural JSON preview lists actions, faults, budgets and refusals before
+  opening a run environment or contacting targets. It is descriptive and is
+  not permission to execute the run.
+- **`faultora --diagnostics=json <command>` writes a versioned machine result
+  to stdout.** It includes diagnostic codes and locations, the existing exit
+  code, and a preview when requested. Scripts can keep using the same exit
+  codes. Command prose is suppressed in machine mode; technical logs remain
+  on stderr.
+
 ### Changed
 
+- **Journals include `OPERATION_ATTEMPTED`.** A strict reader that rejects
+  unknown event types must be updated before reading new journals. The event
+  describes a connector attempt, not each HTTP redirect or driver exchange.
+- **`MessagePublished.key` is always null in journal events.** Keys remain
+  available to authorized in-memory assertions. Readers that correlated
+  exported messages by key must adapt; exports retain counts and digests.
+- **`maxRequests` is enforced during execution across retries, polls and
+  cleanup.** Cleanup has a reserve within the same limit. Compilation counts
+  declared maximum attempts too; reaching the runtime budget refuses another
+  connector call rather than letting retries or polling widen the policy.
+- **Unavailable evidence no longer looks like a failed assertion over real
+  data.** Checks requiring withheld or incomplete evidence report
+  `INDETERMINATE`; incomplete values are not bound through `outputAs`.
+  Assertion and connector diagnostics exported to journals, results and
+  reports use the structural disclosure policy in ADR-026 rather than raw
+  provider messages or exception text.
+- **Evidence snapshots carry body completeness.** Missing `bodyComplete` in
+  older JSON is treated as false. Header readability is determined by actual
+  presence in the snapshot, without regard to case; the original header
+  policy is not transferred. Consumers must not infer that an absent header
+  was readable.
 - **A non-built-in extension without a manifest is refused.** This is a
   breaking change for a third-party extension permitted by class name today: it
   will stop loading, and a scenario naming its assertion type will fail with an
@@ -18,10 +51,13 @@ ADR-023 exists to stop. What has landed so far:
   one — but the version it breaks on should be the version somebody read about,
   not the one they were upgrading to. Add `META-INF/faultora-plugin.yaml`
   declaring `id`, `version` and `requiresApi`.
-- **A plugin is identified by the digest of its artifact**, not only by its
-  class name. Naming the class still works and still means "any jar offering
-  that class"; naming the digest means exactly those bytes. The refusal quotes
-  the digest to paste.
+- **A plugin can be granted by its expected artifact digest**, not only by
+  class name. A class-name grant permits any artifact offering that class;
+  the digest identifies the inspected file on disk. It does not attest to
+  class bytes already read by the loader or protect against concurrent local
+  writes. Runtime and plugin locations must be writable only by the operator
+  or deployment mechanism; see SEC-08 and ADR-004. The refusal quotes the
+  digest to paste.
 - **A plugin declaring a network destination or a secret handle is refused**,
   because nothing can hold it to that declaration while it shares this JVM's
   sockets and resolver. ADR-023 says which slice makes them grantable.
@@ -30,6 +66,30 @@ ADR-023 exists to stop. What has landed so far:
   anything while describing process isolation, a memory ceiling, a network
   allowlist and a secret allowlist. Nothing in a default configuration sets
   any of them, so no existing run changes.
+
+### Fixed
+
+- **Journal failures and failed or unconfirmed fault rollback surface as
+  infrastructure `ERROR`.** A successful terminal result no longer hides a
+  lost journal or rollback obligation. Cleanup failures are also reflected
+  in the outcome rather than silently discarded.
+- **Malformed plugin manifests are refused before provider initialization or
+  construction.** Validation rejects duplicate fields, trailing YAML
+  documents, invalid version bounds and excessive nesting. Artifact hashing
+  is bounded to 128 MiB; manifest inspection to 64 KiB uncompressed, including
+  directory-loaded providers.
+- **Redirects keep credentials with their original origin.** Origin changes
+  remove sensitive headers, and redirects that would forward a request body
+  to a different origin are refused instead of replaying the payload there.
+- **Execution phases share their remaining time budgets.** Retry, polling and
+  group operations do not restart a full timeout for every attempt. Cleanup
+  gets its own finite shared budget after cancellation or main-run expiry;
+  late callbacks cannot turn an expired operation into a pass. HTTP response
+  headers, streaming bodies and redirect chains share the total HTTP budget.
+- **HTTP and Kafka payload limits are enforced at their encoding and read
+  boundaries.** Oversized HTTP requests are refused before sending, response
+  reads are bounded, and Kafka record payloads cannot bypass the effective
+  policy limit.
 
 ## 0.10.1 — 2026-08-11
 
