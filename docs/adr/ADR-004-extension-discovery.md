@@ -4,6 +4,8 @@
 
 Accepted; amended in 0.4.0 to separate discovered extensions from
 security-scoped ones.
+Amended during M6 hardening for pre-instantiation validation and built-in
+class identity and artifact origin.
 
 ## Context
 
@@ -24,6 +26,26 @@ project's "no implicit egress" and "safe defaults" principles.
 - Use **Java SPI (`ServiceLoader`)** for extension discovery.
 - Each extension type defines a service interface in `faultora-spi`, and
   implementations register via `META-INF/services/` files.
+- Inspect classpath service descriptors through `ServiceLoader.Provider`
+  before calling `get()`. Check artifact identity, manifest, API compatibility,
+  and requested capabilities before provider initialization or construction.
+- Hash external artifacts incrementally with a 128 MiB byte ceiling. Read at
+  most 64 KiB of uncompressed manifest data, including for directory-loaded
+  providers. Directory manifests belong to the provider's code source, rather
+  than whichever parent classloader first supplies a resource of that name.
+- Require a nonblank manifest ID and version and a `requiresApi` range with at
+  least one bound. Version bounds use nonnegative integer components separated
+  by dots, optionally followed by a `-` or `+` suffix, with a maximum of 128
+  characters per bound; reject overflow and reversed ranges. Reject malformed
+  YAML, duplicate fields, trailing documents, unknown fields, and nesting deeper
+  than 16 levels. JAR and manifest inputs must be regular files. Inspection
+  failures refuse the provider with a fixed diagnostic that does not echo
+  manifest contents.
+- Built-in status comes from the explicit inventory of shipped implementation
+  classes in the runtime's defining classloader, not a package prefix. In a
+  merged release, a built-in must also originate from the runtime artifact.
+  Detect that layout by inspecting the runtime's own contents, not by trusting
+  where another class says it came from.
 - **Discovered from the classpath:** source importers, assertion providers,
   and report renderers. The CLI resolves them by their own metadata — an
   importer by source family, an assertion provider by `type()`, a renderer by
@@ -59,14 +81,21 @@ project's "no implicit egress" and "safe defaults" principles.
 - Adding a connector or fault provider still requires a deliberate change to
   the composition root — accepted, because that is where the policy that
   bounds it is assembled.
-- `ExtensionPolicy.allowedExtensions` **is consulted at discovery**. An
-  implementation outside the project's own package joins a run only when the
-  operator names it with `--allow-extension`; otherwise it is refused and
-  named on stderr. Identity is checked by class name, which is what a
-  classpath can offer: verifying a digest, and isolating an extension from the
-  run, arrive with the out-of-process plugin protocol (M6-02), and SEC-08 is
-  satisfied only in part until then.
-- Extension isolation remains limited to classloader boundaries until the
-  out-of-process plugin protocol (M6-02).
+- `ExtensionPolicy.allowedExtensions` **is consulted before instantiation**.
+  An implementation outside the trusted built-in inventory joins a run only
+  with an operator grant by class name or calculated artifact digest, plus a
+  compatible manifest without unenforceable capabilities. Refusal is named on
+  stderr without executing the provider's initializer or constructor.
+- Adding a shipped built-in requires updating the trusted inventory as well as
+  its service registration. Third-party service discovery remains dynamic.
+- The runtime and core modules in a modular/development bootstrap classpath
+  are trusted deployment inputs. This check does not authenticate replaced core
+  dependencies, sandbox arbitrary classloaders, or confine an explicitly allowed
+  plugin. Process isolation and resource controls remain unfinished, and a
+  policy requiring them is refused (ADR-023); SEC-08 remains partially met.
 - The SPI interface design must not expose implementation details that would
   break when extensions move to separate processes.
+
+## References
+
+- [Java 21 ServiceLoader provider inspection](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/ServiceLoader.html)

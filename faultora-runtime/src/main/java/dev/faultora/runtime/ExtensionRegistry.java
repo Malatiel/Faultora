@@ -1,17 +1,42 @@
 package dev.faultora.runtime;
 
+import dev.faultora.assertions.core.DurationAssertionProvider;
+import dev.faultora.assertions.core.EventCorrelationAssertionProvider;
+import dev.faultora.assertions.core.EventCountAssertionProvider;
+import dev.faultora.assertions.core.EventSequenceAssertionProvider;
+import dev.faultora.assertions.core.EventUniqueAssertionProvider;
+import dev.faultora.assertions.core.HeaderAssertionProvider;
+import dev.faultora.assertions.core.JsonPathAssertionProvider;
+import dev.faultora.assertions.core.RowBalanceAssertionProvider;
+import dev.faultora.assertions.core.RowCountAssertionProvider;
+import dev.faultora.assertions.core.RowUniqueAssertionProvider;
+import dev.faultora.assertions.core.RowValueAssertionProvider;
+import dev.faultora.assertions.core.SchemaAssertionProvider;
+import dev.faultora.assertions.core.StatusAssertionProvider;
+import dev.faultora.importer.asyncapi.AsyncApiImporter;
+import dev.faultora.importer.observations.ObservationImporter;
+import dev.faultora.importer.openapi.OpenApiImporter;
 import dev.faultora.model.security.ExtensionPolicy;
+import dev.faultora.reporting.ConsoleRenderer;
+import dev.faultora.reporting.HtmlRenderer;
+import dev.faultora.reporting.JsonRenderer;
+import dev.faultora.reporting.JUnitXmlRenderer;
 import dev.faultora.spi.extension.PluginManifest;
 import dev.faultora.spi.contract.AssertionProvider;
 import dev.faultora.spi.contract.ReportRenderer;
 import dev.faultora.spi.contract.SourceImporter;
 
+import java.io.IOException;
+import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.Set;
+import java.util.jar.JarFile;
 
 /**
  * Discovers the extensions available on the classpath.
@@ -35,8 +60,24 @@ import java.util.Set;
  */
 public final class ExtensionRegistry {
 
-    /** Package the built-in extensions live in. */
-    private static final String BUILT_IN_PACKAGE = "dev.faultora.";
+    /**
+     * The implementations in the trusted runtime bootstrap classpath. Exact
+     * class identity includes the defining loader; merged releases additionally
+     * require these classes to come from the runtime artifact itself.
+     */
+    private static final Set<Class<?>> BUILT_INS = Set.of(
+            StatusAssertionProvider.class, HeaderAssertionProvider.class,
+            JsonPathAssertionProvider.class, DurationAssertionProvider.class,
+            SchemaAssertionProvider.class, EventCountAssertionProvider.class,
+            EventUniqueAssertionProvider.class, EventCorrelationAssertionProvider.class,
+            EventSequenceAssertionProvider.class, RowCountAssertionProvider.class,
+            RowBalanceAssertionProvider.class, RowUniqueAssertionProvider.class,
+            RowValueAssertionProvider.class,
+            ConsoleRenderer.class, JsonRenderer.class, JUnitXmlRenderer.class, HtmlRenderer.class,
+            OpenApiImporter.class, AsyncApiImporter.class, ObservationImporter.class);
+
+    private static final String RUNTIME_ORIGIN = originOf(ExtensionRegistry.class);
+    private static final boolean MERGED_RELEASE = mergedRelease();
 
     private ExtensionRegistry() {
     }
@@ -90,27 +131,26 @@ public final class ExtensionRegistry {
     /** Assertion providers, keyed by the assertion type they evaluate. */
     public static Map<String, AssertionProvider> assertionProviders(ExtensionPolicy policy) {
         Map<String, AssertionProvider> providers = new LinkedHashMap<>();
-        for (AssertionProvider provider : ServiceLoader.load(AssertionProvider.class)) {
-            if (isAllowed(provider, policy, "assertion provider")) {
-                providers.putIfAbsent(provider.type(), provider);
-            }
-        }
+        ServiceLoader.load(AssertionProvider.class).stream()
+                .filter(candidate -> isAllowed(candidate.type(), policy, "assertion provider"))
+                .map(ServiceLoader.Provider::get)
+                .forEach(provider -> providers.putIfAbsent(provider.type(), provider));
         return providers;
     }
 
     /** Report renderers, keyed by the {@code --format} value that selects them. */
     public static Map<String, ReportRenderer> renderers(ExtensionPolicy policy) {
         Map<String, ReportRenderer> renderers = new LinkedHashMap<>();
-        for (ReportRenderer renderer : ServiceLoader.load(ReportRenderer.class)) {
-            if (isAllowed(renderer, policy, "report renderer")) {
-                renderers.putIfAbsent(renderer.format(), renderer);
-            }
-        }
+        ServiceLoader.load(ReportRenderer.class).stream()
+                .filter(candidate -> isAllowed(candidate.type(), policy, "report renderer"))
+                .map(ServiceLoader.Provider::get)
+                .forEach(renderer -> renderers.putIfAbsent(renderer.format(), renderer));
         return renderers;
     }
 
     /**
-     * Whether an implementation may take part in the run.
+     * Whether an implementation may take part in the run, checked before
+     * calling its constructor or initializing its class.
      * <p>
      * Built-ins ship with the release and are reviewed with it. Anything else
      * has to answer three questions, and a plugin that cannot answer one of
@@ -133,12 +173,17 @@ public final class ExtensionRegistry {
      * A non-built-in without a manifest is refused. It cannot say what it was
      * built against, and asking is the whole point of having one.
      */
-    private static boolean isAllowed(Object extension, ExtensionPolicy policy, String kind) {
-        String className = extension.getClass().getName();
-        if (className.startsWith(BUILT_IN_PACKAGE)) {
+    private static boolean isAllowed(Class<?> extensionType, ExtensionPolicy policy, String kind) {
+        String className = extensionType.getName();
+        if (isBuiltIn(extensionType)) {
             return true;
         }
-        PluginArtifact artifact = PluginArtifact.of(extension);
+        PluginArtifact.Inspection inspection = PluginArtifact.inspect(extensionType);
+        if (inspection.refusal() != null) {
+            refuse(kind, className, inspection.refusal());
+            return false;
+        }
+        PluginArtifact artifact = inspection.artifact();
         Set<String> permitted = policy == null ? Set.of() : policy.allowedExtensions();
 
         if (!permitted.contains(className)
@@ -171,6 +216,45 @@ public final class ExtensionRegistry {
             return false;
         }
         return true;
+    }
+
+    private static boolean isBuiltIn(Class<?> extensionType) {
+        String origin = originOf(extensionType);
+        return BUILT_INS.contains(extensionType) && origin != null && RUNTIME_ORIGIN != null
+                && (!MERGED_RELEASE || RUNTIME_ORIGIN.equals(origin));
+    }
+
+    /** Inspect our own artifact; a copied SPI class cannot choose this trust mode. */
+    private static boolean mergedRelease() {
+        if (RUNTIME_ORIGIN == null) {
+            return false;
+        }
+        URI origin = URI.create(RUNTIME_ORIGIN);
+        if (!"file".equals(origin.getScheme())) {
+            throw new IllegalStateException("Cannot verify the runtime artifact's origin");
+        }
+        Path artifact = Path.of(origin);
+        String spiClass = "dev/faultora/spi/contract/AssertionProvider.class";
+        if (Files.isDirectory(artifact)) {
+            return Files.isRegularFile(artifact.resolve(spiClass));
+        }
+        try (JarFile shipped = new JarFile(artifact.toFile())) {
+            return shipped.getJarEntry(spiClass) != null;
+        } catch (IOException unreadable) {
+            throw new IllegalStateException("Cannot verify the runtime artifact's contents", unreadable);
+        }
+    }
+
+    /** A URL string comparison avoids DNS resolution while checking origins. */
+    private static String originOf(Class<?> type) {
+        try {
+            var domain = type.getProtectionDomain();
+            var source = domain == null ? null : domain.getCodeSource();
+            return source == null || source.getLocation() == null
+                    ? null : source.getLocation().toExternalForm();
+        } catch (SecurityException unavailable) {
+            return null;
+        }
     }
 
     private static void refuse(String kind, String className, String because) {
@@ -216,16 +300,12 @@ public final class ExtensionRegistry {
      * after the importer has read it.
      */
     public static SourceImporter importerFor(String sourceFamily, ExtensionPolicy policy) {
-        for (SourceImporter importer : ServiceLoader.load(SourceImporter.class)) {
-            if (!isAllowed(importer, policy, "source importer")) {
-                continue;
-            }
-            for (String supported : importer.supportedTypes()) {
-                if (supported.equals(sourceFamily) || supported.startsWith(sourceFamily + "-")) {
-                    return importer;
-                }
-            }
-        }
-        return null;
+        return ServiceLoader.load(SourceImporter.class).stream()
+                .filter(candidate -> isAllowed(candidate.type(), policy, "source importer"))
+                .map(ServiceLoader.Provider::get)
+                .filter(importer -> importer.supportedTypes().stream()
+                        .anyMatch(supported -> supported.equals(sourceFamily)
+                                || supported.startsWith(sourceFamily + "-")))
+                .findFirst().orElse(null);
     }
 }
