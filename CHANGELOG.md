@@ -10,6 +10,10 @@ ADR-023 exists to stop. What has landed so far:
 
 ### Changed
 
+- **An unverifiable runtime artifact origin gives a normal deployment failure
+  before extension discovery.** Non-file, missing and unreadable origins no
+  longer poison class initialization. CLI JSON diagnostics retain exit 3 and
+  report `COMMAND_FAILED`; unsupported layouts do not gain built-in trust.
 - **A non-built-in extension without a manifest is refused.** This is a
   breaking change for a third-party extension permitted by class name today: it
   will stop loading, and a scenario naming its assertion type will fail with an
