@@ -198,6 +198,9 @@ public class HttpConnector implements Connector {
         ClassicHttpResponse response = null;
 
         try {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new java.io.InterruptedIOException("HTTP operation cancelled");
+            }
             deadline.start(deadlines);
             int requestLimit = RequestBody.limit(context.config().get(MAX_REQUEST_BYTES));
             // Build the request URL
@@ -349,6 +352,7 @@ public class HttpConnector implements Connector {
         } catch (Exception e) {
             return failure(e, deadline.expired(), (System.nanoTime() - startTime) / 1_000_000);
         } finally {
+            boolean interrupted = Thread.currentThread().isInterrupted();
             try {
                 if (response != null) {
                     try {
@@ -361,6 +365,9 @@ public class HttpConnector implements Connector {
                 deadline.close();
                 PINNED_ADDRESSES.remove();
                 CONNECT_TIMEOUT.remove();
+                if (interrupted) {
+                    Thread.currentThread().interrupt();
+                }
             }
         }
     }
@@ -722,7 +729,14 @@ public class HttpConnector implements Connector {
 
     private static OperationResult failure(Exception failure, boolean totalExpired, long durationMs) {
         NormalizedError error;
-        if (totalExpired) {
+        if (Thread.currentThread().isInterrupted()
+                || (!totalExpired && failure instanceof java.io.InterruptedIOException
+                        && !(failure instanceof SocketTimeoutException)
+                        && !(failure instanceof org.apache.hc.core5.http.ConnectionRequestTimeoutException))) {
+            Thread.currentThread().interrupt();
+            error = new NormalizedError(NormalizedError.ErrorCategory.CANCELLED, "CANCELLED",
+                    "HTTP operation cancelled", false, Map.of());
+        } else if (totalExpired) {
             error = new NormalizedError(NormalizedError.ErrorCategory.TIMEOUT, "TOTAL_TIMEOUT",
                     "HTTP operation exceeded its total timeout", true, Map.of());
         } else if (failure instanceof RequestBody.TooLarge tooLarge) {
