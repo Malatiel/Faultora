@@ -12,6 +12,13 @@ import dev.faultora.model.security.EvidencePolicy;
 import dev.faultora.model.security.SecretHandle;
 import dev.faultora.spi.context.ConnectorContext;
 import dev.faultora.spi.result.OperationResult;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
+import org.apache.hc.core5.http.ClassicHttpRequest;
+import org.apache.hc.core5.http.HttpHost;
+import org.apache.hc.core5.http.message.BasicClassicHttpResponse;
+import org.apache.hc.core5.http.protocol.HttpContext;
+import org.apache.hc.core5.io.CloseMode;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -20,6 +27,7 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -113,6 +121,39 @@ class HttpErrorTextTest {
     }
 
     @Test
+    void aRedirectToABlockedDestinationDoesNotRepeatTheLocation() {
+        RedirectingClient client = new RedirectingClient("http://" + MARKER + ".invalid/final");
+        DestinationPolicy policy = new DestinationPolicy(true, Set.of(), Set.of(MARKER + ".invalid"));
+
+        OperationResult result = executeThrough(client, policy, "http://127.0.0.1:18080");
+
+        assertWithheld(result, "DESTINATION_BLOCKED", NormalizedError.ErrorCategory.POLICY_VIOLATION);
+        assertThat(result.error().metadata()).isEmpty();
+        assertThat(client.calls).isEqualTo(1);
+    }
+
+    @Test
+    void aRedirectToAnUnsupportedSchemeDoesNotRepeatTheScheme() {
+        RedirectingClient client = new RedirectingClient(MARKER + "://example.invalid/final");
+
+        OperationResult result = executeThrough(client, DestinationPolicy.permissive(), "http://127.0.0.1:18080");
+
+        assertWithheld(result, "DESTINATION_BLOCKED", NormalizedError.ErrorCategory.POLICY_VIOLATION);
+        assertThat(client.calls).isEqualTo(1);
+    }
+
+    @Test
+    void aRefusedDowngradeDoesNotRepeatEitherAddress() {
+        RedirectingClient client = new RedirectingClient("http://127.0.0.1:18080/" + MARKER);
+
+        OperationResult result = executeThrough(client, DestinationPolicy.permissive(), "https://127.0.0.1:18080");
+
+        assertWithheld(result, "INSECURE_REDIRECT", NormalizedError.ErrorCategory.POLICY_VIOLATION);
+        assertThat(result.error().message()).doesNotContain("127.0.0.1");
+        assertThat(client.calls).isEqualTo(1);
+    }
+
+    @Test
     void anUnexpectedFailureDoesNotRepeatItsCause() {
         OperationResult result = execute(new HttpConnector(DestinationPolicy.permissive()),
                 "http://127.0.0.1:1", "BREW-" + MARKER, "/", null, null);
@@ -126,6 +167,40 @@ class HttpErrorTextTest {
         assertThat(result.error().code()).isEqualTo(code);
         assertThat(result.error().category()).isEqualTo(category);
         assertThat(result.error().message()).doesNotContainIgnoringCase(MARKER);
+    }
+
+    private static OperationResult executeThrough(
+            RedirectingClient client, DestinationPolicy policy, String baseUrl) {
+        return execute(new HttpConnector(policy, client), baseUrl, "GET", "/start", null, null);
+    }
+
+    /** Answers the first exchange with a redirect; a second exchange would be a leak. */
+    private static final class RedirectingClient extends CloseableHttpClient {
+        private final String location;
+        int calls;
+
+        RedirectingClient(String location) {
+            this.location = location;
+        }
+
+        @Override
+        protected CloseableHttpResponse doExecute(HttpHost target, ClassicHttpRequest request,
+                                                  HttpContext context) {
+            calls++;
+            BasicClassicHttpResponse response = new BasicClassicHttpResponse(calls == 1 ? 302 : 204);
+            if (calls == 1) {
+                response.setHeader("Location", location);
+            }
+            return CloseableHttpResponse.adapt(response);
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public void close(CloseMode mode) {
+        }
     }
 
     private static OperationResult execute(

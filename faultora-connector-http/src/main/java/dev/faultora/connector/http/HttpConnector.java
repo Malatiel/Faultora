@@ -216,9 +216,9 @@ public class HttpConnector implements Connector {
                 NormalizedError error = new NormalizedError(
                         NormalizedError.ErrorCategory.POLICY_VIOLATION,
                         "DESTINATION_BLOCKED",
-                        "Destination policy violation: " + policyResult.errorMessage(),
+                        "Destination blocked by policy",
                         false,
-                        Map.of("url", url)
+                        Map.of()
                 );
                 return OperationResult.failure(error, 0);
             }
@@ -277,7 +277,7 @@ public class HttpConnector implements Connector {
                     NormalizedError error = new NormalizedError(
                             NormalizedError.ErrorCategory.POLICY_VIOLATION,
                             "DESTINATION_BLOCKED",
-                            "Redirect to unsupported scheme: " + redirectScheme,
+                            "Redirect to an unsupported scheme blocked",
                             false, Map.of());
                     return OperationResult.failure(error,
                             (System.nanoTime() - startTime) / 1_000_000);
@@ -290,7 +290,7 @@ public class HttpConnector implements Connector {
                     NormalizedError error = new NormalizedError(
                             NormalizedError.ErrorCategory.POLICY_VIOLATION,
                             "DESTINATION_BLOCKED",
-                            "Redirect destination policy violation: " + redirectResult.errorMessage(),
+                            "Redirect destination blocked by policy",
                             false, Map.of());
                     return OperationResult.failure(error,
                             (System.nanoTime() - startTime) / 1_000_000);
@@ -308,7 +308,7 @@ public class HttpConnector implements Connector {
                     NormalizedError error = new NormalizedError(
                             NormalizedError.ErrorCategory.POLICY_VIOLATION,
                             "INSECURE_REDIRECT",
-                            "HTTPS→HTTP downgrade blocked: " + currentUri + " → " + redirectUri,
+                            "HTTPS to HTTP redirect blocked",
                             false, Map.of());
                     return OperationResult.failure(error,
                             (System.nanoTime() - startTime) / 1_000_000);

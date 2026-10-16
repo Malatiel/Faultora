@@ -50,6 +50,9 @@ ADR-023 exists to stop. What has landed so far:
 - **HTTP connector errors carry fixed text only.** Timeout, connection, TLS,
   destination-policy and unexpected failures no longer repeat transport or
   policy messages, which could contain URLs, addresses or query strings.
+  Redirect refusals (blocked destination, unsupported scheme, HTTPS-to-HTTP)
+  no longer name either location, and `DESTINATION_BLOCKED` no longer carries
+  the request URL in its metadata.
   A credential that cannot be supplied is now `SECRET_UNAVAILABLE`
   (`VALIDATION`) instead of `EXECUTION_ERROR`, matching the JDBC connector,
   and neither the handle name nor a secret resolver's own message is
