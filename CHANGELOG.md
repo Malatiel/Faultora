@@ -56,6 +56,11 @@ ADR-023 exists to stop. What has landed so far:
 
 ### Changed
 
+- MCP report-write failures preserve the completed run status, assertion counts
+  and cleanup result. Status reports reportStatus=UNAVAILABLE and the fixed
+  REPORT_WRITE_FAILED reason separately; unavailable reports are not advertised
+  as artifacts. Mandatory journal failures still affect execution status.
+
 - **HTTP interruption is reported as cancellation and preserves the interrupt
   flag**, including when the transport cleared it before throwing. An already
   interrupted caller sends no request. Request and total timeouts retain their
