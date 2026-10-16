@@ -32,6 +32,7 @@ class SecurityInvariantTest {
                 "faultora-connector-http/src",
                 "faultora-assertions-core/src",
                 "faultora-reporting/src",
+                "faultora-mcp/src",
                 "faultora-cli/src"
         };
 

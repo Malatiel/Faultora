@@ -11,7 +11,7 @@ import dev.faultora.model.identifier.RunId;
 import dev.faultora.model.security.ExtensionPolicy;
 import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.spec.expression.ExpressionContext;
-import dev.faultora.spec.model.InputDeclaration;
+import dev.faultora.runtime.RunInputs;
 import dev.faultora.runtime.ExtensionRegistry;
 import dev.faultora.runtime.RunPreparation;
 import dev.faultora.runtime.PreparedRun;
@@ -29,7 +29,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -283,37 +282,24 @@ public class TestCommand implements Command {
      */
     private Map<String, Object> resolveDeclaredInputs(
             ScenarioDocument scenario, Map<String, Object> cliInputs) {
-        Map<String, InputDeclaration> declared =
-                scenario.inputs() != null ? scenario.inputs() : Map.of();
-
-        for (String name : cliInputs.keySet()) {
-            if (!declared.containsKey(name)) {
-                output.error(CliDiagnostic.Code.INPUT_UNKNOWN, null, "inputs." + name);
-                throw new CliException(
-                        "Unknown input '" + name + "'. Declared inputs: "
-                                + (declared.isEmpty() ? "(none)"
-                                        : String.join(", ", declared.keySet())),
-                        FaultoraCli.EXIT_INVALID_CONFIG);
-            }
-        }
-
-        Map<String, Object> resolved = new LinkedHashMap<>();
-        for (var entry : declared.entrySet()) {
-            String name = entry.getKey();
-            InputDeclaration declaration = entry.getValue();
-            if (cliInputs.containsKey(name)) {
-                resolved.put(name, cliInputs.get(name));
-            } else if (declaration.defaultValue() != null) {
-                resolved.put(name, declaration.defaultValue());
-            } else if (declaration.required()) {
+        try {
+            return RunInputs.resolve(scenario, cliInputs);
+        } catch (RunInputs.InvalidInput invalid) {
+            String name = invalid.name();
+            if (invalid.missing()) {
                 output.error(CliDiagnostic.Code.INPUT_REQUIRED, null, "inputs." + name);
                 throw new CliException(
                         "Required input '" + name + "' is missing. Provide it with --input "
                                 + name + "=<value>",
                         FaultoraCli.EXIT_INVALID_CONFIG);
             }
+            output.error(CliDiagnostic.Code.INPUT_UNKNOWN, null, "inputs." + name);
+            Map<String, ?> declared = scenario.inputs() == null ? Map.of() : scenario.inputs();
+            throw new CliException(
+                    "Unknown input '" + name + "'. Declared inputs: "
+                            + (declared.isEmpty() ? "(none)" : String.join(", ", declared.keySet())),
+                    FaultoraCli.EXIT_INVALID_CONFIG);
         }
-        return resolved;
     }
 
     private void printHelp() {

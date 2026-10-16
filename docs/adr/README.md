@@ -29,3 +29,4 @@
 | [ADR-025](ADR-025-request-budget-unit.md) | Request budgets count connector attempts | Accepted |
 | [ADR-026](ADR-026-evidence-disclosure.md) | Evidence availability and structural exports | Accepted |
 | [ADR-027](ADR-027-run-preparation.md) | Shared run preparation and structural previews | Accepted |
+| [ADR-028](ADR-028-mcp-preparation.md) | MCP inspection and preparation stay within operator authority | Accepted |

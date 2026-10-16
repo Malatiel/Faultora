@@ -10,6 +10,13 @@ ADR-023 exists to stop. What has landed so far:
 
 ### Added
 
+- `faultora mcp --config <file>` exposes bounded MCP 2025-11-25 stdio tools for
+  capabilities, declared catalog descriptions and sealed run preparation.
+  Catalog files and policy come from operator startup configuration; tool calls
+  cannot supply paths or widen permission. Preparation creates no target/fault
+  effects or artifacts and does not grant execution approval. No execution tool
+  or network listener is exposed. See docs/MCP.md for limits and compatibility.
+
 - Freeze the version-one journal, JSON report and serialized run result shapes
   with deterministic compatibility fixtures. A journal reader now tolerates
   additive fields and unknown event types while refusing malformed known events.

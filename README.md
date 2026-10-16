@@ -68,6 +68,12 @@ Fault injection:
 - `expectError` steps for requests that are supposed to fail under a fault;
 - fault windows and fault-to-node attribution in console and HTML reports.
 
+Local tool integration:
+
+- [MCP stdio](docs/MCP.md) for capabilities, operator-declared catalog inspection
+  and scenario preparation. It returns structural previews without running
+  targets, activating faults or granting execution permission.
+
 Private-network execution:
 
 - `faultora runner` — the same binary serving a control plane from inside a
