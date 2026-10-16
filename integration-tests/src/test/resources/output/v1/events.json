@@ -1,0 +1,194 @@
+[
+  {
+    "eventType": "RUN_STARTED",
+    "timestamp": 1000,
+    "runId": "synthetic-run",
+    "scenarioDigest": "sha256:scenario",
+    "catalogDigest": "sha256:catalog",
+    "seed": 42,
+    "resolvedConfig": {
+      "requestBudgetUnit": "connector-attempt"
+    }
+  },
+  {
+    "eventType": "RUN_COMPLETED",
+    "timestamp": 1000,
+    "runId": "synthetic-run",
+    "totalNodes": 1,
+    "passedAssertions": 1,
+    "failedAssertions": 0,
+    "durationMs": 10
+  },
+  {
+    "eventType": "RUN_FAILED",
+    "timestamp": 1000,
+    "runId": "synthetic-run",
+    "error": {
+      "category": "CANCELLED",
+      "code": "CANCELLED",
+      "message": "Run cancelled",
+      "retryable": false,
+      "metadata": {}
+    },
+    "durationMs": 10
+  },
+  {
+    "eventType": "NODE_STARTED",
+    "timestamp": 1000,
+    "runId": "synthetic-run",
+    "nodeId": "read",
+    "nodeType": "OPERATION",
+    "operationId": "read"
+  },
+  {
+    "eventType": "NODE_COMPLETED",
+    "timestamp": 1000,
+    "runId": "synthetic-run",
+    "nodeId": "read",
+    "durationMs": 2,
+    "statusCode": 200,
+    "responseBytes": 0
+  },
+  {
+    "eventType": "NODE_FAILED",
+    "timestamp": 1000,
+    "runId": "synthetic-run",
+    "nodeId": "read",
+    "error": {
+      "category": "CANCELLED",
+      "code": "CANCELLED",
+      "message": "Run cancelled",
+      "retryable": false,
+      "metadata": {}
+    },
+    "durationMs": 2
+  },
+  {
+    "eventType": "NODE_SKIPPED",
+    "timestamp": 1000,
+    "runId": "synthetic-run",
+    "nodeId": "read",
+    "reason": "Dependency did not pass"
+  },
+  {
+    "eventType": "OPERATION_RETRIED",
+    "timestamp": 1000,
+    "runId": "synthetic-run",
+    "nodeId": "read",
+    "failedAttempt": 1,
+    "maxAttempts": 2,
+    "nextDelayMs": 5,
+    "errorCode": "TIMEOUT"
+  },
+  {
+    "eventType": "OPERATION_ATTEMPTED",
+    "timestamp": 1000,
+    "runId": "synthetic-run",
+    "nodeId": "read",
+    "operationId": "read",
+    "attemptNumber": 1
+  },
+  {
+    "eventType": "CONDITION_POLLED",
+    "timestamp": 1000,
+    "runId": "synthetic-run",
+    "nodeId": "read",
+    "attempt": 1,
+    "maxPolls": 2,
+    "elapsedMs": 5,
+    "satisfied": false,
+    "detail": null
+  },
+  {
+    "eventType": "INPUTS_GENERATED",
+    "timestamp": 1000,
+    "runId": "synthetic-run",
+    "nodeId": "read",
+    "field": "body",
+    "strategy": "valid",
+    "seed": 42,
+    "schemaId": "request",
+    "digest": "sha256:generated",
+    "violation": null
+  },
+  {
+    "eventType": "MESSAGE_PUBLISHED",
+    "timestamp": 1000,
+    "runId": "synthetic-run",
+    "nodeId": "read",
+    "channel": "synthetic-events",
+    "partition": 0,
+    "offset": 1,
+    "key": null,
+    "digest": "sha256:message"
+  },
+  {
+    "eventType": "MESSAGES_OBSERVED",
+    "timestamp": 1000,
+    "runId": "synthetic-run",
+    "nodeId": "read",
+    "channel": "synthetic-events",
+    "observed": 2,
+    "matched": 1,
+    "waitedMs": 5,
+    "requestedWaitMs": 5
+  },
+  {
+    "eventType": "ROWS_OBSERVED",
+    "timestamp": 1000,
+    "runId": "synthetic-run",
+    "nodeId": "read",
+    "rows": 1,
+    "fetched": 1,
+    "truncated": false,
+    "digest": "sha256:rows"
+  },
+  {
+    "eventType": "FAULT_INJECTED",
+    "timestamp": 1000,
+    "runId": "synthetic-run",
+    "faultHandle": "synthetic-fault",
+    "faultType": "http-latency",
+    "targetScope": "read",
+    "hardExpiryMs": 2000
+  },
+  {
+    "eventType": "FAULT_ROLLED_BACK",
+    "timestamp": 1000,
+    "runId": "synthetic-run",
+    "faultHandle": "synthetic-fault",
+    "rollbackStatus": "SUCCEEDED"
+  },
+  {
+    "eventType": "ASSERTION_EVALUATED",
+    "timestamp": 1000,
+    "runId": "synthetic-run",
+    "nodeId": "read",
+    "assertionType": "status",
+    "outcome": "PASS",
+    "message": "Assertion passed"
+  },
+  {
+    "eventType": "EVIDENCE_CAPTURED",
+    "timestamp": 1000,
+    "runId": "synthetic-run",
+    "nodeId": "read",
+    "evidenceType": "http-response",
+    "digest": "sha256:evidence",
+    "sizeBytes": 0
+  },
+  {
+    "eventType": "CLEANUP_STARTED",
+    "timestamp": 1000,
+    "runId": "synthetic-run",
+    "pendingObligations": 1
+  },
+  {
+    "eventType": "CLEANUP_COMPLETED",
+    "timestamp": 1000,
+    "runId": "synthetic-run",
+    "succeeded": 1,
+    "failed": 0,
+    "durationMs": 1
+  }
+]

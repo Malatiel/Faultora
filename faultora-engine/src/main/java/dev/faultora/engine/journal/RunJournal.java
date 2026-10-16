@@ -1,6 +1,7 @@
 package dev.faultora.engine.journal;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import dev.faultora.model.events.RunEvent;
 
 import java.io.*;
@@ -17,7 +18,8 @@ import java.util.List;
  */
 public class RunJournal implements AutoCloseable {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final ObjectMapper MAPPER = new ObjectMapper()
+            .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
     private final Path journalPath;
     private final List<RunEvent> events;
     private final Writer writer;

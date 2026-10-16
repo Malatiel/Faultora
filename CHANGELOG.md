@@ -10,6 +10,11 @@ ADR-023 exists to stop. What has landed so far:
 
 ### Added
 
+- Freeze the version-one journal, JSON report and serialized run result shapes
+  with deterministic compatibility fixtures. A journal reader now tolerates
+  additive fields and unknown event types while refusing malformed known events.
+  Journal map keys now have deterministic ordering; JSON field meaning is unchanged.
+
 - **`faultora test --preview` prepares a scenario without executing it.** The
   structural JSON preview lists actions, faults, budgets and refusals before
   opening a run environment or contacting targets. It is descriptive and is
