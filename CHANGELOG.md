@@ -19,6 +19,15 @@ ADR-023 exists to stop. What has landed so far:
   `MALFORMED_REGISTRATION`. Unsupported well-formed versions still receive
   `UNSUPPORTED_PROTOCOL_VERSION`; scenario YAML versions do not participate.
 
+- Runs now have independent IDs even when replaying the same seed. Default CLI
+  artifacts go to `faultora-results/<run-id>`; explicit `--output` retains its
+  exact path but refuses a directory containing a previous journal, reports or
+  ownership marker. Existing artifacts are never truncated. Runner journals use
+  separate per-ID directories, and fault cleanup receives the owning run ID.
+- Prepared executions capture scenario/catalog inputs, bindings and effective
+  execution/evidence policies. Changed or expired preparation requires a new
+  preview; each private compiled plan can execute once.
+
 - **`faultora test --preview` prepares a scenario without executing it.** The
   structural JSON preview lists actions, faults, budgets and refusals before
   opening a run environment or contacting targets. It is descriptive and is

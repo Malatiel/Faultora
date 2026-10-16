@@ -45,7 +45,7 @@ class FaultInjectionE2ETest {
     void latencyFaultScenarioPassesAndReportsTheFaultWindow() throws IOException {
         Path scenario = ExampleFixtures.scenario("fault-latency.yaml");
         Path openApi = ExampleFixtures.openApi();
-        Path outputDir = Path.of(System.getProperty("java.io.tmpdir"), "faultora-e2e-fault-latency");
+        Path outputDir = Files.createTempDirectory("faultora-e2e-fault-latency");
         Files.createDirectories(outputDir);
 
         int exit = createCli().run(new String[]{
@@ -74,7 +74,7 @@ class FaultInjectionE2ETest {
     void duplicatePaymentIsPreventedUnderResponseLoss() throws IOException {
         Path scenario = ExampleFixtures.scenario("fault-duplicate-payment.yaml");
         Path openApi = ExampleFixtures.openApi();
-        Path outputDir = Path.of(System.getProperty("java.io.tmpdir"), "faultora-e2e-fault-dup");
+        Path outputDir = Files.createTempDirectory("faultora-e2e-fault-dup");
         Files.createDirectories(outputDir);
 
         int exit = createCli().run(new String[]{
@@ -98,7 +98,7 @@ class FaultInjectionE2ETest {
     void retryScenarioRecoversOnceTheOutageClears() throws IOException {
         Path scenario = ExampleFixtures.scenario("fault-retry.yaml");
         Path openApi = ExampleFixtures.openApi();
-        Path outputDir = Path.of(System.getProperty("java.io.tmpdir"), "faultora-e2e-fault-retry");
+        Path outputDir = Files.createTempDirectory("faultora-e2e-fault-retry");
         Files.createDirectories(outputDir);
 
         int exit = createCli().run(new String[]{

@@ -62,9 +62,15 @@ public final class FaultSession implements AutoCloseable {
     private final ConcurrentMap<NodeId, String> handlesByNode = new ConcurrentHashMap<>();
     private final RollbackListener listener;
     private final AtomicBoolean closed = new AtomicBoolean(false);
+    private final Map<String, Object> ownership;
 
     public FaultSession(RollbackListener listener) {
+        this(listener, null);
+    }
+
+    public FaultSession(RollbackListener listener, dev.faultora.model.identifier.RunId runId) {
         this.listener = listener;
+        this.ownership = runId == null ? Map.of() : Map.of(FaultContext.RUN_ID, runId.value());
         this.watchdogScheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
             Thread thread = new Thread(runnable, "faultora-fault-watchdog");
             thread.setDaemon(true);
@@ -96,7 +102,7 @@ public final class FaultSession implements AutoCloseable {
     ) {
         requireOpen();
         long hardExpiryMs = System.currentTimeMillis() + durationMs;
-        FaultContext context = new FaultContext(targetScope, hardExpiryMs, Map.of());
+        FaultContext context = new FaultContext(targetScope, hardExpiryMs, ownership);
         ActiveFault fault = provider.inject(faultType, params, context);
 
         FaultRecord record = new FaultRecord(provider, fault, context);

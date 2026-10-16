@@ -32,7 +32,7 @@ class ConcurrentDuplicateE2ETest {
     private int runScenario(String outputDirName) throws IOException {
         Path scenario = ExampleFixtures.scenario("fault-concurrent-duplicate.yaml");
         Path openApi = ExampleFixtures.openApi();
-        Path outputDir = Path.of(System.getProperty("java.io.tmpdir"), outputDirName);
+        Path outputDir = Files.createTempDirectory(outputDirName);
         Files.createDirectories(outputDir);
 
         FaultoraCli cli = new FaultoraCli(
@@ -78,7 +78,7 @@ class ConcurrentDuplicateE2ETest {
 
         Path scenario = ExampleFixtures.scenario("fault-concurrent-duplicate.yaml");
         Path openApi = ExampleFixtures.openApi();
-        Path outputDir = Path.of(System.getProperty("java.io.tmpdir"), "faultora-e2e-race-input");
+        Path outputDir = Files.createTempDirectory("faultora-e2e-race-input");
         Files.createDirectories(outputDir);
 
         FaultoraCli cli = new FaultoraCli(

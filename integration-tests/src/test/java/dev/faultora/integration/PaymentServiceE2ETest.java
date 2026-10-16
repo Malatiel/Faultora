@@ -64,7 +64,7 @@ class PaymentServiceE2ETest {
     @Test
     void initCommandGeneratesScenario() throws IOException {
         Path openApi = ExampleFixtures.openApi();
-        Path outputDir = Path.of(System.getProperty("java.io.tmpdir"), "faultora-e2e-init");
+        Path outputDir = Files.createTempDirectory("faultora-e2e-init");
 
         int exit = createCli().run(new String[]{
                 "init",
@@ -80,9 +80,8 @@ class PaymentServiceE2ETest {
     void passingScenarioRunsSuccessfully() throws IOException {
         Path scenario = ExampleFixtures.scenario("passing.yaml");
         Path openApi = ExampleFixtures.openApi();
-        Path outputDir = Path.of(System.getProperty("java.io.tmpdir"), "faultora-e2e-pass");
+        Path outputDir = Files.createTempDirectory("faultora-e2e-pass");
         Files.createDirectories(outputDir);
-        Files.writeString(outputDir.resolve("events.ndjson"), "{\"stale\":true}\n");
 
         int exit = createCli().run(new String[]{
                 "test",
@@ -99,8 +98,6 @@ class PaymentServiceE2ETest {
         assertThat(outputDir.resolve("report.json")).exists();
         assertThat(outputDir.resolve("report.xml")).exists();
         assertThat(outputDir.resolve("report.html")).exists();
-        assertThat(Files.readString(outputDir.resolve("events.ndjson")))
-                .doesNotContain("\"stale\":true");
     }
 
     @Test
@@ -154,7 +151,7 @@ class PaymentServiceE2ETest {
     }
 
     @Test
-    void failingScenarioReturnsNonZero() {
+    void failingScenarioReturnsNonZero() throws IOException {
         Path scenario = ExampleFixtures.scenario("failing.yaml");
         Path openApi = ExampleFixtures.openApi();
 
@@ -165,8 +162,7 @@ class PaymentServiceE2ETest {
                 "--target", api.baseUrl(),
                 "--allow-private",
                 "--format", "console",
-                "--output", Path.of(System.getProperty("java.io.tmpdir"),
-                        "faultora-e2e-fail").toString()
+                "--output", Files.createTempDirectory("faultora-e2e-fail").toString()
         });
 
         // Failing scenario should return non-zero

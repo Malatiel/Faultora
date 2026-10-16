@@ -17,6 +17,37 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class FaultSessionTest {
 
+    @Test
+    void identicalFaultHandlesInDifferentRunsKeepSeparateCleanupOwnership() {
+        var rolledBack = new CopyOnWriteArrayList<String>();
+        FaultProvider shared = new FaultProvider() {
+            public Set<String> capabilities() {
+                return Set.of("stub-fault");
+            }
+
+            public ActiveFault inject(String type, Map<String, Object> params, FaultContext context) {
+                assertThat(context.config()).containsKey(FaultContext.RUN_ID);
+                return new ActiveFault("same-handle", type, context.targetScope(),
+                        System.currentTimeMillis(), context.hardExpiryMs(), "rollback");
+            }
+
+            public void rollback(ActiveFault fault, FaultContext context) {
+                rolledBack.add((String) context.config().get(FaultContext.RUN_ID));
+            }
+        };
+        try (var first = new FaultSession((fault, status) -> { },
+                     new dev.faultora.model.identifier.RunId("first"));
+             var second = new FaultSession((fault, status) -> { },
+                     new dev.faultora.model.identifier.RunId("second"))) {
+            first.start(shared, new NodeId("fault"), "stub-fault", "*", Map.of(), 60_000);
+            second.start(shared, new NodeId("fault"), "stub-fault", "*", Map.of(), 60_000);
+            first.rollback("same-handle", FaultSession.REASON_FAULT_STOP);
+            assertThat(rolledBack).containsExactly("first");
+            assertThat(second.pendingCount()).isEqualTo(1);
+        }
+        assertThat(rolledBack).containsExactly("first", "second");
+    }
+
     static final class CountingProvider implements FaultProvider {
         final AtomicInteger injections = new AtomicInteger();
         final AtomicInteger rollbacks = new AtomicInteger();

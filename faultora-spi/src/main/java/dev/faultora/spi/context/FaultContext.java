@@ -13,4 +13,7 @@ public record FaultContext(
         String targetScope,
         long hardExpiryMs,
         Map<String, Object> config
-) {}
+) {
+    /** Owning run identity, independent of its generation seed. */
+    public static final String RUN_ID = "runId";
+}

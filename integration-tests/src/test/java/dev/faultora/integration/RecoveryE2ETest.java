@@ -55,7 +55,7 @@ class RecoveryE2ETest {
 
     @Test
     void aRunSurvivesTheTargetRestartingUnderIt() throws IOException {
-        Path outputDir = Path.of(System.getProperty("java.io.tmpdir"), "faultora-e2e-restart");
+        Path outputDir = Files.createTempDirectory("faultora-e2e-restart");
 
         // The target goes away before the scenario starts and comes back on
         // the same port while the step is retrying.
@@ -72,7 +72,7 @@ class RecoveryE2ETest {
 
     @Test
     void cleanupDisposesOfWhatAHalfFinishedSetupCreated() throws IOException {
-        Path outputDir = Path.of(System.getProperty("java.io.tmpdir"), "faultora-e2e-partial-setup");
+        Path outputDir = Files.createTempDirectory("faultora-e2e-partial-setup");
 
         int exit = run("cleanup-after-partial-setup.yaml", outputDir);
 

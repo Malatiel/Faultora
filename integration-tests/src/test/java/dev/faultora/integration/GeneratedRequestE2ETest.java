@@ -54,7 +54,7 @@ class GeneratedRequestE2ETest {
 
     @Test
     void aGeneratedPayloadIsAcceptedAndTheExplicitFieldSurvives() throws IOException {
-        Path outputDir = Path.of(System.getProperty("java.io.tmpdir"), "faultora-e2e-generated");
+        Path outputDir = Files.createTempDirectory("faultora-e2e-generated");
 
         int exit = run(ExampleFixtures.scenario("generated-payment.yaml"), outputDir, "12345");
 
@@ -67,9 +67,9 @@ class GeneratedRequestE2ETest {
     @Test
     void theSameSeedReplaysTheSameGeneratedRequest() throws IOException {
         Path scenario = ExampleFixtures.scenario("generated-payment.yaml");
-        Path first = Path.of(System.getProperty("java.io.tmpdir"), "faultora-e2e-generated-1");
-        Path second = Path.of(System.getProperty("java.io.tmpdir"), "faultora-e2e-generated-2");
-        Path different = Path.of(System.getProperty("java.io.tmpdir"), "faultora-e2e-generated-3");
+        Path first = Files.createTempDirectory("faultora-e2e-generated-1");
+        Path second = Files.createTempDirectory("faultora-e2e-generated-2");
+        Path different = Files.createTempDirectory("faultora-e2e-generated-3");
 
         assertThat(run(scenario, first, "4242")).isEqualTo(FaultoraCli.EXIT_PASS);
         assertThat(run(scenario, second, "4242")).isEqualTo(FaultoraCli.EXIT_PASS);
@@ -130,8 +130,7 @@ class GeneratedRequestE2ETest {
                         "--openapi", openApi.toAbsolutePath().toString(),
                         "--target", api.baseUrl(),
                         "--allow-private",
-                        "--output", Path.of(System.getProperty("java.io.tmpdir"),
-                                "faultora-e2e-generated-invalid").toString()
+                        "--output", Files.createTempDirectory("faultora-e2e-generated-invalid").toString()
                 });
 
         // Nothing is sent: the contract already says the generator cannot

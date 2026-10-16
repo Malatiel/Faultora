@@ -128,6 +128,33 @@ class DispatchedRunTest {
     }
 
     @Test
+    void invalidDispatchIdentitiesAreRefusedBeforeChoosingAnArtifactPath() throws Exception {
+        for (String id : java.util.Arrays.asList(null, "", "invalid identity")) {
+            var outcome = runner().execute(dispatchOf(id, scenarioOfWaits(1, "1ms"),
+                    new Lease(System.currentTimeMillis(), 60_000, 10_000)), Map.of(), EXTENSIONS);
+            assertThat(outcome.didRun()).isFalse();
+            assertThat(outcome.refusal().reason()).isEqualTo(Refusal.Reason.REPLAYED_DISPATCH);
+            assertThat(outcome.journalPath()).isNull();
+        }
+        try (var entries = Files.list(workingDirectory)) {
+            assertThat(entries).isEmpty();
+        }
+    }
+
+    @Test
+    void restartingTheRunnerCannotOverwriteAnOwnedJournal() throws Exception {
+        Dispatch dispatch = dispatchOf("run-restart", scenarioOfWaits(1, "1ms"),
+                new Lease(System.currentTimeMillis(), 60_000, 10_000));
+        var first = runner().execute(dispatch, Map.of(), EXTENSIONS);
+        assertThat(first.completed()).isTrue();
+        String original = Files.readString(first.journalPath());
+        var afterRestart = runner().execute(dispatch, Map.of(), EXTENSIONS);
+        assertThat(afterRestart.didRun()).isFalse();
+        assertThat(afterRestart.refusal().reason()).isEqualTo(Refusal.Reason.REPLAYED_DISPATCH);
+        assertThat(Files.readString(first.journalPath())).isEqualTo(original);
+    }
+
+    @Test
     void aDispatchedRunCompilesAndExecutesHere() throws Exception {
         String scenario = scenarioOfWaits(3, "20ms");
 

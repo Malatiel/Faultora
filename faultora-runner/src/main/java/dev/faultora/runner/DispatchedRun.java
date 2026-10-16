@@ -16,15 +16,15 @@ import dev.faultora.runner.protocol.EffectivePolicy;
 import dev.faultora.runner.protocol.DispatchedDocument;
 import dev.faultora.runner.protocol.Refusal;
 import dev.faultora.runtime.CatalogAssembly;
-import dev.faultora.runtime.RunEnvironment;
 import dev.faultora.runtime.RunPreparation;
+import dev.faultora.runtime.RunArtifacts;
+import dev.faultora.runtime.PreparedRun;
 import dev.faultora.runtime.UnenforceablePolicy;
 import dev.faultora.runtime.RunEvidence;
 import dev.faultora.spec.expression.ExpressionContext;
 import dev.faultora.spi.context.ConnectorContext;
 import dev.faultora.spi.contract.FaultProvider;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -117,6 +117,14 @@ public final class DispatchedRun {
             WhileRunning whileRunning
     ) {
         long receivedAt = System.currentTimeMillis();
+        if (dispatch != null) {
+            try {
+                new RunId(dispatch.runId());
+            } catch (IllegalArgumentException | NullPointerException invalidIdentity) {
+                return Outcome.refused(Refusal.of(Refusal.Reason.REPLAYED_DISPATCH,
+                        "dispatch requires a valid run identity"));
+            }
+        }
         DispatchVerifier.Verdict verdict = verifier.verify(dispatch, receivedAt);
         if (!verdict.isAccepted()) {
             return Outcome.refused(verdict.refusal());
@@ -139,7 +147,8 @@ public final class DispatchedRun {
             // disk — the events a run produced before it broke are the most
             // useful thing it produced.
             return Outcome.broke(
-                    workingDirectory.resolve(dispatch.runId() + ".ndjson"),
+                    RunArtifacts.dispatchedDirectory(workingDirectory, new RunId(dispatch.runId()))
+                            .resolve("events.ndjson"),
                     "run stopped part-way; provider details withheld by export policy");
         }
     }
@@ -164,10 +173,11 @@ public final class DispatchedRun {
             documents.add(new CatalogAssembly.Document(
                     document.family(), document.content()));
         }
-        RunPreparation.Result prepared = RunPreparation.prepare(new RunPreparation.Request(
+        RunPreparation.Request request = new RunPreparation.Request(
                 dispatch.scenario(), documents, dispatch.targetRedirects().getOrDefault("", ""),
                 extensions, policy.targets(), new RunId(dispatch.runId()), dispatch.seed(),
-                dispatch.catalogDigest()));
+                dispatch.catalogDigest());
+        RunPreparation.Result prepared = RunPreparation.prepare(request);
         if (prepared.compilation() == null) {
             return Outcome.refused(Refusal.of(Refusal.Reason.SCENARIO_INVALID,
                     "the scenario does not validate here"));
@@ -183,9 +193,10 @@ public final class DispatchedRun {
 
         Path journalPath;
         try {
-            Files.createDirectories(workingDirectory);
-            journalPath = workingDirectory.resolve(dispatch.runId() + ".ndjson");
-            Files.deleteIfExists(journalPath);
+            journalPath = RunArtifacts.claimDispatched(workingDirectory, request.runId()).journalPath();
+        } catch (RunArtifacts.AlreadyOwned alreadyRun) {
+            return Outcome.refused(Refusal.of(Refusal.Reason.REPLAYED_DISPATCH,
+                    "run artifacts are already owned; dispatch with a fresh run ID"));
         } catch (Exception noWhereToWrite) {
             throw new StartupFailure(
                     "the working directory is not writable: " + workingDirectory,
@@ -193,16 +204,14 @@ public final class DispatchedRun {
         }
 
         AtomicBoolean cancellation = new AtomicBoolean(false);
+        PreparedRun.Settings settings = new PreparedRun.Settings(expressionContext(dispatch),
+                connectorContext(dispatch, policy), allowPrivate, policy.targets().allowedFaultTypes());
+        PreparedRun sealed = PreparedRun.prepare(request, settings, java.time.Duration.ofMinutes(5));
         try (LeaseWatch lease = new LeaseWatch(dispatch.lease(), receivedAt, cancellation);
-             RunEnvironment environment = RunEnvironment.open(
-                     compilation.plan(), faultProviders, extensions, allowPrivate);
              RunJournal journal = new RunJournal(journalPath, true)) {
             lease.start();
             whileRunning.started(lease, journalPath);
-            RunResult result = environment.engine().execute(
-                    compilation.plan(), journal,
-                    expressionContext(dispatch), connectorContext(dispatch, policy),
-                    cancellation);
+            RunResult result = sealed.execute(request, settings, faultProviders, journal, cancellation);
             return Outcome.ran(JournalWriter.closeJournal(journal, result),
                     journalPath, lease.hasExpired());
         }

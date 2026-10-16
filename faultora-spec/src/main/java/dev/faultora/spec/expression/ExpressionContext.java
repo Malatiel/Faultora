@@ -55,6 +55,11 @@ public final class ExpressionContext {
         return secretKeys;
     }
 
+    /** A detached copy for a preparation that must outlive its caller's mutable JSON view. */
+    public ExpressionContext snapshot() {
+        return new ExpressionContext(contextTree.deepCopy(), Set.copyOf(secretKeys));
+    }
+
     /**
      * Return a new context with a step output bound under {@code steps.<name>}.
      * The receiver is not modified; contexts stay immutable snapshots.
