@@ -26,6 +26,12 @@ cancellation is observed. Terminal publication follows runtime cleanup/rollback,
 and journal/report finalization. EOF, transport failure and normal shutdown join
 the worker. No daemon worker or timeout detaches an unfinished run.
 
+Report availability is separate from execution outcome. If writing the optional
+structural report fails after execution and mandatory journal finalization,
+get_run retains the actual status and cleanup confirmation, reports
+reportStatus=UNAVAILABLE with REPORT_WRITE_FAILED, and advertises no artifact.
+This does not downgrade a mandatory journal failure or expose exception details.
+
 Only an owned structural report is exportable by the fixed artifact ID report.
 Its byte limit, regular-file/no-redirection checks, owner marker and captured
 digest prevent altered local files from becoming an export channel. The journal

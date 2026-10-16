@@ -132,8 +132,11 @@ Four additional tools are advertised only in this execution profile:
   and approval remain current. A started preparation cannot be replayed.
 - get_run takes runId. It returns RUNNING/CANCELLING until execution, declared
   cleanup, fault rollback and journal/report finalization finish. Terminal status
-  includes assertion outcome counts and cleanupConfirmed. An execution/storage
-  failure reports ERROR and does not claim confirmed cleanup.
+  includes assertion outcome counts and cleanupConfirmed. Execution or mandatory
+  journal failure reports ERROR and does not claim confirmed cleanup. Failure to
+  write the optional report preserves the completed execution status and cleanup
+  result, with reportStatus=UNAVAILABLE, reportErrorCode=REPORT_WRITE_FAILED and
+  an empty artifactIds list. A written report has reportStatus=AVAILABLE.
 - cancel_run takes runId and requests cooperative cancellation. Poll get_run until
   terminal=true; receiving the cancellation reply is not cleanup confirmation.
   An in-flight connector attempt can finish within its configured timeout before

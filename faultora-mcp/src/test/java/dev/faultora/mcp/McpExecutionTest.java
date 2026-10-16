@@ -456,4 +456,46 @@ class McpExecutionTest {
             assertThat(session.requests).hasValue(0);
         }
     }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"PASSED", "FAILED", "CANCELLED"})
+    void unavailableReportPreservesTheCompletedRunAndCleanupStatus(String expected) throws Exception {
+        try (var session = new Session()) {
+            session.blockResponse = true;
+            String scenario = expected.equals("CANCELLED") ? WAIT.replace("timeout: 60s", "timeout: 1ms")
+                    : McpFixtures.SCENARIO;
+            if (expected.equals("FAILED")) {
+                scenario += """
+                        assertions:
+                          - id: check
+                            assertionType: status
+                            targetStep: read
+                            params: {expected: 201}
+                        """;
+            }
+            JsonNode prepared = session.prepare(scenario);
+            session.start(prepared);
+            try {
+                assertThat(session.responseEntered.await(15, TimeUnit.SECONDS)).isTrue();
+                Files.createDirectory(session.artifacts(prepared).resolve("report.json"));
+                if (expected.equals("CANCELLED")) {
+                    session.status(prepared, true);
+                }
+            } finally {
+                session.responseRelease.countDown();
+            }
+            JsonNode terminal = session.finished(prepared);
+            assertThat(terminal.path("status").asText()).isEqualTo(expected);
+            assertThat(terminal.path("cleanupConfirmed").asBoolean()).isTrue();
+            assertThat(terminal.path("reportStatus").asText()).isEqualTo("UNAVAILABLE");
+            assertThat(terminal.path("reportErrorCode").asText()).isEqualTo("REPORT_WRITE_FAILED");
+            assertThat(terminal.path("artifactIds")).isEmpty();
+            assertThat(terminal.toString()).doesNotContain(McpFixtures.MARKER, directory.toString(), "EXECUTION_FAILED");
+            assertThat(session.artifact(prepared, "report").path("structuredContent").path("code").asText())
+                    .isEqualTo("ARTIFACT_UNAVAILABLE");
+            assertThat(Files.readString(session.artifacts(prepared).resolve("events.ndjson")))
+                    .contains(expected.equals("PASSED") ? "RUN_COMPLETED" : "RUN_FAILED");
+            assertThat(session.requests).hasValue(1);
+        }
+    }
 }

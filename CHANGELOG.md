@@ -60,6 +60,10 @@ ADR-023 exists to stop. What has landed so far:
   signing key owner's OS account can self-approve. Independent approval requires
   an independent signer and protection of the verifier's configuration, runtime
   and process. Hardware-backed approval is not implemented by the DER-file CLI.
+- MCP report-write failures preserve the completed run status, assertion counts
+  and cleanup result. Status reports reportStatus=UNAVAILABLE and the fixed
+  REPORT_WRITE_FAILED reason separately; unavailable reports are not advertised
+  as artifacts. Mandatory journal failures still affect execution status.
 
 - **HTTP interruption is reported as cancellation and preserves the interrupt
   flag**, including when the transport cleared it before throwing. An already

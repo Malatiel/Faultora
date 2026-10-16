@@ -107,10 +107,16 @@ final class McpRuns implements AutoCloseable {
             }
             // Engine cancellation preserves interrupt; publishing a report is part of completion.
             Thread.interrupted();
-            String report = McpJson.MAPPER.writeValueAsString(terminal);
-            Files.writeString(directory.resolve("report.json"), report, StandardCharsets.UTF_8,
-                    StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
-            owned.reportDigest = ContentDigest.sha256Uri(report);
+            try {
+                String report = McpJson.MAPPER.writeValueAsString(terminal);
+                Files.writeString(directory.resolve("report.json"), report, StandardCharsets.UTF_8,
+                        StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+                owned.reportDigest = ContentDigest.sha256Uri(report);
+            } catch (IOException | RuntimeException unavailable) {
+                var completed = (com.fasterxml.jackson.databind.node.ObjectNode) terminal;
+                completed.put("reportStatus", "UNAVAILABLE").put("reportErrorCode", "REPORT_WRITE_FAILED");
+                completed.putArray("artifactIds");
+            }
         } catch (IOException | RuntimeException failed) {
             terminal = failure(id, "EXECUTION_FAILED");
         } finally {
@@ -132,6 +138,7 @@ final class McpRuns implements AutoCloseable {
                 event instanceof RunEvent.CleanupCompleted cleanup && cleanup.failed() != 0);
         // An ERROR may mean rollback, journal or connector close was not confirmed.
         response.put("cleanupConfirmed", !cleanupFailed && result.status() != RunResult.Status.ERROR);
+        response.put("reportStatus", "AVAILABLE");
         response.putArray("artifactIds").add("report");
         return response;
     }
