@@ -50,8 +50,28 @@ data boundary; the structural report suffices for outcome and cleanup inspection
 
 ## Limits and evidence
 
-The operator must protect the key from the client/model's other tools and prevent
-untrusted writers to configuration, runtime and artifacts. This is not a sandbox
+An agent with unrestricted shell access under the key owner's OS account can
+read the key and call mcp approve itself. In that configuration, the signature
+does not establish independent operator approval. A hidden filename, another
+directory or file permissions granting that same principal access do not change
+this limitation.
+
+Use a separate unprivileged OS identity for the agent and an independent operator
+identity or device for signing. Protect the verification configuration, runtime,
+classpath and MCP process against modification or process access by the agent;
+moving only the private key is insufficient if verification can be replaced.
+The operator must review the actual scenario, catalog, digest and run identity
+before returning the signed grant through the client. This deployment separation
+is an operator responsibility; the CLI does not create OS accounts or a sandbox.
+
+A hardware-backed signer could keep the key non-exportable, but the current
+mcp approve command accepts only a PKCS#8 DER private-key file. It does not
+implement a hardware-token, PKCS#11 or remote-signing integration. Such a signer
+would need to produce the same domain-separated Ed25519 approval payload and
+provide independent operator authorization; possession of a token alone does
+not prove that its owner reviewed this run.
+
+Untrusted writers must also be excluded from artifacts. This is not a sandbox
 against the same local OS principal or an uncatchable kill. Artifact checks do
 not claim to close concurrent malicious filesystem races. Stdio does not establish
 the locality of a client's model; offline use needs a local model and network policy.

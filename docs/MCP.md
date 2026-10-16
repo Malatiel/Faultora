@@ -90,6 +90,23 @@ and MCP process's authority: a client with other tools capable of reading that
 key or rewriting operator policy defeats this boundary. Faultora is not an OS
 sandbox against another local writer with the same permissions.
 
+In particular, an agent with unrestricted shell access under the key owner's
+OS account can read operator.der and invoke mcp approve itself. Approval does
+not protect against that agent. Moving the file to another directory or hiding
+its name provides no independent authority.
+
+For independent approval, run the agent under a separate unprivileged OS identity
+and keep signing under an operator identity or on another device. The agent must
+also be unable to alter the verification configuration, runtime/classpath or MCP
+process. The operator reviews the scenario, catalog, exact digest and run identity
+and returns only the resulting signed token. This is a deployment prerequisite;
+the current launcher does not establish that OS separation for you.
+
+The current approval command reads a PKCS#8 DER file. Hardware keys and remote
+signers are not directly supported. A future external signer must implement the
+same approval format and an independent operator decision; a hardware token's
+presence alone is not evidence of informed approval.
+
 Review the actual scenario, catalog and preparation preview, then sign its exact
 identity in a separate operator context with a PKCS#8 DER Ed25519 private key:
 
