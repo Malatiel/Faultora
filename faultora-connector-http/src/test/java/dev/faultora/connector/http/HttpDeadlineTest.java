@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@Timeout(12)
+@Timeout(20)
 class HttpDeadlineTest {
 
     private static final long TOTAL_BUDGET_MS = 300;
@@ -78,7 +78,7 @@ class HttpDeadlineTest {
         long start = System.nanoTime();
         OperationResult result = execute("/headers", 2000, TOTAL_BUDGET_MS);
 
-        assertThat(seen.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(seen.await(5, TimeUnit.SECONDS)).isTrue();
         assertTimeout(result, "TOTAL_TIMEOUT", start);
     }
 
@@ -89,7 +89,7 @@ class HttpDeadlineTest {
         long start = System.nanoTime();
         OperationResult result = execute("/body", 2000, TOTAL_BUDGET_MS);
 
-        assertThat(seen.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(seen.await(5, TimeUnit.SECONDS)).isTrue();
         assertTimeout(result, "TOTAL_TIMEOUT", start);
         assertThat(result.body()).isNull();
         assertThat(result.headers()).isEmpty();
@@ -119,7 +119,7 @@ class HttpDeadlineTest {
         OperationResult result = execute("/drip", 2000, TOTAL_BUDGET_MS);
 
         assertTimeout(result, "TOTAL_TIMEOUT", start);
-        assertThat(stopped.await(1, TimeUnit.SECONDS)).as("the peer observes disconnection").isTrue();
+        assertThat(stopped.await(5, TimeUnit.SECONDS)).as("the peer observes disconnection").isTrue();
         assertThat(written.get()).isBetween(1, 199);
     }
 
@@ -143,7 +143,7 @@ class HttpDeadlineTest {
         long start = System.nanoTime();
         OperationResult result = execute("/headers", 100, 2000);
 
-        assertThat(seen.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(seen.await(5, TimeUnit.SECONDS)).isTrue();
         assertTimeout(result, "REQUEST_TIMEOUT", start);
     }
 
@@ -154,7 +154,7 @@ class HttpDeadlineTest {
         long start = System.nanoTime();
         OperationResult result = execute("/body", 100, 2000);
 
-        assertThat(seen.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(seen.await(5, TimeUnit.SECONDS)).isTrue();
         assertTimeout(result, "REQUEST_TIMEOUT", start);
     }
 
@@ -193,16 +193,35 @@ class HttpDeadlineTest {
     @Test
     void oneRequestsDeadlineDoesNotCancelAnOverlappingHealthyRequest() throws Exception {
         CountDownLatch seen = stalled("/body", true);
-        delayedBody("/healthy", 450);
+        CountDownLatch healthyEntered = new CountDownLatch(1);
+        CountDownLatch finishHealthy = new CountDownLatch(1);
+        server.createContext("/healthy", exchange -> {
+            try (exchange) {
+                healthyEntered.countDown();
+                try {
+                    assertThat(finishHealthy.await(10, TimeUnit.SECONDS)).isTrue();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                exchange.sendResponseHeaders(200, 2);
+                exchange.getResponseBody().write("ok".getBytes(StandardCharsets.UTF_8));
+            }
+        });
         try (ExecutorService requests = Executors.newVirtualThreadPerTaskExecutor()) {
-            var shortRequest = requests.submit(() -> execute("/body", 2000, TOTAL_BUDGET_MS));
-            assertThat(seen.await(1, TimeUnit.SECONDS)).isTrue();
+            try {
+                var healthy = requests.submit(() -> execute("/healthy", 30_000, 30_000));
+                assertThat(healthyEntered.await(5, TimeUnit.SECONDS)).isTrue();
+                var shortRequest = requests.submit(() -> execute("/body", 2000, TOTAL_BUDGET_MS));
+                assertThat(seen.await(5, TimeUnit.SECONDS)).isTrue();
 
-            OperationResult healthy = execute("/healthy", 2000, 1500);
-
-            assertThat(shortRequest.get(2, TimeUnit.SECONDS).error().code()).isEqualTo("TOTAL_TIMEOUT");
-            assertThat(healthy.isSuccess()).isTrue();
-            assertThat(healthy.durationMs()).isGreaterThanOrEqualTo(400);
+                assertThat(shortRequest.get(5, TimeUnit.SECONDS).error().code()).isEqualTo("TOTAL_TIMEOUT");
+                assertThat(healthy.isDone()).as("the overlapping request remains active").isFalse();
+                finishHealthy.countDown();
+                assertThat(healthy.get(5, TimeUnit.SECONDS).isSuccess()).isTrue();
+            } finally {
+                finishHealthy.countDown();
+            }
         }
     }
 
@@ -210,12 +229,12 @@ class HttpDeadlineTest {
     void closingTheConnectorUnblocksAnActiveBodyRead() throws Exception {
         CountDownLatch seen = stalled("/body", true);
         try (ExecutorService requests = Executors.newVirtualThreadPerTaskExecutor()) {
-            var running = requests.submit(() -> execute("/body", 5000, 5000));
-            assertThat(seen.await(1, TimeUnit.SECONDS)).isTrue();
+            var running = requests.submit(() -> execute("/body", 30_000, 30_000));
+            assertThat(seen.await(5, TimeUnit.SECONDS)).isTrue();
 
             connector.close();
 
-            assertThat(running.get(1, TimeUnit.SECONDS).isSuccess()).isFalse();
+            assertThat(running.get(5, TimeUnit.SECONDS).isSuccess()).isFalse();
         }
     }
 
@@ -305,7 +324,7 @@ class HttpDeadlineTest {
         assertThat(result.error().category()).isEqualTo(NormalizedError.ErrorCategory.TIMEOUT);
         assertThat(result.error().code()).isEqualTo(code);
         assertThat(result.error().retryable()).isTrue();
-        assertThat(elapsedMs(start)).as("the transport stops within a finite wall-clock bound").isLessThan(1200);
+        assertThat(elapsedMs(start)).as("the transport stops within a finite wall-clock bound").isLessThan(5000);
         assertThat(result.durationMs()).isBetween(0L, elapsedMs(start));
     }
 

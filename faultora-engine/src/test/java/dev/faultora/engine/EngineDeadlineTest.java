@@ -1,5 +1,7 @@
 package dev.faultora.engine;
 
+import dev.faultora.engine.exec.Deadline;
+import dev.faultora.engine.exec.ManualTime;
 import dev.faultora.engine.journal.RunJournal;
 import dev.faultora.engine.plan.ExecutionPlan;
 import dev.faultora.engine.plan.PlanNode;
@@ -43,10 +45,12 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@Timeout(10)
+@Timeout(20)
 class EngineDeadlineTest {
     @TempDir
     Path directory;
+    private final ManualTime time = new ManualTime();
+    private boolean realTime;
     private final ProbeConnector connector = new ProbeConnector();
     private final InterruptibleRollback faults = new InterruptibleRollback();
     private final AtomicBoolean cancellation = new AtomicBoolean();
@@ -69,21 +73,21 @@ class EngineDeadlineTest {
     void retriesAndBackoffConsumeOneNodeBudget() throws Exception {
         connector.delayMs = 70;
         connector.retryable = true;
-        long start = System.nanoTime();
+        long start = time.elapsedMillis();
         RunResult result = run(0, 5000, operation("retry", 300,
                 new PlanNode.RetrySpec(20, 20, 1, 20), false));
 
         assertThat(result.status()).isEqualTo(RunResult.Status.FAILED);
         assertThat(result.nodeResults().get(new NodeId("retry")).error().code()).isEqualTo("DEADLINE_EXCEEDED");
         assertShrinkingBudgets(300);
-        assertThat(connector.budgets.size()).isBetween(2, 6);
+        assertThat(connector.budgets).hasSize(4);
         assertBounded(start);
     }
 
     @Test
     void aLongBackoffCannotStartAnotherAttemptAfterExpiry() throws Exception {
         connector.retryable = true;
-        long start = System.nanoTime();
+        long start = time.elapsedMillis();
         RunResult result = run(0, 5000, operation("retry", 150,
                 new PlanNode.RetrySpec(3, 5000, 1, 5000), false));
 
@@ -102,7 +106,7 @@ class EngineDeadlineTest {
 
         assertThat(result.status()).isEqualTo(RunResult.Status.FAILED);
         assertShrinkingBudgets(250);
-        assertThat(connector.budgets.size()).isBetween(2, 6);
+        assertThat(connector.budgets).hasSize(5);
     }
 
     @Test
@@ -135,12 +139,12 @@ class EngineDeadlineTest {
         assertThat(result.status()).isEqualTo(RunResult.Status.FAILED);
         assertThat(result.nodeResults().get(new NodeId("eventually")).error().code()).isEqualTo("EVENTUALLY_TIMEOUT");
         assertShrinkingBudgets(250);
-        assertThat(connector.budgets.size()).isBetween(2, 5);
+        assertThat(connector.budgets).hasSize(4);
     }
 
     @Test
     void aLongPollIntervalCannotStartAnExtraPollAfterExpiry() throws Exception {
-        long start = System.nanoTime();
+        long start = time.elapsedMillis();
         RunResult result = run(0, 5000, eventually(150, 5000, false));
 
         assertThat(result.status()).isEqualTo(RunResult.Status.FAILED);
@@ -167,7 +171,7 @@ class EngineDeadlineTest {
         assertThat(result.nodeResults().get(new NodeId("repeat")).error().category())
                 .isEqualTo(NormalizedError.ErrorCategory.TIMEOUT);
         assertShrinkingBudgets(250);
-        assertThat(connector.budgets.size()).isBetween(2, 4);
+        assertThat(connector.budgets).hasSize(4);
     }
 
     @Test
@@ -180,7 +184,7 @@ class EngineDeadlineTest {
 
         assertThat(result.nodeResults().get(new NodeId("parallel")).status()).isEqualTo(RunResult.Status.FAILED);
         assertShrinkingBudgets(250);
-        assertThat(connector.budgets.size()).isBetween(1, 2);
+        assertThat(connector.budgets).hasSize(2);
         assertThat(result.nodeResults().get(new NodeId("c")).status()).isEqualTo(RunResult.Status.FAILED);
     }
 
@@ -200,7 +204,7 @@ class EngineDeadlineTest {
 
     @Test
     void theRunDeadlineClipsLocalWaitsAndPreventsTheNextOperation() throws Exception {
-        long start = System.nanoTime();
+        long start = time.elapsedMillis();
         RunResult result = run(150, 5000, new PlanNode.WaitNode(new NodeId("wait"), 5000,
                 List.of(), SafetyClassification.READ_ONLY), operation("next", 0, null, false));
 
@@ -220,48 +224,54 @@ class EngineDeadlineTest {
 
     @Test
     void cancellationDuringBackoffStopsRetryAndRunsCleanup() throws Exception {
+        realTime = true;
+        operationBudget = 30_000;
         connector.retryable = true;
         connector.entered = new CountDownLatch(1);
         try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
-            var running = workers.submit(() -> run(0, 5000, operation("retry", 5000,
-                    new PlanNode.RetrySpec(20, 5000, 1, 5000), false), cleanupNode()));
-            assertThat(connector.entered.await(1, TimeUnit.SECONDS)).isTrue();
+            var running = workers.submit(() -> run(0, 60_000, operation("retry", 30_000,
+                    new PlanNode.RetrySpec(20, 30_000, 1, 30_000), false), cleanupNode()));
+            assertThat(connector.entered.await(5, TimeUnit.SECONDS)).isTrue();
             cancellation.set(true);
-            assertThat(running.get(1, TimeUnit.SECONDS).status()).isEqualTo(RunResult.Status.CANCELLED);
+            assertThat(running.get(5, TimeUnit.SECONDS).status()).isEqualTo(RunResult.Status.CANCELLED);
         }
         assertThat(connector.operations).containsExactly("request", "cleanup");
     }
 
     @Test
     void cancellationDuringParallelWaitingDoesNotWaitForTheGroupDeadline() throws Exception {
-        connector.delayMs = 5000;
+        realTime = true;
+        operationBudget = 30_000;
+        connector.delayMs = 30_000;
         connector.entered = new CountDownLatch(1);
         try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
-            var running = workers.submit(() -> run(0, 5000, new PlanNode.ParallelNode(new NodeId("parallel"),
-                    List.of(operation("child", 5000, null, false)), List.of(), SafetyClassification.READ_ONLY, 5000)));
-            assertThat(connector.entered.await(1, TimeUnit.SECONDS)).isTrue();
+            var running = workers.submit(() -> run(0, 60_000, new PlanNode.ParallelNode(new NodeId("parallel"),
+                    List.of(operation("child", 30_000, null, false)), List.of(), SafetyClassification.READ_ONLY, 30_000)));
+            assertThat(connector.entered.await(5, TimeUnit.SECONDS)).isTrue();
             cancellation.set(true);
-            assertThat(running.get(1, TimeUnit.SECONDS).status()).isEqualTo(RunResult.Status.CANCELLED);
+            assertThat(running.get(5, TimeUnit.SECONDS).status()).isEqualTo(RunResult.Status.CANCELLED);
         }
     }
 
     @Test
     void aThreadInterruptStopsBackoffPreservesItsFlagAndDoesNotCancelCleanup() throws Exception {
+        realTime = true;
+        operationBudget = 30_000;
         connector.retryable = true;
         connector.entered = new CountDownLatch(1);
         AtomicReference<Thread> caller = new AtomicReference<>();
         try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
             var running = workers.submit(() -> {
                 caller.set(Thread.currentThread());
-                RunResult result = run(0, 5000, operation("retry", 5000,
-                        new PlanNode.RetrySpec(20, 5000, 1, 5000), false), cleanupNode());
+                RunResult result = run(0, 60_000, operation("retry", 30_000,
+                        new PlanNode.RetrySpec(20, 30_000, 1, 30_000), false), cleanupNode());
                 boolean interrupted = Thread.interrupted();
                 assertThat(interrupted).isTrue();
                 return result;
             });
-            assertThat(connector.entered.await(1, TimeUnit.SECONDS)).isTrue();
+            assertThat(connector.entered.await(5, TimeUnit.SECONDS)).isTrue();
             caller.get().interrupt();
-            assertThat(running.get(1, TimeUnit.SECONDS).status()).isEqualTo(RunResult.Status.CANCELLED);
+            assertThat(running.get(5, TimeUnit.SECONDS).status()).isEqualTo(RunResult.Status.CANCELLED);
         }
         assertThat(connector.operations).containsExactly("request", "cleanup");
         assertThat(Files.readString(directory.resolve("run-2.ndjson"))).contains("RUN_FAILED", "CLEANUP_COMPLETED");
@@ -270,23 +280,25 @@ class EngineDeadlineTest {
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void interruptionDoesNotPreventFaultRollbackWithOrWithoutCleanup(boolean withCleanup) throws Exception {
+        realTime = true;
+        operationBudget = 30_000;
         connector.retryable = true;
         connector.entered = new CountDownLatch(1);
         AtomicReference<Thread> caller = new AtomicReference<>();
         PlanNode fault = new PlanNode.FaultStartNode(new NodeId("fault"), "synthetic-fault", "test",
                 Map.of(), 30_000, List.of(), SafetyClassification.READ_ONLY);
-        PlanNode retry = operation("retry", 5000, new PlanNode.RetrySpec(20, 5000, 1, 5000), false);
+        PlanNode retry = operation("retry", 30_000, new PlanNode.RetrySpec(20, 30_000, 1, 30_000), false);
         try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
             var running = workers.submit(() -> {
                 caller.set(Thread.currentThread());
-                RunResult result = withCleanup ? run(0, 5000, fault, retry, cleanupNode())
-                        : run(0, 5000, fault, retry);
+                RunResult result = withCleanup ? run(0, 60_000, fault, retry, cleanupNode())
+                        : run(0, 60_000, fault, retry);
                 assertThat(Thread.interrupted()).isTrue();
                 return result;
             });
-            assertThat(connector.entered.await(1, TimeUnit.SECONDS)).isTrue();
+            assertThat(connector.entered.await(5, TimeUnit.SECONDS)).isTrue();
             caller.get().interrupt();
-            assertThat(running.get(1, TimeUnit.SECONDS).status()).isEqualTo(RunResult.Status.CANCELLED);
+            assertThat(running.get(5, TimeUnit.SECONDS).status()).isEqualTo(RunResult.Status.CANCELLED);
         }
         assertThat(faults.rollbacks.get()).isEqualTo(1);
         assertThat(faults.interrupted.get()).isFalse();
@@ -322,7 +334,8 @@ class EngineDeadlineTest {
                 5000, 5000, operationBudget, Map.of());
         try (RunJournal journal = new RunJournal(directory.resolve("run-" + (++journalIndex) + ".ndjson"), true)) {
             return new LocalEngine(Map.of("http", connector), Map.of("condition", new Condition()),
-                    Map.of("synthetic-fault", faults))
+                    Map.of("synthetic-fault", faults), LocalEngine.DEFAULT_CLEANUP_TIMEOUT_MS,
+                    realTime ? Deadline::start : time::deadline)
                     .execute(plan, journal, ExpressionContext.builder().build(), context, cancellation);
         }
     }
@@ -348,8 +361,8 @@ class EngineDeadlineTest {
                 SafetyClassification.READ_ONLY, Map.of(), null, Map.of(), Map.of("method", "GET", "path", "/"));
     }
 
-    private static void assertBounded(long start) {
-        assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start)).isLessThan(1200);
+    private void assertBounded(long start) {
+        assertThat(time.elapsedMillis() - start).isLessThanOrEqualTo(300);
     }
 
     private static class Condition implements AssertionProvider {
@@ -381,7 +394,7 @@ class EngineDeadlineTest {
         }
     }
 
-    private static class ProbeConnector implements Connector {
+    private final class ProbeConnector implements Connector {
         final List<ConnectorContext> budgets = new CopyOnWriteArrayList<>();
         final List<String> operations = new CopyOnWriteArrayList<>();
         final AtomicInteger prepared = new AtomicInteger();
@@ -413,7 +426,11 @@ class EngineDeadlineTest {
             }
             return OperationResult.success(200, Map.of(), null, delayMs, Map.of());
         }
-        private static void pause(long ms) {
+        private void pause(long ms) {
+            if (!realTime) {
+                time.advanceMillis(ms);
+                return;
+            }
             try { Thread.sleep(ms); }
             catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
         }

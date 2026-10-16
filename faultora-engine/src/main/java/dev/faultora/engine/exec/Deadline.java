@@ -5,13 +5,16 @@ import java.util.function.LongSupplier;
 
 /** Immutable monotonic budget shared by a run and narrowed by its children. */
 public final class Deadline {
-    private static final Deadline NONE = new Deadline(System::nanoTime, 0, -1);
+    private static final Sleeper SYSTEM_SLEEP = TimeUnit.NANOSECONDS::sleep;
+    private static final Deadline NONE = new Deadline(System::nanoTime, SYSTEM_SLEEP, 0, -1);
     private final LongSupplier clock;
+    private final Sleeper sleeper;
     private final long start;
     private final long budget;
 
-    private Deadline(LongSupplier clock, long start, long budget) {
+    private Deadline(LongSupplier clock, Sleeper sleeper, long start, long budget) {
         this.clock = clock;
+        this.sleeper = sleeper;
         this.start = start;
         this.budget = budget;
     }
@@ -26,9 +29,13 @@ public final class Deadline {
     }
 
     static Deadline start(long timeoutMs, LongSupplier clock) {
+        return start(timeoutMs, clock, SYSTEM_SLEEP);
+    }
+
+    static Deadline start(long timeoutMs, LongSupplier clock, Sleeper sleeper) {
         return timeoutMs > 0
-                ? new Deadline(clock, clock.getAsLong(), TimeUnit.MILLISECONDS.toNanos(timeoutMs))
-                : new Deadline(clock, 0, -1);
+                ? new Deadline(clock, sleeper, clock.getAsLong(), TimeUnit.MILLISECONDS.toNanos(timeoutMs))
+                : new Deadline(clock, sleeper, 0, -1);
     }
 
     public Deadline limit(long timeoutMs) {
@@ -36,7 +43,7 @@ public final class Deadline {
             return this;
         }
         long now = clock.getAsLong();
-        return new Deadline(clock, now,
+        return new Deadline(clock, sleeper, now,
                 Math.min(remainingNanos(now), TimeUnit.MILLISECONDS.toNanos(timeoutMs)));
     }
 
@@ -55,5 +62,14 @@ public final class Deadline {
 
     public boolean expired() {
         return remainingMillis() == 0;
+    }
+
+    void pause(long nanos) throws InterruptedException {
+        sleeper.sleep(nanos);
+    }
+
+    @FunctionalInterface
+    interface Sleeper {
+        void sleep(long nanos) throws InterruptedException;
     }
 }
