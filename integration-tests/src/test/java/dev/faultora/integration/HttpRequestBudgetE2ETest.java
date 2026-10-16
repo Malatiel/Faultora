@@ -52,10 +52,16 @@ class HttpRequestBudgetE2ETest {
             }
         });
         server.createContext("/final", exchange -> {
-            try (exchange) { hops.incrementAndGet(); exchange.sendResponseHeaders(204, -1); }
+            try (exchange) {
+                hops.incrementAndGet();
+                exchange.sendResponseHeaders(204, -1);
+            }
         });
         server.createContext("/next", exchange -> {
-            try (exchange) { next.incrementAndGet(); exchange.sendResponseHeaders(204, -1); }
+            try (exchange) {
+                next.incrementAndGet();
+                exchange.sendResponseHeaders(204, -1);
+            }
         });
         server.start();
         try (HttpConnector connector = new HttpConnector(DestinationPolicy.permissive());
@@ -88,7 +94,9 @@ class HttpRequestBudgetE2ETest {
             if (limit == 1) {
                 assertThat(result.nodeResults().get(new NodeId("next")).error().code()).isEqualTo("REQUEST_BUDGET_EXCEEDED");
             }
-        } finally { server.stop(0); }
+        } finally {
+            server.stop(0);
+        }
     }
 
     private static OperationDefinition operation(String id, String path) {

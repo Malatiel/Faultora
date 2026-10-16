@@ -28,7 +28,9 @@ class ReportWriterFailureTest {
     void reportsUseRetainedEventsWhenStorageFailedDuringClose() throws Exception {
         RunId run = new RunId("synthetic-report");
         var broken = new StringWriter() {
-            public void close() throws IOException { throw new IOException("SYNTHETIC_PRIVATE_CLOSE_MESSAGE"); }
+            public void close() throws IOException {
+                throw new IOException("SYNTHETIC_PRIVATE_CLOSE_MESSAGE");
+            }
         };
         try (RunJournal journal = new RunJournal(directory.resolve("events.ndjson"), false, broken)) {
             journal.append(new RunEvent.RunStarted("RUN_STARTED", 1, run, "synthetic", "synthetic", 42, Map.of()));

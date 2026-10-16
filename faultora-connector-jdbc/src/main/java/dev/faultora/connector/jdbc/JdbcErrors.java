@@ -24,7 +24,9 @@ final class JdbcErrors {
 
     static ConnectionFailure unavailable(SQLException failure, boolean closeFailed) {
         Map<String, Object> fields = new LinkedHashMap<>(classification(failure));
-        if (closeFailed) { fields.put("connectionCloseFailed", true); }
+        if (closeFailed) {
+            fields.put("connectionCloseFailed", true);
+        }
         return new ConnectionFailure(new NormalizedError(NormalizedError.ErrorCategory.NETWORK,
                 "DATABASE_UNAVAILABLE", "Database connection failed", true, Map.copyOf(fields)));
     }
@@ -33,13 +35,20 @@ final class JdbcErrors {
         Map<String, Object> fields = new LinkedHashMap<>();
         fields.put("vendorCode", failure.getErrorCode());
         String state = failure.getSQLState();
-        if (state != null && state.matches("[A-Z0-9]{5}")) { fields.put("sqlState", state); }
+        if (state != null && state.matches("[A-Z0-9]{5}")) {
+            fields.put("sqlState", state);
+        }
         return Map.copyOf(fields);
     }
 
     static final class ConnectionFailure extends RuntimeException {
         private final NormalizedError error;
-        ConnectionFailure(NormalizedError error) { super(error.message()); this.error = error; }
-        NormalizedError error() { return error; }
+        ConnectionFailure(NormalizedError error) {
+            super(error.message());
+            this.error = error;
+        }
+        NormalizedError error() {
+            return error;
+        }
     }
 }

@@ -57,8 +57,12 @@ class EngineIntegrityFailureTest {
         assertThat(result.error().message()).doesNotContain(PRIVATE_MARKER);
         assertThat(result.error().metadata()).containsKey("journalOperation");
         assertThat(calls).contains("cleanup");
-        if (mode.equals("first")) { assertThat(calls).containsExactly("cleanup"); }
-        if (mode.equals("node")) { assertThat(calls).containsExactly("read", "cleanup"); }
+        if (mode.equals("first")) {
+            assertThat(calls).containsExactly("cleanup");
+        }
+        if (mode.equals("node")) {
+            assertThat(calls).containsExactly("read", "cleanup");
+        }
         assertThat(events.getFirst()).isInstanceOf(RunEvent.RunStarted.class);
         assertThat(events.getLast()).isInstanceOf(RunEvent.RunFailed.class);
         assertThat(events.toString()).doesNotContain(PRIVATE_MARKER);
@@ -133,15 +137,25 @@ class EngineIntegrityFailureTest {
                         100, 1, 10_000, 1024, Set.of("synthetic-fault"), Set.of()))
                 .scenarioDigest("synthetic-scenario").catalogDigest("synthetic-catalog").addNodes(nodes).build();
         Connector connector = new Connector() {
-            public ProtocolId protocol() { return new ProtocolId("http"); }
-            public Set<String> capabilities() { return Set.of(); }
-            public PreparedTarget prepare(TargetDefinition target, ConnectorContext context) { return () -> target; }
+            public ProtocolId protocol() {
+                return new ProtocolId("http");
+            }
+            public Set<String> capabilities() {
+                return Set.of();
+            }
+            public PreparedTarget prepare(TargetDefinition target, ConnectorContext context) {
+                return () -> target;
+            }
             public OperationResult execute(PreparedTarget target, OperationDefinition operation,
                                            Map<String, Object> inputs, ConnectorContext context) {
                 calls.add(operation.id().value());
                 if (operation.id().equals(READ.id()) && faults != null && faults.awaitWatchdog) {
-                    try { assertThat(faults.entered.await(1, TimeUnit.SECONDS)).isTrue(); }
-                    catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new AssertionError(interrupted); }
+                    try {
+                        assertThat(faults.entered.await(1, TimeUnit.SECONDS)).isTrue();
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(interrupted);
+                    }
                 }
                 return OperationResult.success(200, Map.of(), null, 0, Map.of());
             }
@@ -183,16 +197,26 @@ class EngineIntegrityFailureTest {
         final String mode;
         int writes;
         boolean closed;
-        BrokenWriter(String mode) { this.mode = mode; }
+        BrokenWriter(String mode) {
+            this.mode = mode;
+        }
         public void write(char[] value, int offset, int length) throws IOException {
             String text = new String(value, offset, length);
             if (mode.equals("first") && writes++ == 0 || mode.equals("node") && text.contains("NODE_COMPLETED")
-                    || mode.equals("terminal") && text.contains("RUN_COMPLETED")) { throw new IOException(PRIVATE_MARKER); }
+                    || mode.equals("terminal") && text.contains("RUN_COMPLETED")) {
+                        throw new IOException(PRIVATE_MARKER);
+                    }
         }
-        public void flush() throws IOException { if (mode.equals("flush")) { throw new IOException(PRIVATE_MARKER); } }
+        public void flush() throws IOException {
+            if (mode.equals("flush")) {
+                throw new IOException(PRIVATE_MARKER);
+            }
+        }
         public void close() throws IOException {
             closed = true;
-            if (mode.equals("close")) { throw new IOException(PRIVATE_MARKER); }
+            if (mode.equals("close")) {
+                throw new IOException(PRIVATE_MARKER);
+            }
         }
     }
 
@@ -203,7 +227,9 @@ class EngineIntegrityFailureTest {
         final CountDownLatch finished = new CountDownLatch(1);
         boolean awaitWatchdog;
         CountDownLatch block;
-        public Set<String> capabilities() { return Set.of("synthetic-fault"); }
+        public Set<String> capabilities() {
+            return Set.of("synthetic-fault");
+        }
         public ActiveFault inject(String type, Map<String, Object> params, FaultContext context) {
             return new ActiveFault("synthetic-" + injected.incrementAndGet(), type, context.targetScope(),
                     Math.min(System.currentTimeMillis(), context.hardExpiryMs() - 1),
@@ -215,13 +241,23 @@ class EngineIntegrityFailureTest {
                 if (block != null) {
                     boolean interrupted = false;
                     while (block.getCount() > 0) {
-                        try { block.await(); } catch (InterruptedException stopped) { interrupted = true; }
+                        try {
+                            block.await();
+                        } catch (InterruptedException stopped) {
+                            interrupted = true;
+                        }
                     }
-                    if (interrupted) { Thread.currentThread().interrupt(); }
+                    if (interrupted) {
+                        Thread.currentThread().interrupt();
+                    }
                     return;
                 }
-                if (fault.handle().equals("synthetic-1")) { throw new IllegalStateException(PRIVATE_MARKER); }
-            } finally { finished.countDown(); }
+                if (fault.handle().equals("synthetic-1")) {
+                    throw new IllegalStateException(PRIVATE_MARKER);
+                }
+            } finally {
+                finished.countDown();
+            }
         }
     }
 }

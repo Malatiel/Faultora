@@ -21,9 +21,13 @@ class JdbcErrorExportE2ETest {
     void aDriverQuotedValueIsAbsentFromCliDiagnosticsJournalAndAllReports() throws Exception {
         String marker = "SYNTHETIC_PRIVATE_JDBC_VALUE";
         Driver driver = new Driver() {
-            public boolean acceptsURL(String url) { return url.startsWith("jdbc:synthetic-privacy:"); }
+            public boolean acceptsURL(String url) {
+                return url.startsWith("jdbc:synthetic-privacy:");
+            }
             public Connection connect(String url, java.util.Properties properties) {
-                if (!acceptsURL(url)) { return null; }
+                if (!acceptsURL(url)) {
+                    return null;
+                }
                 return (Connection) java.lang.reflect.Proxy.newProxyInstance(Connection.class.getClassLoader(),
                         new Class<?>[]{Connection.class}, (proxy, method, args) -> {
                             if (method.getName().equals("prepareStatement")) {
@@ -38,11 +42,21 @@ class JdbcErrorExportE2ETest {
                             return null;
                         });
             }
-            public DriverPropertyInfo[] getPropertyInfo(String url, java.util.Properties properties) { return new DriverPropertyInfo[0]; }
-            public int getMajorVersion() { return 1; }
-            public int getMinorVersion() { return 0; }
-            public boolean jdbcCompliant() { return false; }
-            public java.util.logging.Logger getParentLogger() { return java.util.logging.Logger.getAnonymousLogger(); }
+            public DriverPropertyInfo[] getPropertyInfo(String url, java.util.Properties properties) {
+                return new DriverPropertyInfo[0];
+            }
+            public int getMajorVersion() {
+                return 1;
+            }
+            public int getMinorVersion() {
+                return 0;
+            }
+            public boolean jdbcCompliant() {
+                return false;
+            }
+            public java.util.logging.Logger getParentLogger() {
+                return java.util.logging.Logger.getAnonymousLogger();
+            }
         };
         DriverManager.registerDriver(driver);
         try {
@@ -97,6 +111,8 @@ class JdbcErrorExportE2ETest {
                 assertThat(Files.readString(output.resolve(file))).as(file).doesNotContain(marker, "Cannot cast");
             }
             assertThat(Files.readString(output.resolve("events.ndjson"))).contains("OBSERVATION_FAILED", "22018");
-        } finally { DriverManager.deregisterDriver(driver); }
+        } finally {
+            DriverManager.deregisterDriver(driver);
+        }
     }
 }

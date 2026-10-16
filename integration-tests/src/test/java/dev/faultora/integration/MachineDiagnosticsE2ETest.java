@@ -36,8 +36,11 @@ class MachineDiagnosticsE2ETest {
             exchange.getResponseHeaders().add("Authorization", MARKER);
             byte[] body = ("{\"value\":\"" + MARKER + "\"}").getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, body.length);
-            try (var response = exchange.getResponseBody()) { response.write(body); }
-            finally { exchange.close(); }
+            try (var response = exchange.getResponseBody()) {
+                response.write(body);
+            } finally {
+                exchange.close();
+            }
         });
         server.start();
         try {
@@ -60,8 +63,12 @@ class MachineDiagnosticsE2ETest {
             if (mode.equals("preview-refused")) {
                 source += "faults:\n  - id: inject\n    faultType: network-reset\n    duration: 1s\n";
             }
-            if (mode.equals("invalid-yaml")) { source = "apiVersion: [" + MARKER; }
-            if (mode.equals("invalid-structure")) { source += "timeout: " + MARKER + "\n"; }
+            if (mode.equals("invalid-yaml")) {
+                source = "apiVersion: [" + MARKER;
+            }
+            if (mode.equals("invalid-structure")) {
+                source += "timeout: " + MARKER + "\n";
+            }
             if (mode.equals("input-required")) {
                 source += "inputs:\n  account:\n    type: string\n    required: true\n";
             }
@@ -70,20 +77,38 @@ class MachineDiagnosticsE2ETest {
             }
             Files.writeString(scenario, source);
             Path output = directory.resolve("reports");
-            if (mode.equals("report-failure")) { Files.createDirectories(output.resolve("report.json")); }
-            if (mode.equals("artifact-failure")) { Files.writeString(output, "synthetic artifact blocker"); }
-            if (mode.equals("missing-scenario")) { scenario = directory.resolve(MARKER + ".yaml"); }
+            if (mode.equals("report-failure")) {
+                Files.createDirectories(output.resolve("report.json"));
+            }
+            if (mode.equals("artifact-failure")) {
+                Files.writeString(output, "synthetic artifact blocker");
+            }
+            if (mode.equals("missing-scenario")) {
+                scenario = directory.resolve(MARKER + ".yaml");
+            }
             List<String> args = new ArrayList<>(List.of("--diagnostics=json", "test", "--scenario", scenario.toString(),
                     "--target", "http://127.0.0.1:" + server.getAddress().getPort() + "/" + MARKER,
                     "--allow-private", "--seed", "42", "--format", "console,json,html,junit", "--output", output.toString()));
-            if (mode.equals("node-error")) { args.remove("--allow-private"); }
-            if (mode.startsWith("preview")) { args.add("--preview"); }
-            if (mode.equals("input-unknown")) { args.addAll(List.of("--input", "unknown=" + MARKER)); }
-            if (mode.equals("invalid-option")) { args.add("--" + MARKER); }
-            if (mode.equals("invalid-format")) { args.addAll(List.of("--format", MARKER)); }
+            if (mode.equals("node-error")) {
+                args.remove("--allow-private");
+            }
+            if (mode.startsWith("preview")) {
+                args.add("--preview");
+            }
+            if (mode.equals("input-unknown")) {
+                args.addAll(List.of("--input", "unknown=" + MARKER));
+            }
+            if (mode.equals("invalid-option")) {
+                args.add("--" + MARKER);
+            }
+            if (mode.equals("invalid-format")) {
+                args.addAll(List.of("--format", MARKER));
+            }
             if (mode.equals("catalog-refused") || mode.equals("missing-catalog")) {
                 Path catalog = directory.resolve(MARKER + ".openapi.yaml");
-                if (mode.equals("catalog-refused")) { Files.writeString(catalog, "private: " + MARKER); }
+                if (mode.equals("catalog-refused")) {
+                    Files.writeString(catalog, "private: " + MARKER);
+                }
                 args.addAll(List.of("--openapi", catalog.toString()));
             }
             Path stdout = directory.resolve("stdout.txt");
@@ -94,8 +119,9 @@ class MachineDiagnosticsE2ETest {
                     "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "-jar", System.getProperty("faultora.cliJar")));
             command.addAll(args);
             Process cli = new ProcessBuilder(command).redirectOutput(stdout.toFile()).redirectError(stderr.toFile()).start();
-            try { assertThat(cli.waitFor(30, TimeUnit.SECONDS)).as("CLI finished").isTrue(); }
-            finally {
+            try {
+                assertThat(cli.waitFor(30, TimeUnit.SECONDS)).as("CLI finished").isTrue();
+            } finally {
                 if (cli.isAlive()) {
                     cli.destroyForcibly();
                     assertThat(cli.waitFor(5, TimeUnit.SECONDS)).as("CLI teardown finished").isTrue();
@@ -157,6 +183,8 @@ class MachineDiagnosticsE2ETest {
                     assertThat(Files.readString(output.resolve(name))).doesNotContain(MARKER);
                 }
             }
-        } finally { server.stop(0); }
+        } finally {
+            server.stop(0);
+        }
     }
 }

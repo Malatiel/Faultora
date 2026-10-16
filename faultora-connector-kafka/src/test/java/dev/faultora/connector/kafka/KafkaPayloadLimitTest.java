@@ -35,8 +35,12 @@ class KafkaPayloadLimitTest {
     private final FakeKafka broker = new FakeKafka().topic(KafkaFixtures.TOPIC, 0);
     private KafkaConnector connector;
 
-    @BeforeEach void setUp() { connector = new KafkaConnector(HostPolicy.permissive(), broker); }
-    @AfterEach void tearDown() { connector.close(); }
+    @BeforeEach void setUp() {
+        connector = new KafkaConnector(HostPolicy.permissive(), broker);
+    }
+    @AfterEach void tearDown() {
+        connector.close();
+    }
 
     @Test
     void keyValueAndHeaderBytesShareOneLimitIncludingUtf8Names() {
@@ -159,8 +163,13 @@ class KafkaPayloadLimitTest {
     void jsonTraversalStopsBeforeBuildingAnEntireOversizedCollection() {
         AtomicInteger visited = new AtomicInteger();
         var body = new AbstractList<String>() {
-            public int size() { return Integer.MAX_VALUE; }
-            public String get(int index) { visited.incrementAndGet(); return "x".repeat(200); }
+            public int size() {
+                return Integer.MAX_VALUE;
+            }
+            public String get(int index) {
+                visited.incrementAndGet();
+                return "x".repeat(200);
+            }
         };
         assertTooLarge(publish(Map.of("body", body), 16));
         assertThat(visited.get()).isBetween(1, 100);
@@ -173,10 +182,14 @@ class KafkaPayloadLimitTest {
         var headers = new AbstractMap<String, String>() {
             public Set<Entry<String, String>> entrySet() {
                 return new AbstractSet<>() {
-                    public int size() { return Integer.MAX_VALUE; }
+                    public int size() {
+                        return Integer.MAX_VALUE;
+                    }
                     public Iterator<Entry<String, String>> iterator() {
                         return new Iterator<>() {
-                            public boolean hasNext() { return true; }
+                            public boolean hasNext() {
+                                return true;
+                            }
                             public Entry<String, String> next() {
                                 return new SimpleEntry<>("h" + visited.incrementAndGet(), "x".repeat(200));
                             }
@@ -203,10 +216,19 @@ class KafkaPayloadLimitTest {
     void oversizedCharacterSequencesAreNotFirstMaterializedAsStrings(String field) {
         AtomicInteger visited = new AtomicInteger();
         CharSequence text = new CharSequence() {
-            public int length() { return Integer.MAX_VALUE; }
-            public char charAt(int index) { visited.incrementAndGet(); return 'x'; }
-            public CharSequence subSequence(int start, int end) { throw new AssertionError("No full intermediate text"); }
-            public String toString() { throw new AssertionError("No full intermediate text"); }
+            public int length() {
+                return Integer.MAX_VALUE;
+            }
+            public char charAt(int index) {
+                visited.incrementAndGet();
+                return 'x';
+            }
+            public CharSequence subSequence(int start, int end) {
+                throw new AssertionError("No full intermediate text");
+            }
+            public String toString() {
+                throw new AssertionError("No full intermediate text");
+            }
         };
         Map<String, Object> input = switch (field) {
             case "header-name" -> Map.of("headers", Map.of(text, ""));
@@ -282,7 +304,9 @@ class KafkaPayloadLimitTest {
         try {
             assertThat(connector.execute(prepared, KafkaFixtures.consume(KafkaFixtures.TOPIC),
                     Map.of("waitMs", 0), context(0)).isSuccess()).isTrue();
-        } finally { connector.release(prepared); }
+        } finally {
+            connector.release(prepared);
+        }
         assertThat(broker.producersOpened()).isZero();
     }
 
@@ -292,8 +316,11 @@ class KafkaPayloadLimitTest {
 
     private OperationResult publish(Map<String, Object> inputs, ConnectorContext context) {
         var prepared = connector.prepare(KafkaFixtures.target(), context);
-        try { return connector.execute(prepared, KafkaFixtures.publish(KafkaFixtures.TOPIC), inputs, context); }
-        finally { connector.release(prepared); }
+        try {
+            return connector.execute(prepared, KafkaFixtures.publish(KafkaFixtures.TOPIC), inputs, context);
+        } finally {
+            connector.release(prepared);
+        }
     }
 
     private static ConnectorContext context(Object limit) {

@@ -59,13 +59,18 @@ class ExecutionDeadlineE2ETest {
         server.setExecutor(handlers);
         baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
         server.createContext("/warm", exchange -> {
-            try (exchange) { exchange.sendResponseHeaders(204, -1); }
+            try (exchange) {
+                exchange.sendResponseHeaders(204, -1);
+            }
         });
         server.createContext("/headers", exchange -> {
             requests.incrementAndGet();
             try (exchange) {
-                try { release.await(5, TimeUnit.SECONDS); }
-                catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+                try {
+                    release.await(5, TimeUnit.SECONDS);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
             }
         });
         server.createContext("/drip", exchange -> {
@@ -75,8 +80,9 @@ class ExecutionDeadlineE2ETest {
                 for (int index = 0; index < 100; index++) {
                     exchange.getResponseBody().write('x');
                     exchange.getResponseBody().flush();
-                    try { Thread.sleep(25); }
-                    catch (InterruptedException interrupted) {
+                    try {
+                        Thread.sleep(25);
+                    } catch (InterruptedException interrupted) {
                         Thread.currentThread().interrupt();
                         break;
                     }

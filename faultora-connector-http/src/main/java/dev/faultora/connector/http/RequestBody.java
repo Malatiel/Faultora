@@ -72,7 +72,9 @@ final class RequestBody {
             super("Request exceeds maximum payload size of " + limit + " bytes");
             this.limit = limit;
         }
-        int limit() { return limit; }
+        int limit() {
+            return limit;
+        }
     }
 
     private static final class BoundedOutput extends OutputStream {

@@ -267,7 +267,9 @@ class EventE2ETest {
     private static List<RunEvent> readEvents(Path outputDir) throws IOException {
         List<RunEvent> events = new ArrayList<>();
         for (String line : Files.readAllLines(outputDir.resolve("events.ndjson"))) {
-            if (!line.isBlank()) { events.add(MAPPER.readValue(line, RunEvent.class)); }
+            if (!line.isBlank()) {
+                events.add(MAPPER.readValue(line, RunEvent.class));
+            }
         }
         return List.copyOf(events);
     }

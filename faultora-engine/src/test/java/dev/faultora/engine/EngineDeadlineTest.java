@@ -353,7 +353,9 @@ class EngineDeadlineTest {
     }
 
     private static class Condition implements AssertionProvider {
-        public String type() { return "condition"; }
+        public String type() {
+            return "condition";
+        }
         public AssertionResult evaluate(String type, Map<String, Object> params,
                                         EvidenceView evidence, AssertionContext context) {
             return Boolean.TRUE.equals(params.get("satisfied")) ? AssertionResult.pass("ready")
@@ -364,7 +366,9 @@ class EngineDeadlineTest {
     private static class InterruptibleRollback implements FaultProvider {
         final AtomicInteger rollbacks = new AtomicInteger();
         final AtomicBoolean interrupted = new AtomicBoolean();
-        public Set<String> capabilities() { return Set.of("synthetic-fault"); }
+        public Set<String> capabilities() {
+            return Set.of("synthetic-fault");
+        }
         public ActiveFault inject(String type, Map<String, Object> params, FaultContext context) {
             return new ActiveFault("synthetic-handle", type, context.targetScope(), System.currentTimeMillis(),
                     context.hardExpiryMs(), "synthetic rollback");
@@ -391,8 +395,12 @@ class EngineDeadlineTest {
         boolean retryable;
         boolean ignoreBudget;
         CountDownLatch entered;
-        public ProtocolId protocol() { return new ProtocolId("http"); }
-        public Set<String> capabilities() { return Set.of(); }
+        public ProtocolId protocol() {
+            return new ProtocolId("http");
+        }
+        public Set<String> capabilities() {
+            return Set.of();
+        }
         public PreparedTarget prepare(TargetDefinition target, ConnectorContext context) {
             prepared.incrementAndGet();
             pause(prepareDelayMs);
@@ -405,7 +413,9 @@ class EngineDeadlineTest {
             if (operation.id().value().equals("cleanup")) {
                 return OperationResult.success(200, Map.of(), null, 0, Map.of());
             }
-            if (entered != null) { entered.countDown(); }
+            if (entered != null) {
+                entered.countDown();
+            }
             pause(ignoreBudget ? delayMs : Math.min(delayMs, context.totalTimeoutMs()));
             if (retryable || !ignoreBudget && delayMs >= context.totalTimeoutMs()) {
                 return OperationResult.failure(new NormalizedError(NormalizedError.ErrorCategory.TIMEOUT,
@@ -414,10 +424,15 @@ class EngineDeadlineTest {
             return OperationResult.success(200, Map.of(), null, delayMs, Map.of());
         }
         private static void pause(long ms) {
-            try { Thread.sleep(ms); }
-            catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+            try {
+                Thread.sleep(ms);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
-        public void release(PreparedTarget target) { released.incrementAndGet(); }
+        public void release(PreparedTarget target) {
+            released.incrementAndGet();
+        }
         public void close() { }
     }
 }

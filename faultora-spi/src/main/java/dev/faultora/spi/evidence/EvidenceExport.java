@@ -40,7 +40,9 @@ public final class EvidenceExport {
 
     /** Only call for connector-origin errors; engine lifecycle errors have their own fixed diagnostics. */
     public static NormalizedError connectorError(NormalizedError error) {
-        if (error == null) { return null; }
+        if (error == null) {
+            return null;
+        }
         String code = error.code();
         if (code == null || !(CONNECTOR_CODES.contains(code) || code.matches("HTTP_[1-5][0-9]{2}"))) {
             code = "CONNECTOR_ERROR";
@@ -54,9 +56,13 @@ public final class EvidenceExport {
                 }
             }
             Object state = error.metadata().get("sqlState");
-            if (state instanceof String text && text.matches("[A-Z0-9]{5}")) { metadata.put("sqlState", text); }
+            if (state instanceof String text && text.matches("[A-Z0-9]{5}")) {
+                metadata.put("sqlState", text);
+            }
             Object closeFailed = error.metadata().get("connectionCloseFailed");
-            if (closeFailed instanceof Boolean) { metadata.put("connectionCloseFailed", closeFailed); }
+            if (closeFailed instanceof Boolean) {
+                metadata.put("connectionCloseFailed", closeFailed);
+            }
         }
         NormalizedError.ErrorCategory category = error.category() == null
                 ? NormalizedError.ErrorCategory.UNKNOWN : error.category();

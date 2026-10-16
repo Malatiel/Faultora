@@ -95,7 +95,9 @@ public final class OperationInvoker {
             }
             OperationResult result = connector.execute(prepared, node.operation(), inputs, operationContext);
             halt = halt(context);
-            if (halt != null) { return OperationResult.failure(halt.error(), result.durationMs()); }
+            if (halt != null) {
+                return OperationResult.failure(halt.error(), result.durationMs());
+            }
             return result.error() == null ? result : new OperationResult(
                     result.statusCode(), result.headers(), result.body(), result.durationMs(),
                     EvidenceExport.connectorError(result.error()), result.protocolEvidence(), result.evidenceDigests());

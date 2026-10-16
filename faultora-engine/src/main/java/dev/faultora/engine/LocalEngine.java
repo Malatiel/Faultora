@@ -141,7 +141,9 @@ public class LocalEngine {
         boolean deadlineExceeded = false;
         try {
             for (PlanNode node : nodes) {
-                if (writer.failed()) { break; }
+                if (writer.failed()) {
+                    break;
+                }
                 if (nodeContext.cancelled()) {
                     cancellation.set(true);
                     break;

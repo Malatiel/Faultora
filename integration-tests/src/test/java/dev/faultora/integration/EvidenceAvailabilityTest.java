@@ -195,11 +195,15 @@ class EvidenceAvailabilityTest {
         return provider.evaluate(provider.type(), params, evidence, CONTEXT);
     }
 
-    private static NodeEvidence evidence(EvidencePolicy policy) { return new NodeEvidence(policy); }
+    private static NodeEvidence evidence(EvidencePolicy policy) {
+        return new NodeEvidence(policy);
+    }
 
     private static EvidencePolicy policy(boolean bodies, boolean headers, List<String> redacted) {
         return new EvidencePolicy(bodies, headers, Set.of(), 1024, 10, redacted, Set.of(), "session");
     }
 
-    private static byte[] bytes(String text) { return text.getBytes(StandardCharsets.UTF_8); }
+    private static byte[] bytes(String text) {
+        return text.getBytes(StandardCharsets.UTF_8);
+    }
 }

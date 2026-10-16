@@ -69,7 +69,10 @@ public final class RunSummary {
                     attemptsKnown |= runStarted.resolvedConfig() != null
                             && "connector-attempt".equals(runStarted.resolvedConfig().get("requestBudgetUnit"));
                 }
-                case RunEvent.OperationAttempted ignored -> { attempts++; attemptsKnown = true; }
+                case RunEvent.OperationAttempted ignored -> {
+                    attempts++;
+                    attemptsKnown = true;
+                }
                 case RunEvent.RunCompleted runCompleted -> completed = runCompleted;
                 case RunEvent.RunFailed runFailed -> failed = runFailed;
                 case RunEvent.OperationRetried retried ->
@@ -239,7 +242,9 @@ public final class RunSummary {
     }
 
     /** Granted connector attempts; null for old journals that did not record this metric. */
-    public Long connectorAttempts() { return connectorAttempts; }
+    public Long connectorAttempts() {
+        return connectorAttempts;
+    }
 
     public int passedAssertions() {
         return completed != null ? completed.passedAssertions() : 0;

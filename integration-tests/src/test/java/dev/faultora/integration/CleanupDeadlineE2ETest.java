@@ -59,11 +59,15 @@ class CleanupDeadlineE2ETest {
         server.setExecutor(handlers);
         baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
         server.createContext("/warm", exchange -> {
-            try (exchange) { exchange.sendResponseHeaders(204, -1); }
+            try (exchange) {
+                exchange.sendResponseHeaders(204, -1);
+            }
         });
         server.createContext("/after", exchange -> {
             afterRequests.incrementAndGet();
-            try (exchange) { exchange.sendResponseHeaders(204, -1); }
+            try (exchange) {
+                exchange.sendResponseHeaders(204, -1);
+            }
         });
         server.createContext("/cleanup", exchange -> {
             cleanupRequests.incrementAndGet();
@@ -72,8 +76,9 @@ class CleanupDeadlineE2ETest {
                 for (int index = 0; index < 100; index++) {
                     exchange.getResponseBody().write('x');
                     exchange.getResponseBody().flush();
-                    try { Thread.sleep(25); }
-                    catch (InterruptedException stopped) {
+                    try {
+                        Thread.sleep(25);
+                    } catch (InterruptedException stopped) {
                         Thread.currentThread().interrupt();
                         break;
                     }

@@ -53,7 +53,9 @@ record RecordPayload(byte[] key, byte[] value, String keyText,
 
     private record Text(String text, byte[] bytes) { }
     private record EncodedHeader(Text name, Text value) {
-        int size() { return name.bytes().length + value.bytes().length; }
+        int size() {
+            return name.bytes().length + value.bytes().length;
+        }
     }
 
     private static int limit(ConnectorContext context) {
@@ -87,17 +89,24 @@ record RecordPayload(byte[] key, byte[] value, String keyText,
             super("Kafka record exceeds maximum payload size of " + limit + " bytes");
             this.limit = limit;
         }
-        int limit() { return limit; }
+        int limit() {
+            return limit;
+        }
     }
 
     private static final class Budget {
         private final int limit;
         private int remaining;
 
-        Budget(int limit) { this.limit = limit; this.remaining = limit; }
+        Budget(int limit) {
+            this.limit = limit;
+            this.remaining = limit;
+        }
 
         void take(int bytes) {
-            if (bytes > remaining) { throw new TooLarge(limit); }
+            if (bytes > remaining) {
+                throw new TooLarge(limit);
+            }
             remaining -= bytes;
         }
 
@@ -123,19 +132,25 @@ record RecordPayload(byte[] key, byte[] value, String keyText,
                 int length = text.length();
                 for (int offset = 0; offset < length;) {
                     int count = Math.min(chunk.length, length - offset);
-                    for (int index = 0; index < count; index++) { chunk[index] = text.charAt(offset + index); }
+                    for (int index = 0; index < count; index++) {
+                        chunk[index] = text.charAt(offset + index);
+                    }
                     writer.write(chunk, 0, count);
                     offset += count;
                 }
             } catch (IOException failure) {
                 throw new IllegalArgumentException("Message text cannot be encoded", failure);
             }
-            if (output.exceeded) { throw new TooLarge(limit); }
+            if (output.exceeded) {
+                throw new TooLarge(limit);
+            }
             return output.bytes();
         }
 
         byte[] value(Object input) {
-            if (input == null) { return null; }
+            if (input == null) {
+                return null;
+            }
             if (input instanceof byte[] bytes) {
                 take(bytes.length);
                 return bytes.clone();
@@ -150,10 +165,14 @@ record RecordPayload(byte[] key, byte[] value, String keyText,
                 // Keep Kafka's existing UTF-8 JSON representation, including binary base64.
                 MAPPER.writeValue(output, input);
             } catch (IOException | RuntimeException failure) {
-                if (output.exceeded) { throw new TooLarge(limit); }
+                if (output.exceeded) {
+                    throw new TooLarge(limit);
+                }
                 throw new IllegalArgumentException("Message payload cannot be serialized", failure);
             }
-            if (output.exceeded) { throw new TooLarge(limit); }
+            if (output.exceeded) {
+                throw new TooLarge(limit);
+            }
             byte[] encoded = output.bytes();
             take(encoded.length);
             return encoded;
@@ -196,6 +215,8 @@ record RecordPayload(byte[] key, byte[] value, String keyText,
             size += length;
         }
 
-        byte[] bytes() { return Arrays.copyOf(buffer, size); }
+        byte[] bytes() {
+            return Arrays.copyOf(buffer, size);
+        }
     }
 }

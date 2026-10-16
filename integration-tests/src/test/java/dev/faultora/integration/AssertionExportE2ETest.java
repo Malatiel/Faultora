@@ -30,8 +30,11 @@ class AssertionExportE2ETest {
             exchange.getResponseHeaders().add("Authorization", MARKER);
             byte[] body = ("{\"value\":\"" + MARKER + "\"}").getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, body.length);
-            try (var response = exchange.getResponseBody()) { response.write(body); }
-            finally { exchange.close(); }
+            try (var response = exchange.getResponseBody()) {
+                response.write(body);
+            } finally {
+                exchange.close();
+            }
         });
         server.start();
         try {
@@ -100,8 +103,9 @@ class AssertionExportE2ETest {
                     "http://127.0.0.1:" + server.getAddress().getPort() + "/" + MARKER,
                     "--allow-private", "--seed", "42", "--format", "console,json,html,junit", "--output", output.toString())
                     .redirectErrorStream(true).redirectOutput(diagnosticsFile.toFile()).start();
-            try { assertThat(cli.waitFor(30, TimeUnit.SECONDS)).as("CLI finished").isTrue(); }
-            finally {
+            try {
+                assertThat(cli.waitFor(30, TimeUnit.SECONDS)).as("CLI finished").isTrue();
+            } finally {
                 if (cli.isAlive()) {
                     cli.destroyForcibly();
                     assertThat(cli.waitFor(5, TimeUnit.SECONDS)).as("CLI teardown finished").isTrue();
@@ -115,8 +119,13 @@ class AssertionExportE2ETest {
             }
             String events = Files.readString(output.resolve("events.ndjson"));
             assertThat(events).contains("ASSERTION_EVALUATED");
-            if (mode.equals("header-withheld")) { assertThat(events).contains("INDETERMINATE"); }
-            else if (!passing) { assertThat(events).contains("\"outcome\":\"FAIL\""); }
-        } finally { server.stop(0); }
+            if (mode.equals("header-withheld")) {
+                assertThat(events).contains("INDETERMINATE");
+            } else if (!passing) {
+                assertThat(events).contains("\"outcome\":\"FAIL\"");
+            }
+        } finally {
+            server.stop(0);
+        }
     }
 }

@@ -118,7 +118,9 @@ class DispatchedRunTest {
         DispatchedRun.Outcome outcome = runner().execute(
                 dispatchOf("run-private-failure", scenarioOfWaits(1, "1ms"),
                         new Lease(System.currentTimeMillis(), 60_000, 10_000)),
-                Map.of(), EXTENSIONS, (lease, journal) -> { throw new IllegalStateException(marker); });
+                Map.of(), EXTENSIONS, (lease, journal) -> {
+                    throw new IllegalStateException(marker);
+                });
         assertThat(outcome.didRun()).isTrue();
         assertThat(outcome.completed()).isFalse();
         assertThat(outcome.journalPath()).exists();
@@ -306,7 +308,9 @@ class DispatchedRunTest {
         var unsigned = dispatchOf("run-unverified", scenario,
                 new Lease(System.currentTimeMillis(), 60_000, 10_000));
         var rejectingRunner = new DispatchedRun(new DispatchVerifier(LIMITS, policy -> false),
-                workingDirectory, handle -> { throw new AssertionError("No secret resolution allowed"); }, true);
+                workingDirectory, handle -> {
+                    throw new AssertionError("No secret resolution allowed");
+                }, true);
         var outcome = rejectingRunner.execute(unsigned, Map.of(),
                 new ExtensionPolicy(Set.of(), true, 0, Set.of(), Set.of()));
         assertThat(outcome.refusal().reason()).isEqualTo(Refusal.Reason.UNVERIFIED_POLICY);

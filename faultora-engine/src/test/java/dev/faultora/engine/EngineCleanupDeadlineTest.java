@@ -301,21 +301,35 @@ class EngineCleanupDeadlineTest {
         boolean throwOnSlow;
         boolean stopMain;
         boolean interruptMain;
-        public ProtocolId protocol() { return new ProtocolId("http"); }
-        public Set<String> capabilities() { return Set.of(); }
-        public PreparedTarget prepare(TargetDefinition target, ConnectorContext context) { return () -> target; }
+        public ProtocolId protocol() {
+            return new ProtocolId("http");
+        }
+        public Set<String> capabilities() {
+            return Set.of();
+        }
+        public PreparedTarget prepare(TargetDefinition target, ConnectorContext context) {
+            return () -> target;
+        }
         public OperationResult execute(PreparedTarget target, OperationDefinition operation,
                                        Map<String, Object> inputs, ConnectorContext context) {
             budgets.add(context);
             operations.add(operation.id().value());
             if (operation.id().value().equals("main") && stopMain) {
-                if (interruptMain) { Thread.currentThread().interrupt(); }
-                else { cancellation.set(true); }
+                if (interruptMain) {
+                    Thread.currentThread().interrupt();
+                } else {
+                    cancellation.set(true);
+                }
             }
             if (operation.id().value().equals("slow")) {
-                if (throwOnSlow) { throw new IllegalStateException("Synthetic cleanup failure"); }
-                try { Thread.sleep(ignoreBudget ? delayMs : Math.min(delayMs, context.totalTimeoutMs())); }
-                catch (InterruptedException stopped) { Thread.currentThread().interrupt(); }
+                if (throwOnSlow) {
+                    throw new IllegalStateException("Synthetic cleanup failure");
+                }
+                try {
+                    Thread.sleep(ignoreBudget ? delayMs : Math.min(delayMs, context.totalTimeoutMs()));
+                } catch (InterruptedException stopped) {
+                    Thread.currentThread().interrupt();
+                }
                 if (!ignoreBudget && delayMs >= context.totalTimeoutMs()) {
                     return OperationResult.failure(new NormalizedError(NormalizedError.ErrorCategory.TIMEOUT,
                             "SYNTHETIC_TIMEOUT", "synthetic", false, Map.of()), delayMs);
@@ -330,15 +344,18 @@ class EngineCleanupDeadlineTest {
     private static class RollbackProvider implements FaultProvider {
         final AtomicInteger rollbacks = new AtomicInteger();
         final AtomicBoolean interrupted = new AtomicBoolean();
-        public Set<String> capabilities() { return Set.of("synthetic-fault"); }
+        public Set<String> capabilities() {
+            return Set.of("synthetic-fault");
+        }
         public ActiveFault inject(String type, Map<String, Object> params, FaultContext context) {
             return new ActiveFault("synthetic", type, context.targetScope(), System.currentTimeMillis(),
                     context.hardExpiryMs(), "synthetic rollback");
         }
         public void rollback(ActiveFault fault, FaultContext context) {
             interrupted.set(Thread.currentThread().isInterrupted());
-            try { Thread.sleep(0); }
-            catch (InterruptedException stopped) {
+            try {
+                Thread.sleep(0);
+            } catch (InterruptedException stopped) {
                 Thread.currentThread().interrupt();
                 throw new IllegalStateException("Synthetic rollback interrupted", stopped);
             }

@@ -80,7 +80,9 @@ class EvidenceExportBoundaryTest {
     void exceptionsNeverPromoteProviderValuesIntoDiagnostics(String stage) throws Exception {
         Source source = new Source(); source.throwAt = stage;
         AssertionProvider provider = new AssertionProvider() {
-            public String type() { return "synthetic"; }
+            public String type() {
+                return "synthetic";
+            }
             public AssertionResult evaluate(String type, Map<String, Object> params, EvidenceView evidence, AssertionContext context) {
                 throw new IllegalStateException(MARKER);
             }
@@ -130,7 +132,9 @@ class EvidenceExportBoundaryTest {
                 .scenarioDigest("synthetic-scenario").catalogDigest("synthetic-catalog").addNodes(nodes).build();
         try (RunJournal journal = new RunJournal(directory.resolve("events.ndjson"), true, journalText)) {
             FaultProvider faults = new FaultProvider() {
-                public Set<String> capabilities() { return Set.of("synthetic"); }
+                public Set<String> capabilities() {
+                    return Set.of("synthetic");
+                }
                 public ActiveFault inject(String type, Map<String, Object> params, FaultContext context) {
                     throw new IllegalArgumentException(MARKER);
                 }
@@ -152,7 +156,9 @@ class EvidenceExportBoundaryTest {
 
     private static AssertionProvider provider(AssertionResult.Outcome outcome, AtomicBoolean compared) {
         return new AssertionProvider() {
-            public String type() { return "synthetic"; }
+            public String type() {
+                return "synthetic";
+            }
             public AssertionResult evaluate(String type, Map<String, Object> params, EvidenceView evidence, AssertionContext context) {
                 assertThat(evidence.responseJson().orElseThrow().path("value").asText()).isEqualTo(MARKER);
                 assertThat(evidence.responseHeaders()).containsEntry("x-private", List.of(MARKER));
@@ -171,15 +177,23 @@ class EvidenceExportBoundaryTest {
         String throwAt;
         boolean fail;
         AtomicInteger calls = new AtomicInteger();
-        public ProtocolId protocol() { return new ProtocolId("http"); }
-        public Set<String> capabilities() { return Set.of(); }
+        public ProtocolId protocol() {
+            return new ProtocolId("http");
+        }
+        public Set<String> capabilities() {
+            return Set.of();
+        }
         public PreparedTarget prepare(TargetDefinition target, ConnectorContext context) {
-            if ("prepare".equals(throwAt)) { throw new IllegalStateException(MARKER); }
+            if ("prepare".equals(throwAt)) {
+                throw new IllegalStateException(MARKER);
+            }
             return () -> target;
         }
         public OperationResult execute(PreparedTarget target, OperationDefinition operation, Map<String, Object> inputs, ConnectorContext context) {
             calls.incrementAndGet();
-            if ("execute".equals(throwAt)) { throw new IllegalStateException(MARKER); }
+            if ("execute".equals(throwAt)) {
+                throw new IllegalStateException(MARKER);
+            }
             if (fail) { return OperationResult.failure(new NormalizedError(NormalizedError.ErrorCategory.NETWORK, MARKER,
                     MARKER, true, Map.of("url", MARKER, "nested", List.of(MARKER), "maxBytes", 1024)), 1); }
             MessageEvidence published = new MessageEvidence("events", 0, 1, 1, MARKER, Map.of(), null, "sha256:synthetic");
@@ -187,7 +201,11 @@ class EvidenceExportBoundaryTest {
                     ("{\"value\":\"" + MARKER + "\"}").getBytes(StandardCharsets.UTF_8), 1,
                     Map.of(MessageEvidence.PUBLISHED, published, "unknown", MARKER));
         }
-        public void release(PreparedTarget target) { if ("release".equals(throwAt)) { throw new IllegalStateException(MARKER); } }
+        public void release(PreparedTarget target) {
+            if ("release".equals(throwAt)) {
+                throw new IllegalStateException(MARKER);
+            }
+        }
         public void close() { }
     }
 }

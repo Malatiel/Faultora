@@ -101,7 +101,9 @@ public class TestCommand implements Command {
                     scenarioContent, documents, options.targetUrl(),
                     extensionPolicy, targetPolicy, runId, options.seed(), null));
             output.scenario(prepared.diagnostics());
-            if (prepared.compilation() != null) { output.plan(prepared.compilation().diagnostics()); }
+            if (prepared.compilation() != null) {
+                output.plan(prepared.compilation().diagnostics());
+            }
             if (options.preview()) {
                 if (prepared.isSuccess()) {
                     resolveDeclaredInputs(prepared.scenario(), options.inputs());
@@ -170,7 +172,9 @@ public class TestCommand implements Command {
             output.error(CliDiagnostic.Code.CATALOG_IMPORT_FAILED, null, null);
             throw new CliException(refused.getMessage(), FaultoraCli.EXIT_INVALID_CONFIG);
         } catch (CliException e) {
-            if (!output.hasErrors()) { output.error(CliDiagnostic.Code.INVALID_ARGUMENT, null, null); }
+            if (!output.hasErrors()) {
+                output.error(CliDiagnostic.Code.INVALID_ARGUMENT, null, null);
+            }
             throw e;
         } catch (Exception e) {
             output.error(failureStage, null, null);
