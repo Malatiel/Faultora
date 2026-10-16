@@ -47,7 +47,16 @@ Both are emitted from the node lifecycle by reading protocol-neutral message
 evidence, so a second event protocol journals through the same path without the
 engine learning anything about it.
 
-## Consequences
+## Version-one compatibility boundary
+
+The [result and journal contract](../OUTPUT_CONTRACT.md) freezes the existing
+wire shape without adding fields to old envelopes. Its deterministic fixtures
+cover every event subtype, result statuses, NDJSON, and the JSON report.
+Unknown additive fields and unknown event types must be tolerated by readers;
+missing or changed fields of known events are errors. The scenario YAML and
+runner transport have independent version lifecycles.
+
+## Operational consequences
 
 - Events can be written incrementally during execution without buffering.
 - The NDJSON format is human-readable and grep-friendly.

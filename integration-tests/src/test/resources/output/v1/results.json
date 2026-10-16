@@ -1,0 +1,162 @@
+[
+  {
+    "runId": "synthetic-run",
+    "status": "PASSED",
+    "totalNodes": 1,
+    "passedAssertions": 1,
+    "failedAssertions": 0,
+    "nodeResults": {
+      "read": {
+        "nodeId": "read",
+        "nodeType": "OPERATION",
+        "status": "PASSED",
+        "statusCode": 200,
+        "durationMs": 2,
+        "assertions": [
+          {
+            "outcome": "PASS",
+            "message": "Synthetic assertion",
+            "details": {}
+          }
+        ],
+        "error": null
+      }
+    },
+    "durationMs": 10,
+    "error": null
+  },
+  {
+    "runId": "synthetic-run",
+    "status": "FAILED",
+    "totalNodes": 1,
+    "passedAssertions": 0,
+    "failedAssertions": 1,
+    "nodeResults": {
+      "read": {
+        "nodeId": "read",
+        "nodeType": "OPERATION",
+        "status": "FAILED",
+        "statusCode": -1,
+        "durationMs": 2,
+        "assertions": [
+          {
+            "outcome": "FAIL",
+            "message": "Synthetic assertion",
+            "details": {}
+          }
+        ],
+        "error": {
+          "category": "TARGET_ERROR",
+          "code": "TARGET_ERROR",
+          "message": "Synthetic target failure",
+          "retryable": false,
+          "metadata": {}
+        }
+      }
+    },
+    "durationMs": 10,
+    "error": {
+      "category": "TARGET_ERROR",
+      "code": "TARGET_ERROR",
+      "message": "Synthetic target failure",
+      "retryable": false,
+      "metadata": {}
+    }
+  },
+  {
+    "runId": "synthetic-run",
+    "status": "ERROR",
+    "totalNodes": 1,
+    "passedAssertions": 0,
+    "failedAssertions": 0,
+    "nodeResults": {
+      "read": {
+        "nodeId": "read",
+        "nodeType": "OPERATION",
+        "status": "ERROR",
+        "statusCode": -1,
+        "durationMs": 2,
+        "assertions": [
+          {
+            "outcome": "INDETERMINATE",
+            "message": "Synthetic assertion",
+            "details": {}
+          }
+        ],
+        "error": {
+          "category": "INTERNAL",
+          "code": "RUN_ERROR",
+          "message": "Synthetic runner failure",
+          "retryable": false,
+          "metadata": {}
+        }
+      }
+    },
+    "durationMs": 10,
+    "error": {
+      "category": "INTERNAL",
+      "code": "RUN_ERROR",
+      "message": "Synthetic runner failure",
+      "retryable": false,
+      "metadata": {}
+    }
+  },
+  {
+    "runId": "synthetic-run",
+    "status": "SKIPPED",
+    "totalNodes": 1,
+    "passedAssertions": 0,
+    "failedAssertions": 0,
+    "nodeResults": {
+      "read": {
+        "nodeId": "read",
+        "nodeType": "OPERATION",
+        "status": "SKIPPED",
+        "statusCode": -1,
+        "durationMs": 2,
+        "assertions": [],
+        "error": null
+      }
+    },
+    "durationMs": 10,
+    "error": null
+  },
+  {
+    "runId": "synthetic-run",
+    "status": "CANCELLED",
+    "totalNodes": 1,
+    "passedAssertions": 0,
+    "failedAssertions": 0,
+    "nodeResults": {
+      "read": {
+        "nodeId": "read",
+        "nodeType": "OPERATION",
+        "status": "CANCELLED",
+        "statusCode": -1,
+        "durationMs": 2,
+        "assertions": [
+          {
+            "outcome": "INDETERMINATE",
+            "message": "Synthetic assertion",
+            "details": {}
+          }
+        ],
+        "error": {
+          "category": "CANCELLED",
+          "code": "CANCELLED",
+          "message": "Run cancelled",
+          "retryable": false,
+          "metadata": {}
+        }
+      }
+    },
+    "durationMs": 10,
+    "error": {
+      "category": "CANCELLED",
+      "code": "CANCELLED",
+      "message": "Run cancelled",
+      "retryable": false,
+      "metadata": {}
+    }
+  }
+]

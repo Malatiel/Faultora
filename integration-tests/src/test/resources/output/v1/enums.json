@@ -1,0 +1,24 @@
+{
+  "runStatus": [
+    "PASSED",
+    "FAILED",
+    "ERROR",
+    "SKIPPED",
+    "CANCELLED"
+  ],
+  "errorCategory": [
+    "NETWORK",
+    "TIMEOUT",
+    "CANCELLED",
+    "VALIDATION",
+    "TARGET_ERROR",
+    "POLICY_VIOLATION",
+    "INTERNAL",
+    "UNKNOWN"
+  ],
+  "assertionOutcome": [
+    "PASS",
+    "FAIL",
+    "INDETERMINATE"
+  ]
+}
