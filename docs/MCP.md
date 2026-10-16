@@ -135,8 +135,22 @@ those capabilities must use the operator CLI/runner profile instead. Ordinary
 input values are data; do not put credentials into scenario text or inputs.
 
 Closing stdin, a framing/transport failure or normal JVM shutdown cancels and
-joins owned runs. Cleanup has the runtime's finite budgets; the session does not
-detach the worker on a timeout. An uncatchable process kill cannot run cleanup.
+joins owned runs under an independent absolute lifecycle limit. The limit starts
+at admission: the effective scenario/policy run budget, plus the runtime's 30000ms
+cleanup budget, plus 5000ms grace. Grace includes a bounded marker-write interval
+of at most 1000ms. A shorter scenario timeout shortens the limit; close never
+starts a fresh budget. The deadline guard also requests cancellation when the
+effective run budget expires, even if the session remains open.
+
+If work remains at the finalization cutoff, it is marked unconfirmed. Faultora
+attempts to create termination.json in the owned run directory with status=ERROR,
+cleanupConfirmed=false and code=SHUTDOWN_DEADLINE_EXCEEDED, then calls Runtime.halt
+with exit code 3. The independent guard bounds both worker waiting and marker I/O;
+an unavailable filesystem may prevent writing the marker but cannot extend the
+process limit. A termination marker takes precedence over a partial journal or
+late report. Forced termination does not confirm cleanup or rollback and does
+not undo target-side effects. It ends the entire MCP process, not just one run.
+No worker is detached. An uncatchable process kill cannot run cleanup either.
 The RPC reply to start_run completes admission; a later JSON-RPC request
 cancellation notification does not revoke that completed request. Use cancel_run
 for the separately identified run. IDs cease to be accessible when the session

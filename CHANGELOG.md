@@ -56,6 +56,13 @@ ADR-023 exists to stop. What has landed so far:
 
 ### Changed
 
+- MCP execution has an independent absolute lifecycle limit: effective run
+  deadline plus the runtime cleanup budget and five seconds of grace. A callback
+  that does not return cannot hold EOF or JVM shutdown indefinitely. Faultora
+  attempts an owned termination.json with cleanupConfirmed=false and fixed
+  SHUTDOWN_DEADLINE_EXCEEDED reason, then halts the MCP process with exit 3.
+  Marker I/O consumes a bounded part of grace; forced exit cannot prove rollback.
+
 - **HTTP interruption is reported as cancellation and preserves the interrupt
   flag**, including when the transport cleared it before throwing. An already
   interrupted caller sends no request. Request and total timeouts retain their

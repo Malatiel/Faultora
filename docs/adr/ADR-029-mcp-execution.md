@@ -23,8 +23,24 @@ separate from completion; cancel_run sets the runtime's cooperative cancellation
 flag. Interrupting the worker could instead abort an in-flight cleanup request.
 An active connector attempt may finish within its configured timeout before
 cancellation is observed. Terminal publication follows runtime cleanup/rollback, environment release
-and journal/report finalization. EOF, transport failure and normal shutdown join
-the worker. No daemon worker or timeout detaches an unfinished run.
+and journal/report finalization. EOF, transport failure and normal shutdown
+request cancellation and join the worker under one absolute lifecycle limit.
+
+An independent deadline guard starts at admission. The limit is effective run
+timeout plus LocalEngine's cleanup budget plus 5000ms grace. The final portion
+of grace (at most 1000ms) is reserved for marker I/O. On expiry the guard attempts
+to create an owned termination.json with cleanupConfirmed=false and fixed reason
+SHUTDOWN_DEADLINE_EXCEEDED, then calls Runtime.halt(3). Marker I/O is bounded
+independently: an I/O failure cannot turn shutdown back into an unbounded wait.
+A late callback completion cannot revoke a forced-termination decision, and the
+marker overrides any late report. Successful completion disarms the guard.
+
+This deliberately sacrifices the whole MCP process when a callback will not
+return. It cannot prove target-side cleanup or rollback. A timed join alone
+would leave a live non-daemon worker; changing it to daemon would merely hide
+that ownership loss. Supervised child execution is deferred to the common
+lifecycle work with ADR-023's process boundary, rather than adding a second
+termination mechanism now.
 
 Only an owned structural report is exportable by the fixed artifact ID report.
 Its byte limit, regular-file/no-redirection checks, owner marker and captured

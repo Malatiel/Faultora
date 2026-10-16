@@ -1,6 +1,7 @@
 package dev.faultora.mcp;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import dev.faultora.engine.LocalEngine;
 import dev.faultora.engine.exec.JournalWriter;
 import dev.faultora.engine.journal.RunJournal;
 import dev.faultora.engine.run.RunResult;
@@ -25,7 +26,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
 final class McpRuns implements AutoCloseable {
     private final McpConfiguration.Execution configuration;
     private final Map<String, OwnedRun> runs = new LinkedHashMap<>();
+    private final RunExecutor executor;
+    private final long cleanupMs;
+    private final long graceMs;
     private boolean closed;
+
+    @FunctionalInterface
+    interface RunExecutor {
+        RunResult execute(PreparedRun prepared, RunPreparation.Request request, PreparedRun.Settings settings,
+                          RunJournal journal, AtomicBoolean cancellation);
+    }
 
     static final class Refused extends RuntimeException {
         Refused(String code) {
@@ -38,13 +48,15 @@ final class McpRuns implements AutoCloseable {
         final AtomicBoolean cancellation = new AtomicBoolean();
         final CountDownLatch finished = new CountDownLatch(1);
         final Thread thread;
+        final McpRunShutdown shutdown;
         volatile JsonNode terminal;
         Path directory;
         String reportDigest;
 
-        OwnedRun(String id, Runnable work) {
+        OwnedRun(String id, Runnable work, Path directory, long runMs, long cleanupMs, long graceMs) {
             this.id = id;
             thread = new Thread(work, "faultora-mcp-run");
+            shutdown = new McpRunShutdown(id, directory, cancellation, runMs, cleanupMs, graceMs);
         }
 
         void cancel() {
@@ -55,6 +67,9 @@ final class McpRuns implements AutoCloseable {
         }
 
         JsonNode status() {
+            if (shutdown.unconfirmed()) {
+                return failure(id, McpRunShutdown.REASON);
+            }
             if (finished.getCount() == 0) {
                 return terminal.deepCopy();
             }
@@ -64,11 +79,27 @@ final class McpRuns implements AutoCloseable {
     }
 
     McpRuns(McpConfiguration.Execution configuration) {
+        this(configuration, (prepared, request, settings, journal, cancellation) ->
+                        prepared.execute(request, settings, Map.of("local", new LocalFaultProvider()),
+                                journal, cancellation),
+                LocalEngine.DEFAULT_CLEANUP_TIMEOUT_MS, McpRunShutdown.GRACE_MS);
+    }
+
+    /** Package-private subprocess seam: a callback and short budgets, never tool/configuration input. */
+    McpRuns(McpConfiguration.Execution configuration, RunExecutor executor, long cleanupMs, long graceMs) {
         this.configuration = configuration;
+        this.executor = executor;
+        this.cleanupMs = cleanupMs;
+        this.graceMs = graceMs;
+    }
+
+    static long effectiveRunMs(dev.faultora.runtime.PlanPreview.Budgets budgets) {
+        return budgets.scenarioTimeoutMs() > 0
+                ? Math.min(budgets.scenarioTimeoutMs(), budgets.maxDurationMs()) : budgets.maxDurationMs();
     }
 
     synchronized JsonNode start(PreparedRun prepared, RunPreparation.Request request, PreparedRun.Settings settings) {
-        if (closed) {
+        if (closed || runs.values().stream().anyMatch(run -> run.shutdown.unconfirmed())) {
             throw new Refused("SESSION_CLOSED");
         }
         if (runs.size() >= 32 || runs.values().stream().anyMatch(run -> run.finished.getCount() != 0)) {
@@ -79,9 +110,18 @@ final class McpRuns implements AutoCloseable {
         if (runs.containsKey(id)) {
             throw new Refused("PREPARATION_REFUSED");
         }
-        OwnedRun owned = new OwnedRun(id, () -> execute(id, prepared, request, settings));
+        OwnedRun owned = new OwnedRun(id, () -> execute(id, prepared, request, settings),
+                RunArtifacts.dispatchedDirectory(configuration.workingDirectory(), request.runId()),
+                effectiveRunMs(prepared.preview().budgets()), cleanupMs, graceMs);
         runs.put(id, owned);
-        owned.thread.start();
+        try {
+            owned.shutdown.start();
+            owned.thread.start();
+        } catch (RuntimeException | Error startFailed) {
+            owned.shutdown.complete();
+            runs.remove(id);
+            throw startFailed;
+        }
         return owned.status();
     }
 
@@ -100,8 +140,7 @@ final class McpRuns implements AutoCloseable {
             RunArtifacts artifacts = RunArtifacts.claim(directory, request.runId());
             owned.directory = directory;
             try (RunJournal journal = new RunJournal(artifacts.journalPath(), true)) {
-                RunResult result = prepared.execute(request, settings,
-                        Map.of("local", new LocalFaultProvider()), journal, owned.cancellation);
+                RunResult result = executor.execute(prepared, request, settings, journal, owned.cancellation);
                 result = JournalWriter.closeJournal(journal, result);
                 terminal = summary(result, journal);
             }
@@ -115,6 +154,7 @@ final class McpRuns implements AutoCloseable {
             terminal = failure(id, "EXECUTION_FAILED");
         } finally {
             owned.terminal = terminal;
+            owned.shutdown.complete();
             owned.finished.countDown();
         }
     }
@@ -162,7 +202,7 @@ final class McpRuns implements AutoCloseable {
         if (!artifact.equals("report")) {
             throw new Refused("UNKNOWN_ARTIFACT");
         }
-        if (run.finished.getCount() != 0 || run.reportDigest == null) {
+        if (run.finished.getCount() != 0 || run.reportDigest == null || run.shutdown.unconfirmed()) {
             throw new Refused("ARTIFACT_UNAVAILABLE");
         }
         try {
@@ -196,7 +236,7 @@ final class McpRuns implements AutoCloseable {
         for (OwnedRun run : owned) {
             while (true) {
                 try {
-                    run.thread.join();
+                    run.shutdown.join(run.thread);
                     break;
                 } catch (InterruptedException cancelled) {
                     interrupted = true;
