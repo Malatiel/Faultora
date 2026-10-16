@@ -691,6 +691,61 @@ class PlanCompilerTest {
     }
 
     @Test
+    void cleanupStepsCountTowardTheRequestBudget() {
+        // The runtime reserves one attempt per cleanup step out of maxRequests.
+        // That reserve is only sufficient because the compiler refuses a plan
+        // whose main and cleanup attempts together exceed the limit.
+        PlanCompilationResult result = compile(scenarioWithTwoCleanupSteps(), requestLimit(2));
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.errors()).extracting(PlanDiagnostic::message)
+                .anyMatch(message -> message.contains("Plan requires 3 requests")
+                        && message.contains("policy allows 2"));
+    }
+
+    @Test
+    void aBudgetCoveringMainAndCleanupAttemptsExactlyIsAccepted() {
+        PlanCompilationResult result = compile(scenarioWithTwoCleanupSteps(), requestLimit(3));
+
+        assertThat(result.isSuccess()).isTrue();
+    }
+
+    @Test
+    void aBudgetCoveringEveryRetryAttemptExactlyIsAccepted() {
+        ScenarioDocument scenario = scenarioWithExecuteStep(new ScenarioStep(
+                "retry", "operation", "create-payment",
+                Map.of(), null, List.of(), null,
+                new ScenarioStep.RetryPolicy(3, 10, 2, 100),
+                Map.of()));
+
+        assertThat(compile(scenario, requestLimit(3)).isSuccess()).isTrue();
+        assertThat(compile(scenario, requestLimit(2)).isSuccess()).isFalse();
+    }
+
+    private ScenarioDocument scenarioWithTwoCleanupSteps() {
+        return new ScenarioDocument(
+                "faultora.dev/v1alpha1", "Scenario",
+                new ScenarioMetadata("cleanup-budget", "cleanup-budget", Map.of(), Map.of()),
+                Map.of(),
+                List.of(),
+                List.of(new ScenarioStep("execute", "operation", "create-payment",
+                        Map.of(), null, List.of(), null, null, Map.of())),
+                List.of(), List.of(),
+                List.of(new ScenarioStep("tidy-first", "operation", "get-payment",
+                                Map.of(), null, List.of(), null, null, Map.of()),
+                        new ScenarioStep("tidy-second", "operation", "get-payment",
+                                Map.of(), null, List.of(), null, null, Map.of())));
+    }
+
+    private TargetPolicy requestLimit(int maxRequests) {
+        return new TargetPolicy(
+                policy.allowedTargets(), policy.allowedOperationClasses(),
+                maxRequests, policy.maxConcurrency(),
+                policy.maxDurationMs(), policy.maxPayloadBytes(),
+                policy.allowedFaultTypes(), policy.allowedEnvironments());
+    }
+
+    @Test
     void compileCountsRetryAttemptsAgainstRequestBudget() {
         TargetPolicy twoRequests = new TargetPolicy(
                 policy.allowedTargets(),
