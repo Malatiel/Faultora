@@ -71,13 +71,17 @@ final class McpRuns implements AutoCloseable {
         if (closed) {
             throw new Refused("SESSION_CLOSED");
         }
-        if (runs.size() >= 32 || runs.values().stream().anyMatch(run -> run.finished.getCount() != 0)) {
+        if (runs.values().stream().anyMatch(run -> run.finished.getCount() != 0)) {
             throw new Refused("RUN_LIMIT");
         }
         prepared.requireCurrent(request, settings);
         String id = request.runId().value();
         if (runs.containsKey(id)) {
             throw new Refused("PREPARATION_REFUSED");
+        }
+        if (runs.size() >= 32) {
+            // Admission is already validated. Forget only the oldest completed record, never its files.
+            runs.remove(runs.keySet().iterator().next());
         }
         OwnedRun owned = new OwnedRun(id, () -> execute(id, prepared, request, settings));
         runs.put(id, owned);

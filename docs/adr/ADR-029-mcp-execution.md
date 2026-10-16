@@ -18,7 +18,11 @@ PreparedRun.requireCurrent happen before allocating any run artifacts or clients
 PreparedRun executes its captured plan once through the existing RunEnvironment.
 No tool accepts credentials, policy changes, output paths or catalog filenames.
 
-One active worker and 32 retained runs bound each stdio session. Run admission is
+One active worker and 32 retained runs bound each stdio session. Admission beyond
+the retained-record limit evicts the oldest completed in-memory record; it never
+removes operator artifacts or an active run. Evicted IDs become unknown rather
+than restoring access from files. This is FIFO retention, not a lifetime run cap.
+Run admission is
 separate from completion; cancel_run sets the runtime's cooperative cancellation
 flag. Interrupting the worker could instead abort an in-flight cleanup request.
 An active connector attempt may finish within its configured timeout before

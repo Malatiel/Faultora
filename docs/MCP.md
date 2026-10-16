@@ -111,7 +111,10 @@ Four additional tools are advertised only in this execution profile:
 
 - start_run takes preparedId and approval. It starts the captured plan once and
   returns runId and current state. At most one run is active; up to 32 runs are
-  retained per session. A refused admission can be retried while preparation
+  retained per session. Admission evicts the oldest completed in-memory record
+  when the limit is reached; active work and operator files are never evicted.
+  Evicted IDs return UNKNOWN_RUN, including for cancellation and export.
+  A refused admission can be retried while preparation
   and approval remain current. A started preparation cannot be replayed.
 - get_run takes runId. It returns RUNNING/CANCELLING until execution, declared
   cleanup, fault rollback and journal/report finalization finish. Terminal status

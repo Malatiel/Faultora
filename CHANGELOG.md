@@ -56,6 +56,11 @@ ADR-023 exists to stop. What has landed so far:
 
 ### Changed
 
+- MCP sessions retain the latest 32 run records with FIFO eviction of completed
+  records, allowing subsequent runs without reconnecting. Evicted IDs become
+  unknown; their operator-owned artifact files remain on disk. Active execution
+  still limits admission to one run at a time.
+
 - **HTTP interruption is reported as cancellation and preserves the interrupt
   flag**, including when the transport cleared it before throwing. An already
   interrupted caller sends no request. Request and total timeouts retain their

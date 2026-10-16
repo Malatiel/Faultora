@@ -359,17 +359,27 @@ class McpExecutionTest {
     }
 
     @Test
-    void retainedRunLimitRefusesAnotherRunWithoutAllocatingArtifacts() throws Exception {
+    void retainedRunLimitEvictsOldestCompletedRecordWithoutRemovingItsArtifacts() throws Exception {
         try (var session = new Session()) {
+            JsonNode oldest = null;
             for (int index = 0; index < 32; index++) {
                 JsonNode prepared = session.prepare(McpFixtures.SCENARIO);
+                if (index == 0) {
+                    oldest = prepared;
+                }
                 assertThat(session.start(prepared).path("isError").asBoolean()).isFalse();
                 assertThat(session.finished(prepared).path("status").asText()).isEqualTo("PASSED");
             }
             JsonNode prepared = session.prepare(McpFixtures.SCENARIO);
-            assertThat(session.start(prepared).path("structuredContent").path("code").asText()).isEqualTo("RUN_LIMIT");
-            assertThat(session.artifacts(prepared)).doesNotExist();
-            assertThat(session.requests).hasValue(32);
+            assertThat(session.start(prepared).path("isError").asBoolean()).isFalse();
+            assertThat(session.finished(prepared).path("status").asText()).isEqualTo("PASSED");
+            assertThat(session.status(oldest, false).path("code").asText()).isEqualTo("UNKNOWN_RUN");
+            assertThat(session.status(oldest, true).path("code").asText()).isEqualTo("UNKNOWN_RUN");
+            assertThat(session.artifact(oldest, "report").path("structuredContent").path("code").asText())
+                    .isEqualTo("UNKNOWN_RUN");
+            assertThat(session.artifacts(oldest).resolve("events.ndjson")).isRegularFile();
+            assertThat(session.artifacts(oldest).resolve("report.json")).isRegularFile();
+            assertThat(session.requests).hasValue(33);
         }
     }
 
