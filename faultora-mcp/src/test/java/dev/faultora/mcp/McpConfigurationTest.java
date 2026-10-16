@@ -68,6 +68,21 @@ class McpConfigurationTest {
     }
 
     @Test
+    void allowedFaultTypesCannotEnableAnExternalFaultBackend() throws Exception {
+        var root = McpJson.MAPPER.createObjectNode();
+        root.putArray("catalogs");
+        var faults = root.putArray("allowedFaultTypes")
+                .add("http-latency").add("http-error").add("http-response-loss");
+        var loaded = McpConfiguration.load(configuration(root.toString()));
+        assertThat(loaded.targets().allowedFaultTypes())
+                .containsExactlyInAnyOrder("http-latency", "http-error", "http-response-loss");
+
+        faults.add("network-latency");
+        assertThatThrownBy(() -> McpConfiguration.load(configuration(root.toString())))
+                .isInstanceOf(IOException.class).hasNoCause();
+    }
+
+    @Test
     void declarationsRequireUniqueIdsAndKnownImporterFamilies() throws Exception {
         Files.writeString(directory.resolve("source.yaml"), McpFixtures.CATALOG);
         String entry = "{\"id\":\"demo\",\"family\":\"openapi\",\"path\":\"source.yaml\"}";

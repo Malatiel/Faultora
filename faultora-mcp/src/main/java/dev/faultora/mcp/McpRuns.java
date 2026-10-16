@@ -11,6 +11,7 @@ import dev.faultora.model.security.ContentDigest;
 import dev.faultora.runtime.PreparedRun;
 import dev.faultora.runtime.RunArtifacts;
 import dev.faultora.runtime.RunPreparation;
+import dev.faultora.spi.contract.FaultProvider;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -80,9 +81,14 @@ final class McpRuns implements AutoCloseable {
 
     McpRuns(McpConfiguration.Execution configuration) {
         this(configuration, (prepared, request, settings, journal, cancellation) ->
-                        prepared.execute(request, settings, Map.of("local", new LocalFaultProvider()),
+                        prepared.execute(request, settings, faultProviders(),
                                 journal, cancellation),
                 LocalEngine.DEFAULT_CLEANUP_TIMEOUT_MS, McpRunShutdown.GRACE_MS);
+    }
+
+    /** The shutdown budget assumes faults cannot remain active outside this JVM. */
+    static Map<String, FaultProvider> faultProviders() {
+        return Map.of("local", new LocalFaultProvider());
     }
 
     /** Package-private subprocess seam: a callback and short budgets, never tool/configuration input. */

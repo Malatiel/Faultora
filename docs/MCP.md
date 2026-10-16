@@ -142,6 +142,11 @@ of at most 1000ms. A shorter scenario timeout shortens the limit; close never
 starts a fresh budget. The deadline guard also requests cancellation when the
 effective run budget expires, even if the session remains open.
 
+ADR-024's final fault rollback sweep is outside the declared cleanup budget.
+This limit relies on the current in-process-only fault profile: its injected
+fault state disappears with the MCP JVM. External fault providers require a
+lifecycle and rollback-budget review before they can be enabled.
+
 If work remains at the finalization cutoff, it is marked unconfirmed. Faultora
 attempts to create termination.json in the owned run directory with status=ERROR,
 cleanupConfirmed=false and code=SHUTDOWN_DEADLINE_EXCEEDED, then calls Runtime.halt
@@ -151,6 +156,14 @@ process limit. A termination marker takes precedence over a partial journal or
 late report. Forced termination does not confirm cleanup or rollback and does
 not undo target-side effects. It ends the entire MCP process, not just one run.
 No worker is detached. An uncatchable process kill cannot run cleanup either.
+
+Exit code 3 is shared with ordinary CLI COMMAND_FAILED and MCP transport
+failure. To identify forced termination of a run, check its owned termination.json
+for the matching runId and SHUTDOWN_DEADLINE_EXCEEDED code. The exit code alone
+does not distinguish these failures. If no valid marker can be read, do not
+infer orderly shutdown or confirmed cleanup: marker creation itself may have
+failed. A valid marker overrides any apparently completed report for that run.
+
 The RPC reply to start_run completes admission; a later JSON-RPC request
 cancellation notification does not revoke that completed request. Use cancel_run
 for the separately identified run. IDs cease to be accessible when the session

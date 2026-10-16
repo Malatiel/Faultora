@@ -1,5 +1,6 @@
 package dev.faultora.mcp;
 
+import dev.faultora.faults.local.LocalFaultProvider;
 import dev.faultora.model.identifier.RunId;
 import dev.faultora.runtime.PlanPreview;
 import dev.faultora.runtime.RunArtifacts;
@@ -16,6 +17,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class McpRunShutdownTest {
     @TempDir Path directory;
+
+    @Test
+    void shutdownBudgetProfileContainsOnlyTheLocalInProcessProvider() {
+        var providers = McpRuns.faultProviders();
+        assertThat(providers).containsOnlyKeys("local");
+        assertThat(providers.get("local")).isExactlyInstanceOf(LocalFaultProvider.class)
+                .isNotSameAs(McpRuns.faultProviders().get("local"));
+    }
 
     @Test
     void effectiveDeadlineUsesScenarioTimeoutWithinPolicyOrInheritsThePolicy() {
