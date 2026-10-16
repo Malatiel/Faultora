@@ -56,6 +56,11 @@ ADR-023 exists to stop. What has landed so far:
 
 ### Changed
 
+- Clarify the MCP approval deployment boundary: an unrestricted shell under the
+  signing key owner's OS account can self-approve. Independent approval requires
+  an independent signer and protection of the verifier's configuration, runtime
+  and process. Hardware-backed approval is not implemented by the DER-file CLI.
+
 - **HTTP interruption is reported as cancellation and preserves the interrupt
   flag**, including when the transport cleared it before throwing. An already
   interrupted caller sends no request. Request and total timeouts retain their
