@@ -53,16 +53,44 @@ public final class RunEventReader {
         }
     }
 
+    /**
+     * Whether a field of this type has a validation rule. A type without one
+     * is refused rather than checked as an object, which would reject a
+     * valid list or number; RunEventReaderTest holds every event to this.
+     */
+    static boolean supports(Class<?> type) {
+        if (textual(type) || type == long.class || type == int.class || type == boolean.class
+                || Map.class.isAssignableFrom(type)) {
+            return true;
+        }
+        return type.isRecord() && Arrays.stream(type.getRecordComponents())
+                .allMatch(component -> supports(component.getType()));
+    }
+
+    private static boolean textual(Class<?> type) {
+        return type == String.class || type.isEnum()
+                || dev.faultora.model.identifier.TypedId.class.isAssignableFrom(type);
+    }
+
     private static void validateType(Class<?> type, com.fasterxml.jackson.databind.JsonNode value)
             throws IOException {
+        if (!supports(type)) {
+            throw new IOException("Unsupported journal field type");
+        }
         if (value.isNull() && !type.isPrimitive()) {
             return;
         }
-        boolean valid = type == String.class || type.isEnum()
-                || dev.faultora.model.identifier.TypedId.class.isAssignableFrom(type)
-                ? value.isTextual()
-                : type == long.class || type == int.class ? value.isIntegralNumber()
-                : type == boolean.class ? value.isBoolean() : value.isObject();
+        boolean valid;
+        if (textual(type)) {
+            valid = value.isTextual();
+        } else if (type == long.class || type == int.class) {
+            valid = value.isIntegralNumber();
+        } else if (type == boolean.class) {
+            valid = value.isBoolean();
+        } else {
+            // A map, or a record whose components all have rules.
+            valid = value.isObject();
+        }
         if (!valid) {
             throw new IOException("Invalid journal field type");
         }
