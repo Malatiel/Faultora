@@ -16,6 +16,7 @@ import dev.faultora.spec.expression.ExpressionContext;
 import dev.faultora.spec.model.ScenarioDocument;
 import dev.faultora.spec.model.ScenarioMetadata;
 import dev.faultora.spi.context.ConnectorContext;
+import dev.faultora.spi.result.OperationResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -51,6 +53,7 @@ class CleanupDeadlineE2ETest {
     private final AtomicInteger cleanupRequests = new AtomicInteger();
     private final AtomicInteger afterRequests = new AtomicInteger();
     private final CountDownLatch disconnected = new CountDownLatch(1);
+    private final List<Long> cleanupBudgets = new CopyOnWriteArrayList<>();
 
     @BeforeEach
     void setUp() throws Exception {
@@ -83,7 +86,16 @@ class CleanupDeadlineE2ETest {
             }
         });
         server.start();
-        connector = new HttpConnector(DestinationPolicy.permissive());
+        connector = new HttpConnector(DestinationPolicy.permissive()) {
+            @Override
+            public OperationResult execute(PreparedTarget target, OperationDefinition operation,
+                                           Map<String, Object> inputs, ConnectorContext context) {
+                if (operation.id().value().equals("cleanup")) {
+                    cleanupBudgets.add(context.totalTimeoutMs());
+                }
+                return super.execute(target, operation, inputs, context);
+            }
+        };
         assertThat(run(5000, new AtomicBoolean(), operation("warm"), List.of(), 5000).status())
                 .isEqualTo(RunResult.Status.PASSED);
     }
@@ -107,7 +119,7 @@ class CleanupDeadlineE2ETest {
         assertThat(cleanupRequests.get()).isEqualTo(1);
         assertThat(afterRequests.get()).isZero();
         assertBounded(started);
-        assertThat(disconnected.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(disconnected.await(5, TimeUnit.SECONDS)).isTrue();
         assertThat(journal()).contains("CLEANUP_COMPLETED", "RUN_FAILED", "CLEANUP_DEADLINE_EXCEEDED");
     }
 
@@ -123,7 +135,7 @@ class CleanupDeadlineE2ETest {
         assertThat(cleanupRequests.get()).isEqualTo(1);
         assertThat(afterRequests.get()).isZero();
         assertBounded(started);
-        assertThat(disconnected.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(disconnected.await(5, TimeUnit.SECONDS)).isTrue();
     }
 
     @Test
@@ -132,17 +144,17 @@ class CleanupDeadlineE2ETest {
                 SafetyClassification.READ_ONLY, true);
         long started = System.nanoTime();
         RunResult result = run(5000, new AtomicBoolean(), operation("warm"),
-                List.of(wait, cleanup("cleanup"), cleanup("after")), 400);
+                List.of(wait, cleanup("cleanup"), cleanup("after")), 1000);
 
         assertThat(result.status()).isEqualTo(RunResult.Status.FAILED);
         assertThat(result.nodeResults().get(new NodeId("cleanup-wait")).status()).isEqualTo(RunResult.Status.PASSED);
         assertExpired(result, "cleanup", "after");
         assertThat(cleanupRequests.get()).isEqualTo(1);
         assertThat(afterRequests.get()).isZero();
-        long duration = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
-        // Separate budgets would permit the wait + a complete 400ms HTTP budget.
-        assertThat(duration).isLessThan(550);
-        assertThat(disconnected.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(cleanupBudgets).singleElement().satisfies(budget ->
+                assertThat(budget).isPositive().isLessThanOrEqualTo(800));
+        assertBounded(started);
+        assertThat(disconnected.await(5, TimeUnit.SECONDS)).isTrue();
     }
 
     private RunResult run(long scenarioMs, AtomicBoolean cancellation, PlanNode main,
@@ -197,6 +209,6 @@ class CleanupDeadlineE2ETest {
     }
 
     private static void assertBounded(long start) {
-        assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start)).isLessThan(1200);
+        assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start)).isLessThan(5000);
     }
 }

@@ -85,6 +85,11 @@ ADR-023 exists to stop. What has landed so far:
 
 ### Fixed
 
+- **Execution-budget regressions use controlled monotonic time** for retries,
+  polls, groups and cleanup. Watchdog and overlapping HTTP tests synchronize
+  on rollback and request completion; real transport checks still cover
+  cancellation and disconnection. Public execution and connector APIs retain
+  their existing time and cancellation semantics.
 - **Journal failures and failed or unconfirmed fault rollback surface as
   infrastructure `ERROR`.** A successful terminal result no longer hides a
   lost journal or rollback obligation. Cleanup failures are also reflected

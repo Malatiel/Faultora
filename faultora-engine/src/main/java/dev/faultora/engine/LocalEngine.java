@@ -32,7 +32,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.LongFunction;
 
 /**
  * Local execution engine.
@@ -50,6 +52,7 @@ public class LocalEngine {
     public static final long DEFAULT_CLEANUP_TIMEOUT_MS = 30_000;
 
     private final long cleanupTimeoutMs;
+    private final LongFunction<Deadline> deadlines;
     private final NodeExecutor nodeExecutor;
     private final ParallelGroupExecutor parallelGroups;
     private final RepeatGroupExecutor repeatGroups;
@@ -77,10 +80,21 @@ public class LocalEngine {
             Map<String, FaultProvider> faultProviders,
             long cleanupTimeoutMs
     ) {
+        this(connectors, assertionProviders, faultProviders, cleanupTimeoutMs, Deadline::start);
+    }
+
+    LocalEngine(
+            Map<String, Connector> connectors,
+            Map<String, AssertionProvider> assertionProviders,
+            Map<String, FaultProvider> faultProviders,
+            long cleanupTimeoutMs,
+            LongFunction<Deadline> deadlines
+    ) {
         if (cleanupTimeoutMs <= 0) {
             throw new IllegalArgumentException("cleanupTimeoutMs must be positive");
         }
         this.cleanupTimeoutMs = cleanupTimeoutMs;
+        this.deadlines = Objects.requireNonNull(deadlines);
         OperationInvoker invoker = new OperationInvoker(connectors);
         Map<String, AssertionProvider> assertions = Map.copyOf(assertionProviders);
         this.nodeExecutor = new NodeExecutor(
@@ -108,7 +122,7 @@ public class LocalEngine {
             AtomicBoolean cancellation
     ) {
         long startTime = System.currentTimeMillis();
-        Deadline runDeadline = Deadline.start(runTimeout(plan));
+        Deadline runDeadline = deadlines.apply(runTimeout(plan));
         RunId runId = plan.runId();
         JournalWriter writer = new JournalWriter(journal, runId);
 
@@ -193,7 +207,7 @@ public class LocalEngine {
                 boolean interrupted = Thread.interrupted();
                 try {
                     runCleanup(cleanupNodes, nodeContext.forCleanup().withCancellation(new AtomicBoolean(false))
-                                    .withDeadline(Deadline.start(cleanupTimeoutMs)),
+                                    .withDeadline(deadlines.apply(cleanupTimeoutMs)),
                             currentContext, nodeResults, tally);
                 } finally {
                     if (interrupted) {

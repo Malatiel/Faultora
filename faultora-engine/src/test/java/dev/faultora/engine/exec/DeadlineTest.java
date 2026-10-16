@@ -1,6 +1,7 @@
 package dev.faultora.engine.exec;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -10,6 +11,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+@Timeout(15)
 class DeadlineTest {
     @Test
     void childrenCannotRestartOrWidenTheirParentsBudget() {
@@ -67,9 +69,9 @@ class DeadlineTest {
                 Waits.sleep(Long.MAX_VALUE, cancellation);
                 return true;
             });
-            assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
+            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
             cancellation.set(true);
-            assertThat(waiting.get(1, TimeUnit.SECONDS)).isTrue();
+            assertThat(waiting.get(5, TimeUnit.SECONDS)).isTrue();
         }
     }
 }

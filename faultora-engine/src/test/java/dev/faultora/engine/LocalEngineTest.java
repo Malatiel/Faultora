@@ -29,6 +29,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -507,17 +509,40 @@ class LocalEngineTest {
 
     @Test
     void watchdogRollsBackFaultAtHardExpiryWhileRunContinues() throws Exception {
-        StubFaultProvider provider = new StubFaultProvider();
+        CountDownLatch rolledBack = new CountDownLatch(1);
+        StubFaultProvider provider = new StubFaultProvider() {
+            @Override
+            public void rollback(dev.faultora.spi.result.ActiveFault fault,
+                                 dev.faultora.spi.context.FaultContext context) {
+                super.rollback(fault, context);
+                rolledBack.countDown();
+            }
+        };
+        Connector awaitingRollback = new SuccessConnector() {
+            @Override
+            public OperationResult execute(PreparedTarget target, OperationDefinition operation,
+                                           Map<String, Object> inputs, ConnectorContext context) {
+                try {
+                    assertThat(rolledBack.await(5, TimeUnit.SECONDS))
+                            .as("hard-expiry rollback occurs before the run can finish").isTrue();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError("Interrupted while waiting for watchdog rollback", interrupted);
+                }
+                return super.execute(target, operation, inputs, context);
+            }
+        };
         ExecutionPlan plan = planWithNodes("run-fault-expiry",
                 new PlanNode.FaultStartNode(
                         new NodeId("inject"), "stub-fault", "default",
                         Map.of(), 100,
                         List.of(), SafetyClassification.MUTATING),
-                new PlanNode.WaitNode(
-                        new NodeId("wait"), 700L,
+                new PlanNode.OperationNode(
+                        new NodeId("await-rollback"), new OperationId("create-payment"),
+                        findOp("create-payment"), Map.of(), null,
                         List.of(new NodeId("inject")),
-                        SafetyClassification.READ_ONLY));
-        LocalEngine engine = new LocalEngine(Map.of(), Map.of(), Map.of("stub", provider));
+                        SafetyClassification.MUTATING, 0, 0));
+        LocalEngine engine = new LocalEngine(Map.of("http", awaitingRollback), Map.of(), Map.of("stub", provider));
 
         try (RunJournal journal = new RunJournal(tempDir.resolve("fault-exp.ndjson"), true)) {
             RunResult result = engine.execute(

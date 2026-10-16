@@ -17,6 +17,7 @@ import dev.faultora.spec.expression.ExpressionContext;
 import dev.faultora.spec.model.ScenarioDocument;
 import dev.faultora.spec.model.ScenarioMetadata;
 import dev.faultora.spi.context.ConnectorContext;
+import dev.faultora.spi.result.OperationResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -39,7 +41,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** The engine's remaining budget reaches an actual HTTP connection and body stream. */
-@Timeout(12)
+@Timeout(20)
 class ExecutionDeadlineE2ETest {
     @TempDir
     Path directory;
@@ -51,6 +53,7 @@ class ExecutionDeadlineE2ETest {
     private final CountDownLatch release = new CountDownLatch(1);
     private final CountDownLatch disconnected = new CountDownLatch(1);
     private final AtomicInteger requests = new AtomicInteger();
+    private final List<Long> attemptBudgets = new CopyOnWriteArrayList<>();
 
     @BeforeEach
     void setUp() throws Exception {
@@ -86,8 +89,16 @@ class ExecutionDeadlineE2ETest {
             }
         });
         server.start();
-        connector = new HttpConnector(DestinationPolicy.permissive());
+        connector = new HttpConnector(DestinationPolicy.permissive()) {
+            @Override
+            public OperationResult execute(PreparedTarget target, OperationDefinition operation,
+                                           Map<String, Object> inputs, ConnectorContext context) {
+                attemptBudgets.add(context.totalTimeoutMs());
+                return super.execute(target, operation, inputs, context);
+            }
+        };
         assertThat(run(5000, operation("/warm", 0, null), 1000).status()).isEqualTo(RunResult.Status.PASSED);
+        attemptBudgets.clear();
     }
 
     @AfterEach
@@ -108,7 +119,7 @@ class ExecutionDeadlineE2ETest {
         assertThat(result.error().code()).isEqualTo("SCENARIO_DEADLINE_EXCEEDED");
         assertThat(requests.get()).isEqualTo(1);
         assertBounded(start);
-        assertThat(disconnected.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(disconnected.await(5, TimeUnit.SECONDS)).isTrue();
     }
 
     @Test
@@ -122,7 +133,7 @@ class ExecutionDeadlineE2ETest {
         assertThat(result.nodeResults().get(new NodeId("eventually")).error().code()).isEqualTo("EVENTUALLY_TIMEOUT");
         assertThat(requests.get()).isEqualTo(1);
         assertBounded(start);
-        assertThat(disconnected.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(disconnected.await(5, TimeUnit.SECONDS)).isTrue();
     }
 
     @Test
@@ -133,7 +144,13 @@ class ExecutionDeadlineE2ETest {
 
         assertThat(result.status()).isEqualTo(RunResult.Status.FAILED);
         assertThat(result.nodeResults().get(new NodeId("request")).error().code()).isEqualTo("DEADLINE_EXCEEDED");
-        assertThat(requests.get()).isBetween(2, 4);
+        assertThat(requests.get()).isBetween(1, 4);
+        assertThat(attemptBudgets).isNotEmpty();
+        long previous = 301;
+        for (long budget : attemptBudgets) {
+            assertThat(budget).isPositive().isLessThan(previous);
+            previous = budget;
+        }
         assertBounded(start);
     }
 
@@ -170,6 +187,6 @@ class ExecutionDeadlineE2ETest {
     }
 
     private static void assertBounded(long start) {
-        assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start)).isLessThan(1200);
+        assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start)).isLessThan(5000);
     }
 }

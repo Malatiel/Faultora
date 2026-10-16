@@ -1,5 +1,6 @@
 package dev.faultora.engine;
 
+import dev.faultora.engine.exec.ManualTime;
 import dev.faultora.engine.journal.RunJournal;
 import dev.faultora.engine.plan.ExecutionPlan;
 import dev.faultora.engine.plan.PlanNode;
@@ -30,7 +31,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -41,6 +41,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class EngineCleanupDeadlineTest {
     @TempDir
     Path directory;
+    private final ManualTime time = new ManualTime();
     private final CleanupConnector connector = new CleanupConnector();
     private final RollbackProvider faults = new RollbackProvider();
     private final AtomicBoolean cancellation = new AtomicBoolean();
@@ -79,7 +80,7 @@ class EngineCleanupDeadlineTest {
     @Test
     void severalCleanupOperationsConsumeOneBudgetAndRemainingObligationsFail() throws Exception {
         connector.delayMs = 100;
-        long started = System.nanoTime();
+        long started = time.elapsedMillis();
         RunResult result = run(5000, cleanup("a", "slow", 0), cleanup("b", "slow", 0),
                 cleanup("c", "slow", 0), cleanup("d", "slow", 0));
 
@@ -94,7 +95,7 @@ class EngineCleanupDeadlineTest {
 
     @Test
     void aCleanupWaitConsumesTheSameBudgetAndPreventsTheNextRequest() throws Exception {
-        long started = System.nanoTime();
+        long started = time.elapsedMillis();
         RunResult result = run(5000, cleanupWait(), cleanup("after", "fast", 0));
 
         assertThat(connector.operations).isEmpty();
@@ -111,7 +112,7 @@ class EngineCleanupDeadlineTest {
                 cleanup("cleanup", "fast", 0));
 
         assertThat(result.status()).isEqualTo(RunResult.Status.PASSED);
-        assertThat(connector.budgets.getFirst().totalTimeoutMs()).isBetween(100L, 150L);
+        assertThat(connector.budgets.getFirst().totalTimeoutMs()).isEqualTo(150);
     }
 
     @Test
@@ -238,7 +239,8 @@ class EngineCleanupDeadlineTest {
                         100, 1, 5000, 1024, Set.of(), Set.of()))
                 .addNodes(List.of(nodes)).build();
         LocalEngine engine = useDefault ? new LocalEngine(Map.of("http", connector), Map.of())
-                : new LocalEngine(Map.of("http", connector), Map.of(), Map.of("synthetic-fault", faults), cleanupBudget);
+                : new LocalEngine(Map.of("http", connector), Map.of(), Map.of("synthetic-fault", faults),
+                        cleanupBudget, time::deadline);
         try (RunJournal journal = new RunJournal(directory.resolve("run-" + (++journalIndex) + ".ndjson"), true)) {
             return engine.execute(plan, journal, ExpressionContext.builder().build(),
                     new ConnectorContext(EvidencePolicy.MINIMAL, key -> null, 5000, 5000,
@@ -289,8 +291,8 @@ class EngineCleanupDeadlineTest {
         }
     }
 
-    private static void assertBounded(long start) {
-        assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start)).isLessThan(1200);
+    private void assertBounded(long start) {
+        assertThat(time.elapsedMillis() - start).isEqualTo(cleanupBudget);
     }
 
     private final class CleanupConnector implements Connector {
@@ -314,8 +316,7 @@ class EngineCleanupDeadlineTest {
             }
             if (operation.id().value().equals("slow")) {
                 if (throwOnSlow) { throw new IllegalStateException("Synthetic cleanup failure"); }
-                try { Thread.sleep(ignoreBudget ? delayMs : Math.min(delayMs, context.totalTimeoutMs())); }
-                catch (InterruptedException stopped) { Thread.currentThread().interrupt(); }
+                time.advanceMillis(ignoreBudget ? delayMs : Math.min(delayMs, context.totalTimeoutMs()));
                 if (!ignoreBudget && delayMs >= context.totalTimeoutMs()) {
                     return OperationResult.failure(new NormalizedError(NormalizedError.ErrorCategory.TIMEOUT,
                             "SYNTHETIC_TIMEOUT", "synthetic", false, Map.of()), delayMs);

@@ -24,12 +24,16 @@ public final class Waits {
 
     public static void sleep(long waitMs, AtomicBoolean cancellation, Deadline parent)
             throws InterruptedException {
-        long start = System.nanoTime();
-        long budget = TimeUnit.MILLISECONDS.toNanos(Math.max(0, waitMs));
+        if (waitMs <= 0) {
+            return;
+        }
+        Deadline wait = parent.limit(waitMs);
         while (!cancellation.get()) {
-            long remainingNanos = Math.min(budget - (System.nanoTime() - start), parent.remainingNanos());
-            if (remainingNanos <= 0) return;
-            TimeUnit.NANOSECONDS.sleep(Math.min(TimeUnit.MILLISECONDS.toNanos(SLICE_MS), remainingNanos));
+            long remainingNanos = wait.remainingNanos();
+            if (remainingNanos <= 0) {
+                return;
+            }
+            wait.pause(Math.min(TimeUnit.MILLISECONDS.toNanos(SLICE_MS), remainingNanos));
         }
     }
 }
