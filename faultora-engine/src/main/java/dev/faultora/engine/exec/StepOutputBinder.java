@@ -95,7 +95,9 @@ public final class StepOutputBinder {
                     }).toList(), table.truncated(), table.valuesWithheld(), table.redactedColumns()));
         }
         MessageEvidence published = MessageEvidence.publishedIn(protocolEvidence);
-        if (published != null) { bindable.put(MessageEvidence.PUBLISHED, readableMessage(published)); }
+        if (published != null) {
+            bindable.put(MessageEvidence.PUBLISHED, readableMessage(published));
+        }
         if (!messages.isEmpty()) {
             bindable.put(MessageEvidence.OBSERVED, messages.stream()
                     .map(StepOutputBinder::withoutPayload).toList());

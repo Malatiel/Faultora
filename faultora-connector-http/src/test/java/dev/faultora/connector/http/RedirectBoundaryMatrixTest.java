@@ -106,12 +106,17 @@ class RedirectBoundaryMatrixTest {
         OperationDefinition operation = new OperationDefinition(new OperationId("redirect"), new ProtocolId("http"),
                 target.id(), SafetyClassification.READ_ONLY, Map.of(), null, Map.of(), Map.of("method", method, "path", "/start"));
         Map<String, Object> input = new java.util.LinkedHashMap<>();
-        if (body != null) { input.put("body", body); }
+        if (body != null) {
+            input.put("body", body);
+        }
         input.put("headers", Map.of("Authorization", "synthetic-auth", "X-Service-Secret", "synthetic-secret", "X-Trace", "synthetic-trace"));
         try (HttpConnector connector = new HttpConnector(DestinationPolicy.permissive(), client)) {
             var prepared = connector.prepare(target, context);
-            try { return connector.execute(prepared, operation, input, context); }
-            finally { connector.release(prepared); }
+            try {
+                return connector.execute(prepared, operation, input, context);
+            } finally {
+                connector.release(prepared);
+            }
         }
     }
 
@@ -121,13 +126,18 @@ class RedirectBoundaryMatrixTest {
         final int status;
         final String location;
         final List<SeenRequest> calls = new ArrayList<>();
-        CapturingClient(int status, String location) { this.status = status; this.location = location; }
+        CapturingClient(int status, String location) {
+            this.status = status;
+            this.location = location;
+        }
         protected CloseableHttpResponse doExecute(HttpHost target, ClassicHttpRequest request, HttpContext context) throws IOException {
             byte[] body = request.getEntity() == null ? new byte[0] : EntityUtils.toByteArray(request.getEntity());
             calls.add(new SeenRequest(request.getMethod(), new String(body, java.nio.charset.StandardCharsets.UTF_8),
                     header(request, "X-Service-Secret"), header(request, "Authorization"), header(request, "X-Trace")));
             BasicClassicHttpResponse response = new BasicClassicHttpResponse(calls.size() == 1 ? status : 204);
-            if (calls.size() == 1) { response.setHeader("Location", location); }
+            if (calls.size() == 1) {
+                response.setHeader("Location", location);
+            }
             return CloseableHttpResponse.adapt(response);
         }
         private static String header(ClassicHttpRequest request, String name) {

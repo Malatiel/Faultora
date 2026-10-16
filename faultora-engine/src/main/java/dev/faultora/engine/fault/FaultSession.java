@@ -167,8 +167,11 @@ public final class FaultSession implements AutoCloseable {
             LOG.warn("Fault rollback failed");
             status = reason + "-rollback-failed";
         }
-        try { listener.onRolledBack(record.fault, status); }
-        finally { record.completed = true; }
+        try {
+            listener.onRolledBack(record.fault, status);
+        } finally {
+            record.completed = true;
+        }
         return true;
     }
 
@@ -180,8 +183,12 @@ public final class FaultSession implements AutoCloseable {
         int unconfirmed = 0;
         for (FaultRecord record : records.values()) {
             boolean completed = record.completed;
-            if (record.failed) { failures++; }
-            if (!completed) { unconfirmed++; }
+            if (record.failed) {
+                failures++;
+            }
+            if (!completed) {
+                unconfirmed++;
+            }
         }
         return new RollbackOutcome(failures, unconfirmed);
     }

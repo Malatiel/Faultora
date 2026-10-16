@@ -225,7 +225,9 @@ public final class JournalWriter {
         }
     }
 
-    public boolean failed() { return failure.get() != null; }
+    public boolean failed() {
+        return failure.get() != null;
+    }
 
     /** Owners finalize storage before publishing the outcome, preserving partial events after a close failure. */
     public static RunResult closeJournal(RunJournal journal, RunResult result) {
@@ -234,12 +236,16 @@ public final class JournalWriter {
             return result;
         } catch (IOException closeFailure) {
             LOG.warn("Failed to close run journal");
-            if (result.error() != null && "JOURNAL_WRITE_FAILED".equals(result.error().code())) { return result; }
+            if (result.error() != null && "JOURNAL_WRITE_FAILED".equals(result.error().code())) {
+                return result;
+            }
             Map<String, Object> fields = new LinkedHashMap<>();
             fields.put("journalOperation", "close");
             if (result.error() != null && result.error().metadata() != null) {
                 for (String key : List.of("rollbackFailures", "unconfirmedRollbacks")) {
-                    if (result.error().metadata().get(key) instanceof Number count) { fields.put(key, count.intValue()); }
+                    if (result.error().metadata().get(key) instanceof Number count) {
+                        fields.put(key, count.intValue());
+                    }
                 }
             }
             NormalizedError error = new NormalizedError(NormalizedError.ErrorCategory.INTERNAL, "JOURNAL_WRITE_FAILED",

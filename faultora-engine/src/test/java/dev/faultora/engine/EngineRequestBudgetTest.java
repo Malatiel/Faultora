@@ -202,7 +202,9 @@ class EngineRequestBudgetTest {
                 .targetPolicy(new TargetPolicy(Set.of(), Set.of(SafetyClassification.READ_ONLY),
                         limit, 20, 10_000, 1024, Set.of(), Set.of())).addNodes(List.of(nodes)).build();
         AssertionProvider never = new AssertionProvider() {
-            public String type() { return "never"; }
+            public String type() {
+                return "never";
+            }
             public AssertionResult evaluate(String type, Map<String, Object> params,
                                             EvidenceView evidence, AssertionContext context) {
                 return AssertionResult.fail("Not ready", Map.of());
@@ -241,7 +243,9 @@ class EngineRequestBudgetTest {
         assertThat(node.error().retryable()).isFalse();
     }
 
-    private static PlanNode.OperationNode operation(String id) { return operation(id, READ); }
+    private static PlanNode.OperationNode operation(String id) {
+        return operation(id, READ);
+    }
     private static PlanNode.OperationNode operation(String id, OperationDefinition definition) {
         return new PlanNode.OperationNode(new NodeId(id), definition.id(), definition, Map.of(), null,
                 List.of(), SafetyClassification.READ_ONLY, 0, 0);
@@ -266,11 +270,17 @@ class EngineRequestBudgetTest {
         boolean retryable;
         boolean failPreparation;
         CountDownLatch concurrent;
-        public ProtocolId protocol() { return new ProtocolId("http"); }
-        public Set<String> capabilities() { return Set.of(); }
+        public ProtocolId protocol() {
+            return new ProtocolId("http");
+        }
+        public Set<String> capabilities() {
+            return Set.of();
+        }
         public PreparedTarget prepare(TargetDefinition target, ConnectorContext context) {
             prepared.incrementAndGet();
-            if (failPreparation) { throw new IllegalArgumentException("Synthetic preparation refusal"); }
+            if (failPreparation) {
+                throw new IllegalArgumentException("Synthetic preparation refusal");
+            }
             return () -> target;
         }
         public OperationResult execute(PreparedTarget target, OperationDefinition operation,
@@ -278,8 +288,12 @@ class EngineRequestBudgetTest {
             executed.incrementAndGet();
             if (concurrent != null) {
                 concurrent.countDown();
-                try { assertThat(concurrent.await(2, TimeUnit.SECONDS)).isTrue(); }
-                catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new AssertionError(interrupted); }
+                try {
+                    assertThat(concurrent.await(2, TimeUnit.SECONDS)).isTrue();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(interrupted);
+                }
             }
             if (retryable && !operation.id().equals(CLEANUP.id())) {
                 return OperationResult.failure(new NormalizedError(NormalizedError.ErrorCategory.NETWORK,
@@ -287,7 +301,9 @@ class EngineRequestBudgetTest {
             }
             return OperationResult.success(200, Map.of(), null, 0, Map.of());
         }
-        public void release(PreparedTarget target) { released.incrementAndGet(); }
+        public void release(PreparedTarget target) {
+            released.incrementAndGet();
+        }
         public void close() { }
     }
 }

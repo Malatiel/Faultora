@@ -123,8 +123,12 @@ class HttpRequestBodyTest {
     @ValueSource(strings = {"GET", "HEAD", "DELETE", "OPTIONS"})
     void methodsWithoutAnEntityDoNotSerializeAnUnusedBody(String method) {
         var unused = new AbstractList<Object>() {
-            public int size() { throw new AssertionError("Unused body must not be serialized"); }
-            public Object get(int index) { throw new AssertionError("Unused body must not be serialized"); }
+            public int size() {
+                throw new AssertionError("Unused body must not be serialized");
+            }
+            public Object get(int index) {
+                throw new AssertionError("Unused body must not be serialized");
+            }
         };
         assertThat(execute(method, "/payload", Map.of("body", unused), limit(1)).isSuccess()).isTrue();
         assertThat(bodies).hasSize(1).allSatisfy(body -> assertThat(body).isEmpty());
@@ -134,7 +138,10 @@ class HttpRequestBodyTest {
     void anInvalidLimitStopsBeforeTransportAndSecretResolution() {
         AtomicInteger secrets = new AtomicInteger();
         ConnectorContext context = new ConnectorContext(EvidencePolicy.MINIMAL,
-                key -> { secrets.incrementAndGet(); return null; }, 1000, 1000, 5000,
+                key -> {
+                    secrets.incrementAndGet();
+                    return null;
+                }, 1000, 1000, 5000,
                 Map.of(HttpConnector.MAX_REQUEST_BYTES, 0, HttpConnector.AUTH_SECRET_ID, "synthetic-handle"));
         TargetDefinition target = target();
         OperationResult result = connector.execute(connector.prepare(target, context), operation("POST", "/payload"),
@@ -190,8 +197,11 @@ class HttpRequestBodyTest {
         ConnectorContext context = new ConnectorContext(EvidencePolicy.MINIMAL, key -> null,
                 1000, 1000, 5000, config);
         var prepared = connector.prepare(target(), context);
-        try { return connector.execute(prepared, operation(method, path), inputs, context); }
-        finally { connector.release(prepared); }
+        try {
+            return connector.execute(prepared, operation(method, path), inputs, context);
+        } finally {
+            connector.release(prepared);
+        }
     }
 
     private TargetDefinition target() {
@@ -214,7 +224,10 @@ class HttpRequestBodyTest {
         var reached = new java.util.concurrent.atomic.AtomicInteger();
         HttpServer foreign = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         foreign.createContext("/accept", exchange -> {
-            try (exchange) { reached.incrementAndGet(); exchange.sendResponseHeaders(204, -1); }
+            try (exchange) {
+                reached.incrementAndGet();
+                exchange.sendResponseHeaders(204, -1);
+            }
         });
         server.createContext("/foreign", exchange -> {
             try (exchange) {
@@ -228,7 +241,9 @@ class HttpRequestBodyTest {
             var result = execute("POST", "/foreign", Map.of("body", "synthetic-body"), limit(32));
             assertThat(result.error().code()).isEqualTo("CROSS_ORIGIN_BODY_REDIRECT");
             assertThat(reached.get()).isZero();
-        } finally { foreign.stop(0); }
+        } finally {
+            foreign.stop(0);
+        }
     }
 
     private static void assertTooLarge(OperationResult result) {

@@ -134,7 +134,11 @@ public final class JdbcConnector implements Connector {
         } catch (SQLException unreachable) {
             boolean closeFailed = false;
             if (connection != null) {
-                try { connection.close(); } catch (SQLException closeFailure) { closeFailed = true; }
+                try {
+                    connection.close();
+                } catch (SQLException closeFailure) {
+                    closeFailed = true;
+                }
             }
             throw JdbcErrors.unavailable(unreachable, closeFailed);
         }

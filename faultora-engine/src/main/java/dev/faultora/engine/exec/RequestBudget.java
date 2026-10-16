@@ -29,7 +29,9 @@ public final class RequestBudget {
         return previous > 0 ? started.incrementAndGet() : 0;
     }
 
-    public boolean exhausted() { return remaining.get() == 0; }
+    public boolean exhausted() {
+        return remaining.get() == 0;
+    }
 
     public RequestBudget forCleanup() {
         return new RequestBudget(cleanupRemaining, cleanupRemaining, started);

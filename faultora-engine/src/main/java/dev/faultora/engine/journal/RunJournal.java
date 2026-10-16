@@ -93,10 +93,15 @@ public class RunJournal implements AutoCloseable {
      */
     @Override
     public synchronized void close() throws IOException {
-        if (closed) { return; }
+        if (closed) {
+            return;
+        }
         closed = true;
-        try { flush(); }
-        finally { writer.close(); }
+        try {
+            flush();
+        } finally {
+            writer.close();
+        }
     }
 
     /**

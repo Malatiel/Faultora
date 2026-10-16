@@ -75,7 +75,9 @@ class RequestBodyTest {
     void overflowingJsonStopsTraversalBeforeMaterializingTheCollection() {
         AtomicInteger visited = new AtomicInteger();
         var body = new AbstractList<String>() {
-            public int size() { return Integer.MAX_VALUE; }
+            public int size() {
+                return Integer.MAX_VALUE;
+            }
             public String get(int index) {
                 visited.incrementAndGet();
                 return "x".repeat(200);

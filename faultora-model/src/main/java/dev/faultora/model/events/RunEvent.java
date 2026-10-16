@@ -156,7 +156,9 @@ public sealed interface RunEvent {
             OperationId operationId,
             long attemptNumber
     ) implements RunEvent {
-        public OperationAttempted { eventType = "OPERATION_ATTEMPTED"; }
+        public OperationAttempted {
+            eventType = "OPERATION_ATTEMPTED";
+        }
     }
 
     /** An operation attempt failed with a retryable error and a retry was scheduled. */

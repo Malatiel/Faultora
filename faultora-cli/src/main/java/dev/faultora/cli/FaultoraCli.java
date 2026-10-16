@@ -133,7 +133,9 @@ public class FaultoraCli {
         try {
             return command.execute(commandArgs);
         } catch (CliException e) {
-            if (!output.hasErrors()) { output.error(CliDiagnostic.Code.INVALID_ARGUMENT, null, null); }
+            if (!output.hasErrors()) {
+                output.error(CliDiagnostic.Code.INVALID_ARGUMENT, null, null);
+            }
             err.println("Error: " + e.getMessage());
             return e.exitCode();
         } catch (Exception e) {

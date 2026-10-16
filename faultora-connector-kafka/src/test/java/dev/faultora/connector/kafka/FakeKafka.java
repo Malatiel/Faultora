@@ -92,7 +92,9 @@ final class FakeKafka implements KafkaClients {
         return producer;
     }
 
-    int producersOpened() { return producersOpened.get(); }
+    int producersOpened() {
+        return producersOpened.get();
+    }
 
     /** How many consumers the connector has opened against this broker. */
     int consumersOpened() {

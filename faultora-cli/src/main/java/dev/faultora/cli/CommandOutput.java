@@ -28,8 +28,12 @@ final class CommandOutput {
         return new CommandOutput(new PrintWriter(System.out, true), new PrintWriter(System.err, true), false);
     }
 
-    PrintWriter out() { return out; }
-    PrintWriter err() { return err; }
+    PrintWriter out() {
+        return out;
+    }
+    PrintWriter err() {
+        return err;
+    }
 
     void error(CliDiagnostic.Code code, String node, String path) {
         diagnostics.add(CliDiagnostic.of(code, "ERROR", node, path));
@@ -47,7 +51,9 @@ final class CommandOutput {
                 diagnostic.severity().name(), diagnostic.stepId(), diagnostic.phase())));
     }
 
-    void preview(PlanPreview value) { preview = value; }
+    void preview(PlanPreview value) {
+        preview = value;
+    }
 
     void run(RunResult result) {
         result.nodeResults().values().stream()
@@ -58,16 +64,28 @@ final class CommandOutput {
                                 assertion.outcome() == AssertionResult.Outcome.FAIL);
                         boolean indeterminate = node.assertions().stream().anyMatch(assertion ->
                                 assertion.outcome() == AssertionResult.Outcome.INDETERMINATE);
-                        if (failed) { error(CliDiagnostic.Code.ASSERTION_FAILED, node.nodeId().value(), null); }
-                        if (indeterminate) { error(CliDiagnostic.Code.ASSERTION_INDETERMINATE, node.nodeId().value(), null); }
-                        if (!failed && !indeterminate) { error(CliDiagnostic.Code.NODE_FAILED, node.nodeId().value(), null); }
+                        if (failed) {
+                            error(CliDiagnostic.Code.ASSERTION_FAILED, node.nodeId().value(), null);
+                        }
+                        if (indeterminate) {
+                            error(CliDiagnostic.Code.ASSERTION_INDETERMINATE, node.nodeId().value(), null);
+                        }
+                        if (!failed && !indeterminate) {
+                            error(CliDiagnostic.Code.NODE_FAILED, node.nodeId().value(), null);
+                        }
                     } else if (node.status() == RunResult.Status.ERROR) {
                         error(CliDiagnostic.Code.NODE_ERROR, node.nodeId().value(), null);
                     }
                 });
-        if (result.status() == RunResult.Status.ERROR) { error(CliDiagnostic.Code.RUN_ERROR, null, null); }
-        if (result.status() == RunResult.Status.CANCELLED) { error(CliDiagnostic.Code.RUN_CANCELLED, null, null); }
-        if (result.status() == RunResult.Status.FAILED && !hasErrors()) { error(CliDiagnostic.Code.RUN_FAILED, null, null); }
+        if (result.status() == RunResult.Status.ERROR) {
+            error(CliDiagnostic.Code.RUN_ERROR, null, null);
+        }
+        if (result.status() == RunResult.Status.CANCELLED) {
+            error(CliDiagnostic.Code.RUN_CANCELLED, null, null);
+        }
+        if (result.status() == RunResult.Status.FAILED && !hasErrors()) {
+            error(CliDiagnostic.Code.RUN_FAILED, null, null);
+        }
     }
 
     boolean hasErrors() {

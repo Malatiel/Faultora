@@ -71,8 +71,11 @@ class KafkaPayloadPolicyE2ETest {
     private String topic;
 
     static boolean dockerIsAvailable() {
-        try { return DockerClientFactory.instance().isDockerAvailable(); }
-        catch (RuntimeException unavailable) { return false; }
+        try {
+            return DockerClientFactory.instance().isDockerAvailable();
+        } catch (RuntimeException unavailable) {
+            return false;
+        }
     }
 
     @BeforeAll
@@ -84,8 +87,12 @@ class KafkaPayloadPolicyE2ETest {
 
     @AfterAll
     static void stopBroker() {
-        if (admin != null) { admin.close(Duration.ofSeconds(5)); }
-        if (kafka != null) { kafka.stop(); }
+        if (admin != null) {
+            admin.close(Duration.ofSeconds(5));
+        }
+        if (kafka != null) {
+            kafka.stop();
+        }
     }
 
     @BeforeEach
@@ -103,7 +110,9 @@ class KafkaPayloadPolicyE2ETest {
             try {
                 assertThat(connector.execute(target, operation(), Map.of("key", "é", "body", new byte[]{1, 2, 3, 4},
                         "headers", Map.of("x", "€")), context).isSuccess()).isTrue();
-            } finally { connector.release(target); }
+            } finally {
+                connector.release(target);
+            }
         }
         assertThat(endOffset()).isEqualTo(1);
         ConsumerRecord<byte[], byte[]> record = firstRecord();
@@ -121,7 +130,9 @@ class KafkaPayloadPolicyE2ETest {
                 var result = connector.execute(target, operation(), Map.of("key", "é", "body", new byte[]{1, 2, 3, 4},
                         "headers", Map.of("x", "€")), context);
                 assertThat(result.error().code()).isEqualTo("REQUEST_TOO_LARGE");
-            } finally { connector.release(target); }
+            } finally {
+                connector.release(target);
+            }
         }
         assertThat(endOffset()).isZero();
     }
@@ -148,7 +159,9 @@ class KafkaPayloadPolicyE2ETest {
         assertThat(outcome.didRun()).as(() -> String.valueOf(outcome.refusal())).isTrue();
         assertThat(outcome.result().status()).isEqualTo(limit == 10 ? RunResult.Status.PASSED : RunResult.Status.FAILED);
         assertThat(endOffset()).isEqualTo(limit == 10 ? 1 : 0);
-        if (limit == 9) { assertThat(Files.readString(outcome.journalPath())).contains("REQUEST_TOO_LARGE"); }
+        if (limit == 9) {
+            assertThat(Files.readString(outcome.journalPath())).contains("REQUEST_TOO_LARGE");
+        }
     }
 
     @Test
@@ -185,7 +198,9 @@ class KafkaPayloadPolicyE2ETest {
             long started = System.nanoTime();
             while (System.nanoTime() - started < TimeUnit.SECONDS.toNanos(5)) {
                 var records = consumer.poll(Duration.ofMillis(100));
-                if (!records.isEmpty()) { return records.iterator().next(); }
+                if (!records.isEmpty()) {
+                    return records.iterator().next();
+                }
             }
             throw new AssertionError("Acknowledged record was not readable");
         }
@@ -206,7 +221,9 @@ class KafkaPayloadPolicyE2ETest {
                 SafetyClassification.MUTATING, Map.of(), null, Map.of(), Map.of("action", "publish", "topic", topic));
     }
 
-    private static String baseUrl() { return "kafka://" + kafka.getBootstrapServers().replace("PLAINTEXT://", ""); }
+    private static String baseUrl() {
+        return "kafka://" + kafka.getBootstrapServers().replace("PLAINTEXT://", "");
+    }
 
     private String asyncApi() {
         return """

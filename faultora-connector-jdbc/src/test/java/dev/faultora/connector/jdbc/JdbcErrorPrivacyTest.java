@@ -55,13 +55,19 @@ class JdbcErrorPrivacyTest {
         var closed = new java.util.concurrent.atomic.AtomicInteger();
         Driver driver = new Driver() {
             public Connection connect(String url, java.util.Properties properties) throws SQLException {
-                if (!acceptsURL(url)) { return null; }
-                if (phase.equals("connect")) { throw new SQLException(PRIVATE_MARKER + " " + url, "08001", 42); }
+                if (!acceptsURL(url)) {
+                    return null;
+                }
+                if (phase.equals("connect")) {
+                    throw new SQLException(PRIVATE_MARKER + " " + url, "08001", 42);
+                }
                 return (Connection) java.lang.reflect.Proxy.newProxyInstance(Connection.class.getClassLoader(),
                         new Class<?>[]{Connection.class}, (proxy, method, args) -> {
                             if (method.getName().equals("close")) {
                                 closed.incrementAndGet();
-                                if (phase.equals("close")) { throw new SQLException(PRIVATE_MARKER); }
+                                if (phase.equals("close")) {
+                                    throw new SQLException(PRIVATE_MARKER);
+                                }
                                 return null;
                             }
                             if (method.getName().equals("setReadOnly") && (phase.equals("readOnly") || phase.equals("close"))
@@ -71,12 +77,24 @@ class JdbcErrorPrivacyTest {
                             return null;
                         });
             }
-            public boolean acceptsURL(String url) { return url.startsWith("jdbc:synthetic:"); }
-            public DriverPropertyInfo[] getPropertyInfo(String url, java.util.Properties properties) { return new DriverPropertyInfo[0]; }
-            public int getMajorVersion() { return 1; }
-            public int getMinorVersion() { return 0; }
-            public boolean jdbcCompliant() { return false; }
-            public java.util.logging.Logger getParentLogger() { return java.util.logging.Logger.getAnonymousLogger(); }
+            public boolean acceptsURL(String url) {
+                return url.startsWith("jdbc:synthetic:");
+            }
+            public DriverPropertyInfo[] getPropertyInfo(String url, java.util.Properties properties) {
+                return new DriverPropertyInfo[0];
+            }
+            public int getMajorVersion() {
+                return 1;
+            }
+            public int getMinorVersion() {
+                return 0;
+            }
+            public boolean jdbcCompliant() {
+                return false;
+            }
+            public java.util.logging.Logger getParentLogger() {
+                return java.util.logging.Logger.getAnonymousLogger();
+            }
         };
         DriverManager.registerDriver(driver);
         try (JdbcConnector connector = new JdbcConnector(HostPolicy.permissive())) {
@@ -93,9 +111,15 @@ class JdbcErrorPrivacyTest {
                 assertThat(error.metadata()).containsEntry("sqlState", "08001").containsEntry("vendorCode", 42);
                 assertThat(new ObjectMapper().writeValueAsString(error)).doesNotContain(PRIVATE_MARKER, "jdbc:synthetic", "password=");
                 assertThat(closed.get()).isEqualTo(phase.equals("connect") ? 0 : 1);
-                if (phase.equals("close")) { assertThat(error.metadata()).containsEntry("connectionCloseFailed", true); }
-            } finally { connector.release(prepared); }
-        } finally { DriverManager.deregisterDriver(driver); }
+                if (phase.equals("close")) {
+                    assertThat(error.metadata()).containsEntry("connectionCloseFailed", true);
+                }
+            } finally {
+                connector.release(prepared);
+            }
+        } finally {
+            DriverManager.deregisterDriver(driver);
+        }
     }
 
     @ParameterizedTest
