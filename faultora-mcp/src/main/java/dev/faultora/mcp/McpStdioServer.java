@@ -10,7 +10,7 @@ import java.io.InputStream;
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 
-/** A single connection, bounded UTF-8 JSON-RPC lines, with no listener or background execution. */
+/** A single connection of bounded UTF-8 JSON-RPC lines; session close owns run cleanup. */
 public final class McpStdioServer {
     public static final String PROTOCOL_VERSION = "2025-11-25";
     private final McpConfiguration configuration;
@@ -27,12 +27,15 @@ public final class McpStdioServer {
         this.configuration = configuration;
     }
 
-    /** EOF drops session preparations. Neither stream belongs to this adapter. */
+    /** EOF cancels and joins owned runs before dropping preparations. Neither stream belongs to this adapter. */
     public void serve(InputStream input, PrintWriter output) throws IOException {
         initialized = false;
         ready = false;
         var buffered = new BufferedInputStream(input);
-        try (var tools = new McpTools(configuration)) {
+        var tools = new McpTools(configuration);
+        Thread shutdown = new Thread(tools::close, "faultora-mcp-shutdown");
+        Runtime.getRuntime().addShutdownHook(shutdown);
+        try {
             while (true) {
                 byte[] line;
                 try {
@@ -58,6 +61,16 @@ public final class McpStdioServer {
                 JsonNode response = answer(request, tools);
                 if (response != null) {
                     write(output, response);
+                }
+            }
+        } finally {
+            try {
+                tools.close();
+            } finally {
+                try {
+                    Runtime.getRuntime().removeShutdownHook(shutdown);
+                } catch (IllegalStateException shuttingDown) {
+                    // The registered hook owns completion while the JVM is shutting down.
                 }
             }
         }
@@ -115,7 +128,7 @@ public final class McpStdioServer {
                     return error(id, -32602, "Invalid tool call");
                 }
                 String name = params.path("name").asText();
-                if (!java.util.Set.of("list_capabilities", "describe_catalog", "prepare_run").contains(name)) {
+                if (!tools.names().contains(name)) {
                     return error(id, -32602, "Unknown tool");
                 }
                 JsonNode arguments = params.has("arguments")

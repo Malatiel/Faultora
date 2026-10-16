@@ -71,8 +71,9 @@ Fault injection:
 Local tool integration:
 
 - [MCP stdio](docs/MCP.md) for capabilities, operator-declared catalog inspection
-  and scenario preparation. It returns structural previews without running
-  targets, activating faults or granting execution permission.
+  and scenario preparation. Optional execution requires a separate operator
+  signature on the exact preparation; owned runs support cancellation and
+  bounded structural report export.
 
 Private-network execution:
 
