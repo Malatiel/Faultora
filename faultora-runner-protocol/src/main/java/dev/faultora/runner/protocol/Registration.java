@@ -1,5 +1,8 @@
 package dev.faultora.runner.protocol;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -23,8 +26,21 @@ public record Registration(
         List<String> protocols,
         Set<String> capabilities
 ) {
+    public static final int MAX_JSON_BYTES = 65_536;
+
     public Registration {
-        protocols = protocols == null ? List.of() : List.copyOf(protocols);
-        capabilities = capabilities == null ? Set.of() : Set.copyOf(capabilities);
+        protocols = protocols == null ? List.of() : Collections.unmodifiableList(new ArrayList<>(protocols));
+        capabilities = capabilities == null ? Set.of() : Collections.unmodifiableSet(new HashSet<>(capabilities));
+    }
+
+    boolean wellFormed() {
+        return runnerId != null && runnerId.matches("[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
+                && agentVersion != null && !agentVersion.isBlank() && agentVersion.length() <= 128
+                && !protocols.isEmpty() && protocols.size() <= 16
+                && new HashSet<>(protocols).size() == protocols.size()
+                && protocols.stream().allMatch(version -> version != null && version.matches("[1-9][0-9]{0,8}"))
+                && capabilities.size() <= 256
+                && capabilities.stream().allMatch(name -> name != null
+                        && name.matches("[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}"));
     }
 }

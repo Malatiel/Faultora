@@ -233,6 +233,27 @@ class RunnerTransportTest {
     }
 
     @Test
+    void malformedRegistrationReceivesANamedRefusalOverTls() throws Exception {
+        Pair tls = trustingEachOther();
+        try (QualificationDispatcher dispatcher =
+                     new QualificationDispatcher(tls.dispatcher().sslContext())) {
+            HttpResponse<String> response = HttpClient.newBuilder()
+                    .sslContext(tls.runner().sslContext()).build()
+                    .send(HttpRequest.newBuilder(URI.create(dispatcher.address() + "/runner/register"))
+                                    .header("Content-Type", "application/json")
+                                    .POST(HttpRequest.BodyPublishers.ofString(
+                                            "{\"runnerId\":\"SYNTHETIC_PRIVATE_VALUE/invalid\",\"protocols\":[1]}"))
+                                    .build(),
+                            HttpResponse.BodyHandlers.ofString());
+            assertThat(response.statusCode()).isEqualTo(409);
+            Session refused = MAPPER.readValue(response.body(), Session.class);
+            assertThat(refused.refusal().reason()).isEqualTo(Refusal.Reason.MALFORMED_REGISTRATION);
+            assertThat(response.body()).doesNotContain("SYNTHETIC_PRIVATE_VALUE");
+            assertThat(dispatcher.registrations()).isEmpty();
+        }
+    }
+
+    @Test
     void aBatchThatWouldLeaveAHoleIsRefusedRatherThanClosedUp() throws Exception {
         // Re-sending is safe and skipping is not. A journal quietly missing its
         // middle reads as a complete account of a run that did something else,

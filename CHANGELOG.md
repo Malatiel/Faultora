@@ -10,6 +10,10 @@ ADR-023 exists to stop. What has landed so far:
 
 ### Added
 
+- Runner protocol v1 now refuses malformed registration with
+  `MALFORMED_REGISTRATION`. Unsupported well-formed versions still receive
+  `UNSUPPORTED_PROTOCOL_VERSION`; scenario YAML versions do not participate.
+
 - **`faultora test --preview` prepares a scenario without executing it.** The
   structural JSON preview lists actions, faults, budgets and refusals before
   opening a run environment or contacting targets. It is descriptive and is
