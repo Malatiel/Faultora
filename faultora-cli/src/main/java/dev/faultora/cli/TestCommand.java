@@ -1,7 +1,6 @@
 package dev.faultora.cli;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.faultora.engine.LocalEngine;
 import dev.faultora.engine.exec.JournalWriter;
 import dev.faultora.engine.journal.RunJournal;
 import dev.faultora.engine.plan.PlanCompilationResult;
@@ -14,8 +13,9 @@ import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.spec.expression.ExpressionContext;
 import dev.faultora.spec.model.InputDeclaration;
 import dev.faultora.runtime.ExtensionRegistry;
-import dev.faultora.runtime.RunEnvironment;
 import dev.faultora.runtime.RunPreparation;
+import dev.faultora.runtime.PreparedRun;
+import dev.faultora.runtime.RunArtifacts;
 import dev.faultora.runtime.RuntimeCapabilities;
 import dev.faultora.runtime.PlanPreview;
 import dev.faultora.runtime.CatalogAssembly;
@@ -96,10 +96,11 @@ public class TestCommand implements Command {
             var documents = CatalogLoader.documents(options);
             failureStage = CliDiagnostic.Code.PREPARATION_FAILED;
             TargetPolicy targetPolicy = RunPolicies.targetPolicy(options);
-            RunId runId = new RunId("run-" + options.seed());
-            RunPreparation.Result prepared = RunPreparation.prepare(new RunPreparation.Request(
+            RunId runId = RunArtifacts.newRunId();
+            RunPreparation.Request request = new RunPreparation.Request(
                     scenarioContent, documents, options.targetUrl(),
-                    extensionPolicy, targetPolicy, runId, options.seed(), null));
+                    extensionPolicy, targetPolicy, runId, options.seed(), null);
+            RunPreparation.Result prepared = RunPreparation.prepare(request);
             output.scenario(prepared.diagnostics());
             if (prepared.compilation() != null) {
                 output.plan(prepared.compilation().diagnostics());
@@ -139,22 +140,25 @@ public class TestCommand implements Command {
             Map<String, FaultProvider> faultProviders = RunPolicies.faultProviders(options);
             ConnectorContext connectorContext = RunPolicies.connectorContext(
                     options, targetPolicy, new EnvironmentSecretResolver());
+            PreparedRun.Settings settings = new PreparedRun.Settings(expressionContext, connectorContext,
+                    options.allowPrivate(), RunPolicies.faultTypes(options));
+            PreparedRun sealed = PreparedRun.prepare(request, settings, java.time.Duration.ofMinutes(5));
 
             failureStage = CliDiagnostic.Code.ARTIFACT_WRITE_FAILED;
-            Files.createDirectories(options.outputDir());
-            Path journalPath = options.outputDir().resolve("events.ndjson");
-            Files.deleteIfExists(journalPath);
+            Path outputDir = options.outputDir() == null
+                    ? Path.of("faultora-results").resolve(runId.value()) : options.outputDir();
+            RunArtifacts artifacts = RunArtifacts.claim(outputDir, runId);
+            Path journalPath = artifacts.journalPath();
 
             failureStage = CliDiagnostic.Code.RUN_ERROR;
             ExecutedRun executed = run(
-                    options, compilation, faultProviders, connectorContext,
-                    expressionContext, journalPath, scenario, extensionPolicy);
+                    options, sealed, request, settings, faultProviders, journalPath, scenario);
             RunResult result = executed.result();
             output.run(result);
 
             failureStage = CliDiagnostic.Code.REPORT_WRITE_FAILED;
             ReportWriter.writeAll(
-                    options.formats(), renderers, executed.events(), options.outputDir(), output.out());
+                    options.formats(), renderers, executed.events(), outputDir, output.out());
 
             output.out().printf("%nResult: %s — %d nodes, %d passed, %d failed (%dms)%n",
                     result.status(), result.totalNodes(),
@@ -168,6 +172,10 @@ public class TestCommand implements Command {
                 case ERROR, CANCELLED, SKIPPED -> FaultoraCli.EXIT_RUNNER_FAILURE;
             };
 
+        } catch (RunArtifacts.AlreadyOwned owned) {
+            output.error(CliDiagnostic.Code.ARTIFACT_WRITE_FAILED, null, null);
+            output.err().println("Output already contains run artifacts; choose a new --output directory");
+            return FaultoraCli.EXIT_RUNNER_FAILURE;
         } catch (CatalogAssembly.AssemblyException refused) {
             output.error(CliDiagnostic.Code.CATALOG_IMPORT_FAILED, null, null);
             throw new CliException(refused.getMessage(), FaultoraCli.EXIT_INVALID_CONFIG);
@@ -195,29 +203,26 @@ public class TestCommand implements Command {
      */
     private ExecutedRun run(
             TestOptions options,
-            PlanCompilationResult compilation,
+            PreparedRun prepared,
+            RunPreparation.Request request,
+            PreparedRun.Settings settings,
             Map<String, FaultProvider> faultProviders,
-            ConnectorContext connectorContext,
-            ExpressionContext expressionContext,
             Path journalPath,
-            ScenarioDocument scenario,
-            ExtensionPolicy extensionPolicy
+            ScenarioDocument scenario
     ) throws IOException {
         // Which clients a plan needs, and the engine over them, is the same
         // question however a run was started — so it is answered in one place
         // that the runner asks too, rather than here where only the CLI can see
         // it. What stays here is what belongs to a command line: what to print.
-        try (RunEnvironment environment = RunEnvironment.open(
-                compilation.plan(), faultProviders, extensionPolicy, options.allowPrivate());
-             RunJournal journal = new RunJournal(journalPath, true)) {
+        try (RunJournal journal = new RunJournal(journalPath, true)) {
             output.out().println("Running scenario: " + scenario.metadata().name());
             output.out().println("Target: configured for this run");
             output.out().println("Seed: " + options.seed());
+            output.out().println("Run: " + request.runId().value());
             output.out().println();
 
             RunResult result = executeCancellably(
-                    environment.engine(), compilation, journal,
-                    expressionContext, connectorContext);
+                    prepared, request, settings, faultProviders, journal);
             result = JournalWriter.closeJournal(journal, result);
             return new ExecutedRun(result, journal.events());
         }
@@ -236,11 +241,11 @@ public class TestCommand implements Command {
      * ended. A signal that cannot be caught remains outside anyone's reach.
      */
     private RunResult executeCancellably(
-            LocalEngine engine,
-            PlanCompilationResult compilation,
-            RunJournal journal,
-            ExpressionContext expressionContext,
-            ConnectorContext connectorContext
+            PreparedRun prepared,
+            RunPreparation.Request request,
+            PreparedRun.Settings settings,
+            Map<String, FaultProvider> faultProviders,
+            RunJournal journal
     ) {
         AtomicBoolean cancellation = new AtomicBoolean(false);
         CountDownLatch finished = new CountDownLatch(1);
@@ -259,9 +264,7 @@ public class TestCommand implements Command {
 
         Runtime.getRuntime().addShutdownHook(interruption);
         try {
-            return engine.execute(
-                    compilation.plan(), journal, expressionContext,
-                    connectorContext, cancellation);
+            return prepared.execute(request, settings, faultProviders, journal, cancellation);
         } finally {
             finished.countDown();
             // The hook has done its job; leaving it registered would pile up
@@ -328,7 +331,7 @@ public class TestCommand implements Command {
         output.out().println("                             (default: " + TestOptions.DEFAULT_TARGET_URL + ")");
         output.out().println("  -t, --target <id>=<url>    Base URL for one catalog target (repeatable)");
         output.out().println("  -f, --format <formats>     Output formats: console,json,junit,html (default: console)");
-        output.out().println("      --output <dir>         Output directory (default: faultora-results)");
+        output.out().println("      --output <dir>         Unused artifact directory (default: faultora-results/<run-id>)");
         output.out().println("      --seed <n>             Random seed (default: current time)");
         output.out().println("      --preview              Print structural JSON without executing or writing reports");
         output.out().println("      --allow-private        Allow connections to private/local networks");

@@ -137,7 +137,7 @@ public class LocalEngine {
         // Fault rollback is guaranteed by the session: fault-stop nodes,
         // the hard-expiry watchdog, and the end-of-run sweep in close().
         FaultSession faultSession = new FaultSession(
-                (fault, rollbackStatus) -> writer.faultRolledBack(fault.handle(), rollbackStatus));
+                (fault, rollbackStatus) -> writer.faultRolledBack(fault.handle(), rollbackStatus), runId);
 
         // Cleanup obligations are collected before execution starts: a
         // deadline or cancellation must never drop them.

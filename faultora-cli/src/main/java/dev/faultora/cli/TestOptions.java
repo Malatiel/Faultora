@@ -74,7 +74,7 @@ record TestOptions(
         String targetUrl = DEFAULT_TARGET_URL;
         Map<String, String> targetUrls = new LinkedHashMap<>();
         List<String> formats = List.of("console");
-        Path outputDir = Path.of("faultora-results");
+        Path outputDir = null;
         long seed = System.currentTimeMillis();
         boolean allowPrivate = false;
         boolean allowDestructive = false;

@@ -57,8 +57,7 @@ class ControlFlowE2ETest {
 
     @Test
     void eventuallyBlockConvergesOnAsynchronousSettlement() throws IOException {
-        Path outputDir = Path.of(
-                System.getProperty("java.io.tmpdir"), "faultora-e2e-eventually");
+        Path outputDir = Files.createTempDirectory("faultora-e2e-eventually");
 
         int exit = run("eventually-settlement.yaml", outputDir);
 
@@ -110,8 +109,7 @@ class ControlFlowE2ETest {
                           path: status
                           equals: refunded
                 """);
-        Path outputDir = Path.of(
-                System.getProperty("java.io.tmpdir"), "faultora-e2e-eventually-timeout");
+        Path outputDir = Files.createTempDirectory("faultora-e2e-eventually-timeout");
         Files.createDirectories(outputDir);
 
         int exit = createCli().run(new String[]{
@@ -131,8 +129,7 @@ class ControlFlowE2ETest {
 
     @Test
     void repeatBlockRunsOncePerItem() throws IOException {
-        Path outputDir = Path.of(
-                System.getProperty("java.io.tmpdir"), "faultora-e2e-repeat");
+        Path outputDir = Files.createTempDirectory("faultora-e2e-repeat");
 
         int exit = run("repeat-batch.yaml", outputDir);
 

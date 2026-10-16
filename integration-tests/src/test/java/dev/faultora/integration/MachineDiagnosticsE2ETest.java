@@ -25,13 +25,18 @@ class MachineDiagnosticsE2ETest {
 
     @ParameterizedTest
     @ValueSource(strings = {"pass", "fail", "indeterminate", "node-failed", "node-error", "preview", "preview-refused",
-            "report-failure", "artifact-failure", "invalid-yaml", "invalid-structure", "input-unknown",
+            "report-failure", "artifact-failure", "owned-artifact", "invalid-yaml", "invalid-structure", "input-unknown",
             "input-required", "catalog-refused", "missing-scenario", "missing-catalog", "invalid-option", "invalid-format"})
     void machineModeProducesOnlyOneSafeJsonResultAndPreservesExitCodes(String mode) throws Exception {
         AtomicInteger requests = new AtomicInteger();
+        Path output = directory.resolve("reports");
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", exchange -> {
             requests.incrementAndGet();
+            if (mode.equals("report-failure")) {
+                // Ownership has already been acquired; fail the later report write.
+                Files.createDirectories(output.resolve("report.json"));
+            }
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.getResponseHeaders().add("Authorization", MARKER);
             byte[] body = ("{\"value\":\"" + MARKER + "\"}").getBytes(StandardCharsets.UTF_8);
@@ -76,9 +81,9 @@ class MachineDiagnosticsE2ETest {
                 source = source.replace("    operationId: read\n", "    operationId: read\n    inputs: {body: '{{inputs.missing}}'}\n");
             }
             Files.writeString(scenario, source);
-            Path output = directory.resolve("reports");
-            if (mode.equals("report-failure")) {
-                Files.createDirectories(output.resolve("report.json"));
+            if (mode.equals("owned-artifact")) {
+                Files.createDirectories(output);
+                Files.writeString(output.resolve("events.ndjson"), "synthetic old journal");
             }
             if (mode.equals("artifact-failure")) {
                 Files.writeString(output, "synthetic artifact blocker");
@@ -130,7 +135,7 @@ class MachineDiagnosticsE2ETest {
             int expectedExit = switch (mode) {
                 case "pass", "preview" -> 0;
                 case "fail", "indeterminate", "node-failed", "node-error" -> 1;
-                case "report-failure", "artifact-failure", "missing-scenario", "missing-catalog" -> 3;
+                case "report-failure", "artifact-failure", "owned-artifact", "missing-scenario", "missing-catalog" -> 3;
                 default -> 2;
             };
             String text = Files.readString(stdout);
@@ -149,7 +154,7 @@ class MachineDiagnosticsE2ETest {
                 case "node-error" -> "NODE_ERROR";
                 case "preview-refused" -> "PLAN_REFUSED";
                 case "report-failure" -> "REPORT_WRITE_FAILED";
-                case "artifact-failure" -> "ARTIFACT_WRITE_FAILED";
+                case "artifact-failure", "owned-artifact" -> "ARTIFACT_WRITE_FAILED";
                 case "missing-scenario", "missing-catalog" -> "FILE_READ_FAILED";
                 case "catalog-refused" -> "CATALOG_IMPORT_FAILED";
                 case "invalid-yaml", "invalid-structure" -> "SCENARIO_INVALID";
@@ -172,7 +177,7 @@ class MachineDiagnosticsE2ETest {
                 assertThat(output).doesNotExist();
             }
             if (expectedExit == 2 || mode.startsWith("preview") || mode.startsWith("missing")
-                    || mode.equals("artifact-failure") || mode.startsWith("node-")) {
+                    || mode.equals("artifact-failure") || mode.equals("owned-artifact") || mode.startsWith("node-")) {
                 assertThat(requests).hasValue(0);
             } else {
                 assertThat(requests).hasValue(1);
@@ -182,6 +187,10 @@ class MachineDiagnosticsE2ETest {
                     assertThat(output.resolve(name)).isRegularFile();
                     assertThat(Files.readString(output.resolve(name))).doesNotContain(MARKER);
                 }
+            }
+            if (mode.equals("owned-artifact")) {
+                assertThat(Files.readString(output.resolve("events.ndjson"))).isEqualTo("synthetic old journal");
+                assertThat(output.resolve("run-owner")).doesNotExist();
             }
         } finally {
             server.stop(0);

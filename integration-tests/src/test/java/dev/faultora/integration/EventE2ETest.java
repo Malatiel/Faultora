@@ -191,7 +191,7 @@ class EventE2ETest {
     @Test
     void aCommandDeliveredTwiceSettlesThePaymentOnce() throws Exception {
         startBroker(true);
-        Path outputDir = Path.of(System.getProperty("java.io.tmpdir"), "faultora-e2e-events");
+        Path outputDir = Files.createTempDirectory("faultora-e2e-events");
 
         int exit = run(outputDir, "77001");
 
@@ -211,7 +211,7 @@ class EventE2ETest {
         // same scenario against the deliberately broken worker: it must catch
         // the duplicate rather than pass by construction.
         startBroker(false);
-        Path outputDir = Path.of(System.getProperty("java.io.tmpdir"), "faultora-e2e-events-broken");
+        Path outputDir = Files.createTempDirectory("faultora-e2e-events-broken");
 
         int exit = run(outputDir, "77002");
 
