@@ -3,6 +3,7 @@ package dev.faultora.cli;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.PrintWriter;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 /**
@@ -63,8 +64,8 @@ public class FaultoraCli {
      */
     public static void main(String[] args) {
         FaultoraCli cli = new FaultoraCli(
-                new PrintWriter(System.out, true),
-                new PrintWriter(System.err, true));
+                new PrintWriter(System.out, true, StandardCharsets.UTF_8),
+                new PrintWriter(System.err, true, StandardCharsets.UTF_8));
         int exitCode = cli.run(args);
         System.exit(exitCode);
     }
@@ -75,11 +76,22 @@ public class FaultoraCli {
     public int run(String[] args) {
         boolean machine = args.length > 0 && "--diagnostics=json".equals(args[0]);
         String[] commandLine = machine ? Arrays.copyOfRange(args, 1, args.length) : args;
+        boolean mcp = commandLine.length > 0 && commandLine[0].equals("mcp");
+        if (mcp && !machine) {
+            return new McpCommand(System.in, out, err)
+                    .execute(List.of(Arrays.copyOfRange(commandLine, 1, commandLine.length)));
+        }
         CommandOutput output = new CommandOutput(out, err, machine);
         Map<String, Command> commands = commands(output);
-        int exitCode = execute(commandLine, commands, output);
+        int exitCode;
+        if (mcp) {
+            output.error(CliDiagnostic.Code.INVALID_ARGUMENT, null, null);
+            exitCode = EXIT_INVALID_CONFIG;
+        } else {
+            exitCode = execute(commandLine, commands, output);
+        }
         String command = commandLine.length == 0 ? null : commandLine[0];
-        if (command != null && !commands.containsKey(command)) {
+        if (command != null && !mcp && !commands.containsKey(command)) {
             command = switch (command) {
                 case "--help", "-h" -> "help";
                 case "--version", "-v" -> "version";
@@ -152,6 +164,7 @@ public class FaultoraCli {
         out.println("Usage: faultora [--diagnostics=json] <command> [options]");
         out.println();
         out.println("Commands:");
+        out.println("  mcp        --config <file>                         Inspect and prepare over MCP stdio");
         out.println("  init       --from-openapi <file> [--output <dir>]   Import OpenAPI and generate scenario");
         out.println("  validate   --scenario <file>                        Validate a scenario document");
         out.println("  discover   --from-openapi <file>                    List operations from OpenAPI");

@@ -192,6 +192,9 @@ class PreparedRunTest {
                 original.connectors(), false, Set.of());
         var right = new PreparedRun.Settings(ExpressionContext.builder().inputs(second).build(),
                 original.connectors(), false, Set.of());
-        PreparedRun.prepare(request(), left, Duration.ofMinutes(1)).requireCurrent(request(), right);
+        var prepared = PreparedRun.prepare(request(), left, Duration.ofMinutes(1));
+        prepared.requireCurrent(request(), right);
+        assertThat(prepared.preparationDigest())
+                .isEqualTo(PreparedRun.prepare(request(), right, Duration.ofMinutes(1)).preparationDigest());
     }
 }

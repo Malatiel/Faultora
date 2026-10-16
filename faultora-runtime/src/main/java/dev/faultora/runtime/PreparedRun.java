@@ -99,6 +99,11 @@ public final class PreparedRun {
         return catalogDigest;
     }
 
+    /** Identity of the captured inputs and effective policies, never an execution permission. */
+    public String preparationDigest() {
+        return fingerprint;
+    }
+
     /** Check live caller state before allocating connectors, resolving secrets or injecting faults. */
     public void requireCurrent(RunPreparation.Request current, Settings currentSettings) {
         if (consumed.get()) {

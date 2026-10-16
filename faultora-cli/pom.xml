@@ -17,6 +17,10 @@
     <dependencies>
         <dependency>
             <groupId>dev.faultora</groupId>
+            <artifactId>faultora-mcp</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.faultora</groupId>
             <artifactId>faultora-runtime</artifactId>
         </dependency>
         <!-- `faultora runner` is the same binary as `faultora test`: the runner
