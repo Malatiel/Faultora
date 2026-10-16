@@ -60,6 +60,16 @@ ADR-023 exists to stop. What has landed so far:
   signing key owner's OS account can self-approve. Independent approval requires
   an independent signer and protection of the verifier's configuration, runtime
   and process. Hardware-backed approval is not implemented by the DER-file CLI.
+- **MCP execution has an independent absolute lifecycle limit:** effective run
+  deadline plus the runtime cleanup budget and five seconds of grace. A callback
+  that does not return cannot hold EOF or JVM shutdown indefinitely. Faultora
+  attempts an owned termination.json with cleanupConfirmed=false and fixed
+  SHUTDOWN_DEADLINE_EXCEEDED reason, then halts the MCP process with exit 3.
+  Marker I/O consumes a bounded part of grace; forced exit cannot prove rollback.
+  This limit relies on the local in-process fault profile; external providers
+  require a lifecycle review. Exit 3 is shared with command/transport failures:
+  the owned termination marker identifies forced termination, and its absence
+  does not confirm cleanup.
 - MCP sessions retain the latest 32 run records with FIFO eviction of completed
   records, allowing subsequent runs without reconnecting. Evicted IDs become
   unknown; their operator-owned artifact files remain on disk. Active execution

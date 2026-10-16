@@ -27,8 +27,41 @@ separate from completion; cancel_run sets the runtime's cooperative cancellation
 flag. Interrupting the worker could instead abort an in-flight cleanup request.
 An active connector attempt may finish within its configured timeout before
 cancellation is observed. Terminal publication follows runtime cleanup/rollback, environment release
-and journal/report finalization. EOF, transport failure and normal shutdown join
-the worker. No daemon worker or timeout detaches an unfinished run.
+and journal/report finalization. EOF, transport failure and normal shutdown
+request cancellation and join the worker under one absolute lifecycle limit.
+
+An independent deadline guard starts at admission. The limit is effective run
+timeout plus LocalEngine's cleanup budget plus 5000ms grace. The final portion
+of grace (at most 1000ms) is reserved for marker I/O. On expiry the guard attempts
+to create an owned termination.json with cleanupConfirmed=false and fixed reason
+SHUTDOWN_DEADLINE_EXCEEDED, then calls Runtime.halt(3). Marker I/O is bounded
+independently: an I/O failure cannot turn shutdown back into an unbounded wait.
+A late callback completion cannot revoke a forced-termination decision, and the
+marker overrides any late report. Successful completion disarms the guard.
+
+ADR-024 places the final fault rollback sweep outside declared cleanup's
+30000ms budget. The MCP limit above does not add a separate rollback allowance.
+It relies on a closed fault profile: only LocalFaultProvider is instantiated,
+and configured fault types must be supported by that in-process provider.
+These faults intercept this JVM's outbound requests; their state disappears
+with the JVM. Tests pin both the execution provider composition and refusal of
+external fault types in startup configuration. Adding Toxiproxy or any other
+provider with effects outside this process requires revisiting the lifecycle
+and rollback budget before enabling it. Target-side data effects and declared
+cleanup remain unconfirmed after forced exit even with local faults.
+
+This deliberately sacrifices the whole MCP process when a callback will not
+return. It cannot prove target-side cleanup or rollback. A timed join alone
+would leave a live non-daemon worker; changing it to daemon would merely hide
+that ownership loss. Supervised child execution is deferred to the common
+lifecycle work with ADR-023's process boundary, rather than adding a second
+termination mechanism now.
+
+Exit 3 also represents ordinary CLI COMMAND_FAILED and MCP transport failure.
+It does not uniquely identify forced termination. A valid owned termination.json
+with the matching run ID and SHUTDOWN_DEADLINE_EXCEEDED identifies that decision;
+if marker creation failed, the exit code alone cannot distinguish the causes or
+confirm cleanup. Clients must not infer orderly completion from an absent marker.
 
 Report availability is separate from execution outcome. If writing the optional
 structural report fails after execution and mandatory journal finalization,
