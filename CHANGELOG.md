@@ -14,8 +14,17 @@ ADR-023 exists to stop. What has landed so far:
   capabilities, declared catalog descriptions and sealed run preparation.
   Catalog files and policy come from operator startup configuration; tool calls
   cannot supply paths or widen permission. Preparation creates no target/fault
-  effects or artifacts and does not grant execution approval. No execution tool
-  or network listener is exposed. See docs/MCP.md for limits and compatibility.
+  effects or artifacts and does not grant execution approval. No network
+  listener is exposed. See docs/MCP.md for limits and compatibility.
+- Optional MCP execution requires operator startup configuration with an Ed25519
+  public key and artifact directory. `faultora mcp approve` signs one exact
+  preparation out of band; `start_run` verifies that approval before execution.
+  `get_run`, `cancel_run` and `get_artifact` operate only on session-owned IDs.
+  EOF cancels active work and waits for cleanup. Artifact export contains only a
+  bounded structural report; the journal remains local to the operator.
+  MCP preparations now use the shared CLI evidence policy for in-memory
+  assertions; their preparation digests change. Credentials cannot be configured
+  through tools and this profile provides no secret resolver.
 
 - Freeze the version-one journal, JSON report and serialized run result shapes
   with deterministic compatibility fixtures. A journal reader now tolerates

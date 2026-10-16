@@ -164,7 +164,7 @@ public class FaultoraCli {
         out.println("Usage: faultora [--diagnostics=json] <command> [options]");
         out.println();
         out.println("Commands:");
-        out.println("  mcp        --config <file>                         Inspect and prepare over MCP stdio");
+        out.println("  mcp        --config <file>                         Prepare and approve execution over MCP stdio");
         out.println("  init       --from-openapi <file> [--output <dir>]   Import OpenAPI and generate scenario");
         out.println("  validate   --scenario <file>                        Validate a scenario document");
         out.println("  discover   --from-openapi <file>                    List operations from OpenAPI");

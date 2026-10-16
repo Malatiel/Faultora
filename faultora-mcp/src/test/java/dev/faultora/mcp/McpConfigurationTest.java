@@ -20,6 +20,26 @@ class McpConfigurationTest {
     }
 
     @Test
+    void executionRequiresACompleteOperatorConfigurationAndDoesNotCoercePermission() throws Exception {
+        var keys = java.security.KeyPairGenerator.getInstance("Ed25519").generateKeyPair();
+        var root = McpJson.MAPPER.createObjectNode();
+        root.putArray("catalogs");
+        var execution = root.putObject("execution").put("workingDirectory", ".").put("approvalPublicKey",
+                java.util.Base64.getEncoder().encodeToString(keys.getPublic().getEncoded()));
+        var loaded = McpConfiguration.load(configuration(root.toString()));
+        assertThat(loaded.execution().approvalPublicKey()).isEqualTo(keys.getPublic());
+        assertThat(loaded.execution().allowPrivate()).isFalse();
+        execution.put("allowPrivate", "true");
+        assertThatThrownBy(() -> McpConfiguration.load(configuration(root.toString()))).isInstanceOf(IOException.class);
+        execution.remove("allowPrivate");
+        execution.put("workingDirectory", "missing");
+        assertThatThrownBy(() -> McpConfiguration.load(configuration(root.toString()))).isInstanceOf(IOException.class);
+        execution.put("workingDirectory", ".").put("approvalPublicKey", "SYNTHETIC_PRIVATE_VALUE");
+        assertThatThrownBy(() -> McpConfiguration.load(configuration(root.toString())))
+                .isInstanceOf(IOException.class).hasMessageNotContaining(McpFixtures.MARKER);
+    }
+
+    @Test
     void relativeDeclaredSourcesAreSnapshottedAtStartup() throws Exception {
         Path source = directory.resolve("source.yaml");
         Files.writeString(source, McpFixtures.CATALOG);

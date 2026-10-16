@@ -30,3 +30,4 @@
 | [ADR-026](ADR-026-evidence-disclosure.md) | Evidence availability and structural exports | Accepted |
 | [ADR-027](ADR-027-run-preparation.md) | Shared run preparation and structural previews | Accepted |
 | [ADR-028](ADR-028-mcp-preparation.md) | MCP inspection and preparation stay within operator authority | Accepted |
+| [ADR-029](ADR-029-mcp-execution.md) | Exact operator approval and session-owned MCP runs | Accepted |

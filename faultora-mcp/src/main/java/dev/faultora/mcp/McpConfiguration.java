@@ -11,13 +11,30 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.security.GeneralSecurityException;
+import java.security.PublicKey;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 
 /** Operator-owned startup inputs. Tool arguments never become filesystem paths. */
-public record McpConfiguration(Map<String, CatalogAssembly.Document> catalogs, TargetPolicy targets) {
+public record McpConfiguration(Map<String, CatalogAssembly.Document> catalogs, TargetPolicy targets,
+                               Execution execution) {
+    public record Execution(Path workingDirectory, PublicKey approvalPublicKey, boolean allowPrivate) {
+        public Execution {
+            if (workingDirectory == null || approvalPublicKey == null
+                    || !approvalPublicKey.getAlgorithm().equals("EdDSA")) {
+                throw new IllegalArgumentException("Invalid execution configuration");
+            }
+            workingDirectory = workingDirectory.toAbsolutePath().normalize();
+        }
+    }
+
+    public McpConfiguration(Map<String, CatalogAssembly.Document> catalogs, TargetPolicy targets) {
+        this(catalogs, targets, null);
+    }
+
     public McpConfiguration {
         catalogs = Map.copyOf(catalogs);
     }
@@ -25,7 +42,8 @@ public record McpConfiguration(Map<String, CatalogAssembly.Document> catalogs, T
     public static McpConfiguration load(Path file) throws IOException {
         try {
             JsonNode root = McpJson.MAPPER.readTree(readFile(file, 65_536));
-            fields(root, Set.of("catalogs", "allowedTargets", "allowedOperationClasses", "allowedFaultTypes"));
+            fields(root, Set.of("catalogs", "allowedTargets", "allowedOperationClasses", "allowedFaultTypes",
+                    "execution"));
             JsonNode declarations = root.path("catalogs");
             if (!declarations.isArray() || declarations.size() > 16) {
                 throw new IllegalArgumentException();
@@ -63,14 +81,34 @@ public record McpConfiguration(Map<String, CatalogAssembly.Document> catalogs, T
             if (!LocalFaultProvider.supportedFaultTypes().containsAll(faults)) {
                 throw new IllegalArgumentException();
             }
+            Execution execution = null;
+            if (root.has("execution")) {
+                JsonNode value = root.get("execution");
+                fields(value, Set.of("workingDirectory", "approvalPublicKey", "allowPrivate"));
+                if (value.has("allowPrivate") && !value.path("allowPrivate").isBoolean()) {
+                    throw new IllegalArgumentException();
+                }
+                Path working = file.toAbsolutePath().getParent().resolve(text(value, "workingDirectory"));
+                requireDirectory(working);
+                execution = new Execution(working, McpApproval.publicKey(text(value, "approvalPublicKey")),
+                        value.path("allowPrivate").asBoolean(false));
+            }
             return new McpConfiguration(catalogs, new TargetPolicy(targets, classes,
-                    1000, 10, 300_000, 1_048_576, faults, Set.of()));
-        } catch (IOException | IllegalArgumentException invalid) {
+                    1000, 10, 300_000, 1_048_576, faults, Set.of()), execution);
+        } catch (IOException | IllegalArgumentException | GeneralSecurityException invalid) {
             throw new IOException("MCP configuration is invalid or a declared source is unavailable");
         }
     }
 
-    private static byte[] readFile(Path file, int limit) throws IOException {
+    static void requireDirectory(Path directory) throws IOException {
+        Path absolute = directory.toAbsolutePath().normalize();
+        if (!Files.isDirectory(absolute, LinkOption.NOFOLLOW_LINKS)
+                || !absolute.toRealPath(LinkOption.NOFOLLOW_LINKS).equals(absolute.toRealPath())) {
+            throw new IOException("MCP working directory must not be redirected");
+        }
+    }
+
+    static byte[] readFile(Path file, int limit) throws IOException {
         Path absolute = file.toAbsolutePath().normalize();
         if (!Files.isRegularFile(absolute, LinkOption.NOFOLLOW_LINKS)
                 || !absolute.toRealPath(LinkOption.NOFOLLOW_LINKS).equals(absolute.toRealPath())) {

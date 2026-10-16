@@ -18,6 +18,21 @@ class McpCommandTest {
     @TempDir Path directory;
 
     @Test
+    void operatorApprovalRefusalsDoNotEchoKeysPathsOrUnrecognizedOptions() {
+        for (List<String> args : List.of(List.of("approve"), List.of("approve", "--confirmed", "true"),
+                List.of("approve", "--private-key", directory.resolve("SYNTHETIC_PRIVATE_VALUE").toString(),
+                        "--prepared-id", "invalid", "--digest", "invalid", "--run-id", "invalid"))) {
+            StringWriter stdout = new StringWriter();
+            StringWriter stderr = new StringWriter();
+            int exit = new McpCommand(new ByteArrayInputStream(new byte[0]), new PrintWriter(stdout), new PrintWriter(stderr))
+                    .execute(args);
+            assertThat(exit).isEqualTo(2);
+            assertThat(stdout.toString()).isEmpty();
+            assertThat(stderr.toString()).doesNotContain("SYNTHETIC_PRIVATE_VALUE", directory.toString());
+        }
+    }
+
+    @Test
     void commandUsesStdioAndEofWithoutWritingAHumanPreamble() throws Exception {
         Path config = directory.resolve("operator.json");
         Files.writeString(config, "{\"catalogs\":[]}");
