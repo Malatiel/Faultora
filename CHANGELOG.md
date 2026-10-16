@@ -47,6 +47,13 @@ ADR-023 exists to stop. What has landed so far:
 
 ### Changed
 
+- **HTTP connector errors carry fixed text only.** Timeout, connection, TLS,
+  destination-policy and unexpected failures no longer repeat transport or
+  policy messages, which could contain URLs, addresses or query strings.
+  A credential that cannot be supplied is now `SECRET_UNAVAILABLE`
+  (`VALIDATION`) instead of `EXECUTION_ERROR`, matching the JDBC connector,
+  and neither the handle name nor a secret resolver's own message is
+  repeated. Codes, categories and retryability are otherwise unchanged.
 - **HTTP interruption is reported as cancellation and preserves the interrupt
   flag**, including when the transport cleared it before throwing. An already
   interrupted caller sends no request. Request and total timeouts retain their
