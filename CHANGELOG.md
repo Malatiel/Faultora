@@ -60,6 +60,10 @@ ADR-023 exists to stop. What has landed so far:
   signing key owner's OS account can self-approve. Independent approval requires
   an independent signer and protection of the verifier's configuration, runtime
   and process. Hardware-backed approval is not implemented by the DER-file CLI.
+- MCP sessions retain the latest 32 run records with FIFO eviction of completed
+  records, allowing subsequent runs without reconnecting. Evicted IDs become
+  unknown; their operator-owned artifact files remain on disk. Active execution
+  still limits admission to one run at a time.
 - MCP report-write failures preserve the completed run status, assertion counts
   and cleanup result. Status reports reportStatus=UNAVAILABLE and the fixed
   REPORT_WRITE_FAILED reason separately; unavailable reports are not advertised
