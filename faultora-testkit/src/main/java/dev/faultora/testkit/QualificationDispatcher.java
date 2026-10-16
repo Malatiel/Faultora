@@ -121,10 +121,16 @@ public final class QualificationDispatcher implements AutoCloseable {
     }
 
     private void register(HttpExchange exchange) throws IOException {
-        Registration registration =
-                MAPPER.readValue(exchange.getRequestBody(), Registration.class);
-        registrations.add(registration);
-        Session session = Session.answer(registration, UUID.randomUUID().toString());
+        byte[] body = exchange.getRequestBody().readNBytes(Registration.MAX_JSON_BYTES + 1);
+        String json = new String(body, java.nio.charset.StandardCharsets.UTF_8);
+        Session session = body.length > Registration.MAX_JSON_BYTES
+                ? Session.answerJson(null, UUID.randomUUID().toString())
+                : Session.answerJson(json, UUID.randomUUID().toString());
+        if (session.isAccepted()) {
+            registrations.add(MAPPER.readerFor(Registration.class)
+                    .without(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                    .readValue(json));
+        }
         respond(exchange, session.isAccepted() ? 200 : 409,
                 MAPPER.writeValueAsString(session));
     }

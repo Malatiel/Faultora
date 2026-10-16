@@ -17,6 +17,8 @@ public record Refusal(Reason reason, String detail) {
 
     /** The rules that can refuse. */
     public enum Reason {
+        /** Registration has missing, malformed, duplicate, or out-of-bounds fields. */
+        MALFORMED_REGISTRATION,
         /** No protocol version in common. */
         UNSUPPORTED_PROTOCOL_VERSION,
         /** The peer's certificate is not one this side trusts. */

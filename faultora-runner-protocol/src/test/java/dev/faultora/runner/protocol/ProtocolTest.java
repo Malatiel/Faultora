@@ -62,7 +62,7 @@ class ProtocolTest {
     void aRegistrationThatSaysNothingIsRefusedToo() {
         assertThat(Session.answer(null, "session-4").isAccepted()).isFalse();
         assertThat(Session.answer(speaking(), "session-5").refusal().reason())
-                .isEqualTo(Refusal.Reason.UNSUPPORTED_PROTOCOL_VERSION);
+                .isEqualTo(Refusal.Reason.MALFORMED_REGISTRATION);
     }
 
     @Test

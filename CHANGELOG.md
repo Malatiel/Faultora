@@ -15,6 +15,10 @@ ADR-023 exists to stop. What has landed so far:
   additive fields and unknown event types while refusing malformed known events.
   Journal map keys now have deterministic ordering; JSON field meaning is unchanged.
 
+- Runner protocol v1 now refuses malformed registration with
+  `MALFORMED_REGISTRATION`. Unsupported well-formed versions still receive
+  `UNSUPPORTED_PROTOCOL_VERSION`; scenario YAML versions do not participate.
+
 - **`faultora test --preview` prepares a scenario without executing it.** The
   structural JSON preview lists actions, faults, budgets and refusals before
   opening a run environment or contacting targets. It is descriptive and is
