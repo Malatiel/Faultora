@@ -15,6 +15,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -196,5 +197,96 @@ class PreparedRunTest {
         prepared.requireCurrent(request(), right);
         assertThat(prepared.preparationDigest())
                 .isEqualTo(PreparedRun.prepare(request(), right, Duration.ofMinutes(1)).preparationDigest());
+    }
+
+    // An unfamiliar, renamed and nested Set must work without editing a field-name list.
+    record FuturePolicy(@com.fasterxml.jackson.annotation.JsonProperty("new_permission") Set<String> permissions,
+                        List<String> steps) { }
+
+    @Test
+    void newSetFieldsAreCanonicalButOrderedListsAndMembersRemainBound() {
+        var first = configured(new FuturePolicy(ordered("Aa", "BB"), List.of("first", "second")));
+        var equivalent = configured(new FuturePolicy(ordered("BB", "Aa"), List.of("first", "second")));
+        var prepared = PreparedRun.prepare(request(), first, Duration.ofMinutes(1));
+        prepared.requireCurrent(request(), equivalent);
+        assertThat(prepared.preparationDigest()).isEqualTo(
+                PreparedRun.prepare(request(), equivalent, Duration.ofMinutes(1)).preparationDigest());
+        changed(prepared, request(), configured(
+                new FuturePolicy(ordered("Aa", "other"), List.of("first", "second"))));
+        changed(prepared, request(), configured(
+                new FuturePolicy(ordered("Aa", "BB"), List.of("second", "first"))));
+    }
+
+    @Test
+    void everyModelPolicySetIsCanonicalAndItsMembersRemainBound() throws Exception {
+        for (Object policy : List.of(EXTENSIONS, POLICY, EvidencePolicy.MINIMAL)) {
+            for (var component : policy.getClass().getRecordComponents()) {
+                if (!Set.class.isAssignableFrom(component.getType())) {
+                    continue;
+                }
+                var element = ((java.lang.reflect.ParameterizedType) component.getGenericType())
+                        .getActualTypeArguments()[0];
+                Object a;
+                Object b;
+                if (element == String.class) {
+                    a = "Aa";
+                    b = "BB";
+                } else if (element == dev.faultora.model.identifier.TargetId.class) {
+                    a = new dev.faultora.model.identifier.TargetId("Aa");
+                    b = new dev.faultora.model.identifier.TargetId("BB");
+                } else if (element == SafetyClassification.class) {
+                    a = SafetyClassification.READ_ONLY;
+                    b = SafetyClassification.values()[1];
+                } else {
+                    throw new AssertionError("Add fixture values for policy Set type: " + element);
+                }
+                var left = configured(withComponent(policy, component.getName(), ordered(a, b)));
+                var right = configured(withComponent(policy, component.getName(), ordered(b, a)));
+                var prepared = PreparedRun.prepare(request(), left, Duration.ofMinutes(1));
+                prepared.requireCurrent(request(), right);
+                assertThat(prepared.preparationDigest()).as(policy.getClass() + "." + component.getName())
+                        .isEqualTo(PreparedRun.prepare(request(), right, Duration.ofMinutes(1)).preparationDigest());
+                changed(prepared, request(), configured(withComponent(policy, component.getName(), ordered(a))));
+            }
+        }
+    }
+
+    @Test
+    void faultTypesAndSecretKeySetsAreUnordered() {
+        var base = settings();
+        var a = new PreparedRun.Settings(ExpressionContext.builder()
+                .secretKeys(ordered("secrets.Aa", "secrets.BB")).build(), base.connectors(),
+                false, ordered("Aa", "BB"));
+        var b = new PreparedRun.Settings(ExpressionContext.builder()
+                .secretKeys(ordered("secrets.BB", "secrets.Aa")).build(), base.connectors(),
+                false, ordered("BB", "Aa"));
+        var prepared = PreparedRun.prepare(request(), a, Duration.ofMinutes(1));
+        prepared.requireCurrent(request(), b);
+        assertThat(prepared.preparationDigest()).isEqualTo(
+                PreparedRun.prepare(request(), b, Duration.ofMinutes(1)).preparationDigest());
+    }
+
+    private PreparedRun.Settings configured(Object policy) {
+        var base = settings();
+        var connector = base.connectors();
+        return new PreparedRun.Settings(base.bindings(), new ConnectorContext(
+                connector.evidencePolicy(), connector.secretResolver(), 100, 200, 300,
+                Map.of("nested", Map.of("policy", policy))), false, Set.of());
+    }
+
+    @SafeVarargs
+    private static <T> Set<T> ordered(T... values) {
+        return new LinkedHashSet<>(List.of(values));
+    }
+
+    private static Object withComponent(Object policy, String name, Object value) throws Exception {
+        var components = policy.getClass().getRecordComponents();
+        var types = new Class<?>[components.length];
+        var arguments = new Object[components.length];
+        for (int i = 0; i < components.length; i++) {
+            types[i] = components[i].getType();
+            arguments[i] = components[i].getName().equals(name) ? value : components[i].getAccessor().invoke(policy);
+        }
+        return policy.getClass().getDeclaredConstructor(types).newInstance(arguments);
     }
 }

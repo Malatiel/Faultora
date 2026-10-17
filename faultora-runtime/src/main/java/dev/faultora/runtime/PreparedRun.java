@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.cfg.JsonNodeFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.module.SimpleModule;
+import com.fasterxml.jackson.databind.ser.std.StdSerializer;
 import dev.faultora.engine.journal.RunJournal;
 import dev.faultora.engine.run.RunResult;
 import dev.faultora.model.security.ContentDigest;
@@ -24,7 +26,9 @@ import java.util.function.LongSupplier;
 public final class PreparedRun {
     private static final ObjectMapper MAPPER = JsonMapper.builder()
             .enable(JsonNodeFeature.WRITE_PROPERTIES_SORTED)
+            .enable(com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
             .disable(JsonNodeFeature.STRIP_TRAILING_BIGDECIMAL_ZEROES)
+            .addModule(new SimpleModule().addSerializer(new SetSerializer()))
             .build();
 
     /** Secret values and resolver implementation are deliberately outside the fingerprint. */
@@ -156,30 +160,32 @@ public final class PreparedRun {
         policy.put("totalTimeoutMs", settings.connectors().totalTimeoutMs());
         policy.put("allowPrivate", settings.allowPrivate());
         policy.set("faultTypes", MAPPER.valueToTree(new java.util.TreeSet<>(settings.faultTypes())));
-        // Policy sets have no semantic order. Lists in documents and bindings retain theirs.
-        sortSetFields(tree.path("request").path("extensions"));
-        sortSetFields(tree.path("request").path("targets"));
-        sortSetFields(policy.path("evidence"));
         try {
-            return ContentDigest.sha256Uri("faultora.prepared.v1\n" + MAPPER.writeValueAsString(tree));
+            return ContentDigest.sha256Uri("faultora.prepared.v2\n" + MAPPER.writeValueAsString(tree));
         } catch (com.fasterxml.jackson.core.JsonProcessingException invalid) {
             throw new IllegalArgumentException("Preparation inputs cannot be fingerprinted");
         }
     }
 
-    private static void sortSetFields(JsonNode policy) {
-        Set<String> setFields = Set.of("allowedExtensions", "maxNetworkDestinations", "secretCapabilities",
-                "allowedTargets", "allowedOperationClasses", "allowedFaultTypes", "allowedEnvironments",
-                "headerDenylist", "contentTypeAllowlist");
-        for (String name : setFields) {
-            if (policy.path(name).isArray()) {
-                var values = new java.util.ArrayList<JsonNode>();
-                policy.path(name).forEach(values::add);
-                values.sort(java.util.Comparator.comparing(JsonNode::toString));
-                var sorted = MAPPER.createArrayNode();
-                values.forEach(sorted::add);
-                ((com.fasterxml.jackson.databind.node.ObjectNode) policy).set(name, sorted);
+    /** Only this private mapper treats Java sets as unordered; JSON arrays and lists keep their order. */
+    private static final class SetSerializer extends StdSerializer<Set<?>> {
+        SetSerializer() {
+            super(Set.class, false);
+        }
+
+        @Override
+        public void serialize(Set<?> values, com.fasterxml.jackson.core.JsonGenerator output,
+                              com.fasterxml.jackson.databind.SerializerProvider provider) throws java.io.IOException {
+            var nodes = new java.util.ArrayList<JsonNode>();
+            for (Object value : values) {
+                nodes.add(MAPPER.valueToTree(value));
             }
+            nodes.sort(java.util.Comparator.comparing(JsonNode::toString));
+            output.writeStartArray();
+            for (JsonNode node : nodes) {
+                provider.defaultSerializeValue(node, output);
+            }
+            output.writeEndArray();
         }
     }
 }
