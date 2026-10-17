@@ -207,7 +207,11 @@ class HttpConnectorTest {
 
         OperationResult result = connector.execute(prepared, operation, Map.of(), failContext);
         assertThat(result.isSuccess()).isFalse();
-        assertThat(result.error().message()).contains("Secret not found");
+        assertThat(result.error().code()).isEqualTo("SECRET_UNAVAILABLE");
+        assertThat(result.error().message())
+                .contains("Secret resolver failed")
+                .as("the resolver's own message is not repeated")
+                .doesNotContain("Secret not found");
     }
 
     @Test

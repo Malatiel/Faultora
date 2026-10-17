@@ -216,9 +216,9 @@ public class HttpConnector implements Connector {
                 NormalizedError error = new NormalizedError(
                         NormalizedError.ErrorCategory.POLICY_VIOLATION,
                         "DESTINATION_BLOCKED",
-                        "Destination policy violation: " + policyResult.errorMessage(),
+                        "Destination blocked by policy",
                         false,
-                        Map.of("url", url)
+                        Map.of()
                 );
                 return OperationResult.failure(error, 0);
             }
@@ -277,7 +277,7 @@ public class HttpConnector implements Connector {
                     NormalizedError error = new NormalizedError(
                             NormalizedError.ErrorCategory.POLICY_VIOLATION,
                             "DESTINATION_BLOCKED",
-                            "Redirect to unsupported scheme: " + redirectScheme,
+                            "Redirect to an unsupported scheme blocked",
                             false, Map.of());
                     return OperationResult.failure(error,
                             (System.nanoTime() - startTime) / 1_000_000);
@@ -290,7 +290,7 @@ public class HttpConnector implements Connector {
                     NormalizedError error = new NormalizedError(
                             NormalizedError.ErrorCategory.POLICY_VIOLATION,
                             "DESTINATION_BLOCKED",
-                            "Redirect destination policy violation: " + redirectResult.errorMessage(),
+                            "Redirect destination blocked by policy",
                             false, Map.of());
                     return OperationResult.failure(error,
                             (System.nanoTime() - startTime) / 1_000_000);
@@ -308,7 +308,7 @@ public class HttpConnector implements Connector {
                     NormalizedError error = new NormalizedError(
                             NormalizedError.ErrorCategory.POLICY_VIOLATION,
                             "INSECURE_REDIRECT",
-                            "HTTPS→HTTP downgrade blocked: " + currentUri + " → " + redirectUri,
+                            "HTTPS to HTTP redirect blocked",
                             false, Map.of());
                     return OperationResult.failure(error,
                             (System.nanoTime() - startTime) / 1_000_000);
@@ -484,18 +484,24 @@ public class HttpConnector implements Connector {
         if (authSecretId instanceof String secretId && !secretId.isBlank()) {
             Function<String, SecretHandle> secretResolver = context.secretResolver();
             if (secretResolver == null) {
-                throw new IOException("No secret resolver configured for: " + secretId);
+                throw new SecretUnavailable("No secret resolver configured for the target credential");
             }
-            SecretHandle handle = secretResolver.apply(secretId);
+            SecretHandle handle;
+            try {
+                handle = secretResolver.apply(secretId);
+            } catch (RuntimeException resolverFailure) {
+                // A resolver's own message can name a vault path or the handle.
+                throw new SecretUnavailable("Secret resolver failed for the target credential");
+            }
             if (handle == null) {
-                throw new IOException("Secret resolver returned null for: " + secretId);
+                throw new SecretUnavailable("Secret resolver returned null for the target credential");
             }
             if (handle.isExpired()) {
-                throw new IOException("Secret handle expired for: " + secretId);
+                throw new SecretUnavailable("Secret handle for the target credential has expired");
             }
             char[] secretValue = handle.secretValue();
             if (secretValue == null || secretValue.length == 0) {
-                throw new IOException("Secret value is empty for: " + secretId);
+                throw new SecretUnavailable("Secret value for the target credential is empty");
             }
             try {
                 request.addHeader("Authorization", "Bearer " + new String(secretValue));
@@ -727,6 +733,10 @@ public class HttpConnector implements Connector {
         }
     }
 
+    /**
+     * Each category reports fixed text. Transport, resolver and policy messages
+     * can carry URLs, addresses, query strings and handle names.
+     */
     private static OperationResult failure(Exception failure, boolean totalExpired, long durationMs) {
         NormalizedError error;
         if (Thread.currentThread().isInterrupted()
@@ -748,24 +758,34 @@ public class HttpConnector implements Connector {
         } else if (failure instanceof ResponseTooLargeException tooLarge) {
             error = new NormalizedError(NormalizedError.ErrorCategory.POLICY_VIOLATION, "RESPONSE_TOO_LARGE",
                     "Response exceeds maximum payload size of " + tooLarge.maxBytes() + " bytes", false, Map.of());
+        } else if (failure instanceof SecretUnavailable unavailable) {
+            error = new NormalizedError(NormalizedError.ErrorCategory.VALIDATION, "SECRET_UNAVAILABLE",
+                    unavailable.getMessage(), false, Map.of());
         } else if (failure instanceof SocketTimeoutException
                 || failure instanceof org.apache.hc.core5.http.ConnectionRequestTimeoutException) {
             error = new NormalizedError(NormalizedError.ErrorCategory.TIMEOUT, "REQUEST_TIMEOUT",
-                    "Request timed out: " + failure.getMessage(), true, Map.of());
+                    "HTTP request timed out", true, Map.of());
         } else if (failure instanceof java.net.ConnectException) {
             error = new NormalizedError(NormalizedError.ErrorCategory.NETWORK, "CONNECTION_REFUSED",
-                    "Connection refused: " + failure.getMessage(), true, Map.of());
+                    "HTTP connection refused", true, Map.of());
         } else if (failure instanceof javax.net.ssl.SSLException) {
             error = new NormalizedError(NormalizedError.ErrorCategory.NETWORK, "TLS_ERROR",
-                    "TLS error: " + failure.getMessage(), false, Map.of());
+                    "TLS handshake or session failed", false, Map.of());
         } else if (failure instanceof DestinationPolicyViolation) {
             error = new NormalizedError(NormalizedError.ErrorCategory.POLICY_VIOLATION, "DESTINATION_BLOCKED",
-                    failure.getMessage(), false, Map.of());
+                    "Destination blocked by policy", false, Map.of());
         } else {
             error = new NormalizedError(NormalizedError.ErrorCategory.INTERNAL, "EXECUTION_ERROR",
-                    "Execution error: " + failure.getMessage(), false, Map.of());
+                    "HTTP execution failed", false, Map.of());
         }
         return OperationResult.failure(error, durationMs);
+    }
+
+    /** A configured credential cannot be supplied; the reason is fixed text. */
+    private static final class SecretUnavailable extends IOException {
+        SecretUnavailable(String reason) {
+            super(reason);
+        }
     }
 
     /** One monotonic budget, with cancellation that remains live during body reads. */
