@@ -12,7 +12,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.condition.EnabledIf;
-import org.testcontainers.DockerClientFactory;
 import org.testcontainers.kafka.KafkaContainer;
 import org.testcontainers.utility.DockerImageName;
 
@@ -58,13 +57,7 @@ class EventE2ETest {
 
     @SuppressWarnings("unused")
     static boolean dockerIsAvailable() {
-        try {
-            return DockerClientFactory.instance().isDockerAvailable();
-        } catch (RuntimeException noRuntime) {
-            System.err.println("Event end-to-end suite skipped: no container runtime. "
-                    + "The events release gate is NOT covered by this build.");
-            return false;
-        }
+        return RecoveryInfrastructure.dockerIsAvailable();
     }
 
     private void startBroker(boolean idempotentWorker) throws Exception {

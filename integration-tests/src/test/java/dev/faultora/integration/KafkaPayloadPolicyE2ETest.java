@@ -42,7 +42,6 @@ import org.junit.jupiter.api.condition.EnabledIf;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.testcontainers.DockerClientFactory;
 import org.testcontainers.kafka.KafkaContainer;
 import org.testcontainers.utility.DockerImageName;
 
@@ -71,11 +70,7 @@ class KafkaPayloadPolicyE2ETest {
     private String topic;
 
     static boolean dockerIsAvailable() {
-        try {
-            return DockerClientFactory.instance().isDockerAvailable();
-        } catch (RuntimeException unavailable) {
-            return false;
-        }
+        return RecoveryInfrastructure.dockerIsAvailable();
     }
 
     @BeforeAll

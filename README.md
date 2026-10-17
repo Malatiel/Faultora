@@ -144,6 +144,11 @@ Every release also includes a CycloneDX SBOM and the Apache 2.0 license.
 ./mvnw verify -B
 ```
 
+For the required Linux release checks, use the
+[strict qualification profile and report gate](docs/QUALIFICATION.md).
+The default local build can skip Docker and socket-inspection tests when
+their prerequisites are unavailable; those skips do not prove qualification.
+
 The executable artifact is written to:
 
 ```text

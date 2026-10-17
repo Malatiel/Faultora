@@ -56,6 +56,12 @@ ADR-023 exists to stop. What has landed so far:
 
 ### Changed
 
+- **Linux qualification requires its infrastructure.** The explicit
+  `strict-qualification` profile fails when Docker or `lsof` is unavailable
+  instead of skipping required checks. CI also verifies fresh test reports
+  with no failed, missing or skipped required cases. Default local builds
+  retain optional skips; see docs/QUALIFICATION.md.
+
 - Clarify the MCP approval deployment boundary: an unrestricted shell under the
   signing key owner's OS account can self-approve. Independent approval requires
   an independent signer and protection of the verifier's configuration, runtime
