@@ -56,6 +56,12 @@ ADR-023 exists to stop. What has landed so far:
 
 ### Changed
 
+- **An observation catalog must declare a version this release reads.**
+  `faultora.dev/v1` imports as before; `faultora.dev/v1alpha1` imports with a
+  deprecation warning naming 2.0 and `faultora migrate`. A catalog declaring no
+  `apiVersion` is now refused with `MISSING_API_VERSION`, and any other value
+  with `UNSUPPORTED_API_VERSION`, before any database is contacted. Previously
+  both were imported. See ADR-030.
 - Clarify the MCP approval deployment boundary: an unrestricted shell under the
   signing key owner's OS account can self-approve. Independent approval requires
   an independent signer and protection of the verifier's configuration, runtime

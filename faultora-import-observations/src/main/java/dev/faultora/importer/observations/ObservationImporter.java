@@ -44,7 +44,7 @@ import java.util.Set;
  *
  * <h2>The document</h2>
  * <pre>
- * apiVersion: faultora.dev/v1alpha1
+ * apiVersion: faultora.dev/v1
  * kind: Observations
  *
  * servers:
@@ -80,6 +80,15 @@ public class ObservationImporter implements SourceImporter {
     /** Metadata key carrying the declared parameter names, in declaration order. */
     public static final String PARAMETERS = "parameters";
 
+    /**
+     * The catalog versions this release reads; ADR-030 records why they are
+     * stated here rather than shared with the scenario's ApiVersions.
+     */
+    static final String CURRENT_VERSION = "faultora.dev/v1";
+    static final String DEPRECATED_VERSION = "faultora.dev/v1alpha1";
+    private static final String SUNSET = "2.0";
+    private static final int MAX_ECHOED_VERSION = 64;
+
     @Override
     public Set<String> supportedTypes() {
         return Set.of(SOURCE_TYPE);
@@ -104,7 +113,30 @@ public class ObservationImporter implements SourceImporter {
                                 + "'; an observation catalog declares 'Observations'");
             }
 
+            // Refused before any target exists, so no database is ever contacted
+            // on behalf of a catalog this release cannot hold to a contract.
+            JsonNode declaredVersion = root.get("apiVersion");
+            if (declaredVersion == null || declaredVersion.isNull()) {
+                return failure("VALIDATION", "MISSING_API_VERSION",
+                        "The observation catalog declares no apiVersion. Add 'apiVersion: "
+                                + CURRENT_VERSION + "' to it.");
+            }
+            String apiVersion = declaredVersion.isTextual()
+                    ? declaredVersion.asText() : declaredVersion.toString();
+            if (!CURRENT_VERSION.equals(apiVersion) && !DEPRECATED_VERSION.equals(apiVersion)) {
+                return failure("VALIDATION", "UNSUPPORTED_API_VERSION",
+                        "Unsupported observation catalog apiVersion: " + abbreviate(apiVersion)
+                                + ". This release reads " + CURRENT_VERSION + " and "
+                                + DEPRECATED_VERSION + ".");
+            }
+
             List<String> warnings = new ArrayList<>();
+            if (DEPRECATED_VERSION.equals(apiVersion)) {
+                warnings.add(DEPRECATED_VERSION + " is deprecated for observation catalogs and will"
+                        + " not be read from " + SUNSET + ". Run `faultora migrate <file> --write`"
+                        + " to move it to " + CURRENT_VERSION
+                        + "; nothing else in the document has to change.");
+            }
             List<TargetDefinition> targets = targets(root, warnings);
             if (targets.isEmpty()) {
                 return failure("VALIDATION", "NO_SERVER",
@@ -231,6 +263,11 @@ public class ObservationImporter implements SourceImporter {
                             SourceDocument.text(parameter, "type")))));
         });
         return parameters;
+    }
+
+    private static String abbreviate(String value) {
+        return value.length() <= MAX_ECHOED_VERSION
+                ? value : value.substring(0, MAX_ECHOED_VERSION) + "...";
     }
 
     private ImportResult failure(String category, String code, String message) {
