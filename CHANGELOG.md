@@ -62,6 +62,9 @@ ADR-023 exists to stop. What has landed so far:
 
 ### Changed
 
+- **Kafka observations retain events arriving during metadata lookup.** The
+  fallback offset is captured before the timestamp query, so a concurrent
+  settlement cannot be excluded from every later poll in the same run.
 - **Prepared fingerprints canonicalize Java sets by type**, including new
   policy fields and nested sets, while preserving list order. The private
   preparation fingerprint domain advances to v2; existing preparations and
