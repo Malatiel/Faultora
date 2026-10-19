@@ -68,6 +68,15 @@ ADR-023 exists to stop. What has landed so far:
   `apiVersion` is now refused with `MISSING_API_VERSION`, and any other value
   with `UNSUPPORTED_API_VERSION`, before any database is contacted. Previously
   both were imported. See ADR-030.
+- **Docker qualification supports Docker Engine 29.** Testcontainers 1.21.4
+  negotiates a compatible Docker API while retaining the existing 1.x test
+  modules and APIs.
+- **Linux qualification requires its infrastructure.** The explicit
+  `strict-qualification` profile fails when Docker or `lsof` is unavailable
+  instead of skipping required checks. CI also verifies fresh test reports
+  with no failed, missing or skipped required cases. Default local builds
+  retain optional skips; see docs/QUALIFICATION.md.
+
 - Clarify the MCP approval deployment boundary: an unrestricted shell under the
   signing key owner's OS account can self-approve. Independent approval requires
   an independent signer and protection of the verifier's configuration, runtime

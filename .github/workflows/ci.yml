@@ -19,7 +19,13 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
           cache: 'maven'
-      - run: ./mvnw verify -B
+      - name: Check qualification report gate
+        run: python3 -B -m unittest discover -s scripts -p 'test_*.py'
+      - name: Strict Linux qualification
+        run: |
+          started="$(date +%s)"
+          ./mvnw clean verify -Pstrict-qualification -B
+          python3 -B scripts/verify_qualification.py --since "$started"
       - uses: actions/upload-artifact@v7
         if: always()
         with:

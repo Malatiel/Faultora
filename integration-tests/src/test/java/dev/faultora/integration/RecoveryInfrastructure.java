@@ -46,13 +46,19 @@ final class RecoveryInfrastructure {
     private RecoveryInfrastructure() {
     }
 
-    /** Whether a container runtime exists, so a suite can skip itself rather than fail. */
+    /** Local builds may skip; strict qualification must fail when Docker is unavailable. */
     static boolean dockerIsAvailable() {
+        return dockerIsAvailable(() -> DockerClientFactory.instance().isDockerAvailable());
+    }
+
+    static boolean dockerIsAvailable(java.util.function.BooleanSupplier probe) {
+        boolean available;
         try {
-            return DockerClientFactory.instance().isDockerAvailable();
+            available = probe.getAsBoolean();
         } catch (RuntimeException noRuntime) {
-            return false;
+            available = false;
         }
+        return dev.faultora.testkit.Qualification.available(available, "Docker");
     }
 
     /** Start the infrastructure, or return the already-running one. */

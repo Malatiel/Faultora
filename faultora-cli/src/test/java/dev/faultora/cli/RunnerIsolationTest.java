@@ -47,14 +47,24 @@ class RunnerIsolationTest {
 
     @SuppressWarnings("unused")
     static boolean canSeeOpenSockets() {
+        boolean available = false;
         try {
-            new ProcessBuilder("lsof", "-v").redirectErrorStream(true).start().waitFor();
-            return true;
-        } catch (Exception noTool) {
-            System.err.println("Runner isolation test skipped: no lsof. "
-                    + "That nothing listens is NOT checked by this build.");
-            return false;
+            Process probe = new ProcessBuilder("lsof", "-v").redirectErrorStream(true)
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD).start();
+            try {
+                available = probe.waitFor(5, TimeUnit.SECONDS) && probe.exitValue() == 0;
+            } finally {
+                if (probe.isAlive()) {
+                    probe.destroyForcibly();
+                }
+            }
+        } catch (java.io.IOException noTool) {
+            // The default build may skip, strict qualification must fail.
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Socket inspection prerequisite check interrupted");
         }
+        return dev.faultora.testkit.Qualification.available(available, "lsof");
     }
 
     @Test
