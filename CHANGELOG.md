@@ -56,6 +56,12 @@ ADR-023 exists to stop. What has landed so far:
 
 ### Changed
 
+- **Prepared fingerprints canonicalize Java sets by type**, including new
+  policy fields and nested sets, while preserving list order. The private
+  preparation fingerprint domain advances to v2; existing preparations and
+  their MCP approvals need a fresh preview and approval. Catalog and signed
+  dispatch digests keep their existing format and meaning.
+
 - Clarify the MCP approval deployment boundary: an unrestricted shell under the
   signing key owner's OS account can self-approve. Independent approval requires
   an independent signer and protection of the verifier's configuration, runtime
