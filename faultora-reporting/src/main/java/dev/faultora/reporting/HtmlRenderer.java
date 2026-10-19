@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
@@ -85,7 +86,7 @@ public class HtmlRenderer implements ReportRenderer {
         output.write("<th>Node</th><th>Status</th><th>Status Code</th>");
         output.write("<th>Duration</th><th>Details</th></tr></thead>\n<tbody>\n");
         for (RunSummary.Node node : summary.nodes()) {
-            List<String> searchable = new ArrayList<>(List.of(node.name(), node.status()));
+            List<String> searchable = new ArrayList<>(Arrays.asList(node.name(), node.status()));
             List<String> faults = faultsByNode.getOrDefault(node.name(), List.of());
             searchable.addAll(faults);
             output.write(row(searchable, !node.passed() && !node.skipped(),
@@ -137,8 +138,9 @@ public class HtmlRenderer implements ReportRenderer {
             output.write("<th>Fault</th><th>Target</th><th>Active</th>");
             output.write("<th>Rollback</th><th>Nodes during fault</th></tr></thead>\n<tbody>\n");
             for (FaultTimeline.Window window : summary.faultWindows()) {
-                List<String> searchable = new ArrayList<>(List.of(window.faultType(), window.handle(),
-                        window.targetScope(), window.rollbackStatus()));
+                // The journal allows null type, scope and rollback status; row() drops them.
+                List<String> searchable = new ArrayList<>(Arrays.asList(window.faultType(),
+                        window.handle(), window.targetScope(), window.rollbackStatus()));
                 searchable.addAll(window.affectedNodes());
                 String rollback = String.valueOf(window.rollbackStatus());
                 output.write(row(searchable,

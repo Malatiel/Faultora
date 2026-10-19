@@ -6,6 +6,8 @@ import dev.faultora.model.identifier.NodeId;
 import dev.faultora.model.identifier.OperationId;
 import dev.faultora.model.identifier.RunId;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.io.StringWriter;
@@ -88,6 +90,31 @@ class HtmlTimelineFilterTest {
         assertThat(html).contains("x&quot;&gt;&lt;img src=x onerror=alert(1)&gt;"
                 + "&lt;/script&gt;&lt;script&gt;alert(2)&lt;/script&gt;");
         assertThat(row(html, "retried-step")).contains("x&quot;&gt;&lt;img");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"faultType", "targetScope", "rollbackStatus"})
+    void aFaultWithAMissingFieldStillRenders(String missing) throws IOException {
+        // The journal contract allows null in these strings: ActiveFault does not
+        // require a type or scope, and the reader accepts null in any of them.
+        // A filter must not narrow what the journal may contain.
+        NodeId node = new NodeId("during-fault");
+        String html = render(List.of(
+                new RunEvent.RunStarted("RUN_STARTED", 1000, RUN_ID, "sha256:a", "sha256:b", 7, Map.of()),
+                new RunEvent.FaultInjected("FAULT_INJECTED", 1100, RUN_ID, "fault-1",
+                        missing.equals("faultType") ? null : "http-latency",
+                        missing.equals("targetScope") ? null : "default", 61_100),
+                new RunEvent.NodeStarted("NODE_STARTED", 1200, RUN_ID, node, "operation",
+                        new OperationId("create")),
+                new RunEvent.NodeCompleted("NODE_COMPLETED", 1600, RUN_ID, node, 400, 201, 16),
+                new RunEvent.FaultRolledBack("FAULT_ROLLED_BACK", 2000, RUN_ID, "fault-1",
+                        missing.equals("rollbackStatus") ? null : "fault-stop"),
+                new RunEvent.RunCompleted("RUN_COMPLETED", 2300, RUN_ID, 1, 0, 0, 1300)));
+
+        assertThat(html).contains("<h2>Faults</h2>", "</html>");
+        assertThat(row(html, "during-fault")).contains("data-fault=\"true\"").doesNotContain("null");
+        assertThat(html).contains("data-filter=\"" + (missing.equals("faultType") ? "" : "http-latency ")
+                + "fault-1");
     }
 
     private static String render(List<RunEvent> events) throws IOException {
