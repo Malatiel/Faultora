@@ -145,6 +145,75 @@ class ObservationImporterTest {
         assertThat(result.errors().get(0).message()).contains("Scenario", "Observations");
     }
 
+    private static final String SERVER_AND_ONE_OBSERVATION = """
+            kind: Observations
+            servers:
+              ledger: { url: "jdbc:h2:mem:test" }
+            observations:
+              anything: { sql: SELECT 1 }
+            """;
+
+    private ImportResult declaring(String apiVersionLine) {
+        return importer.importSource(apiVersionLine + "\n" + SERVER_AND_ONE_OBSERVATION, CONTEXT);
+    }
+
+    @Test
+    void theCurrentVersionImportsWithoutAVersionWarning() {
+        ImportResult result = declaring("apiVersion: faultora.dev/v1");
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.catalog().operations()).hasSize(1);
+        assertThat(result.warnings()).noneMatch(warning -> warning.contains("apiVersion")
+                || warning.contains("deprecated"));
+    }
+
+    @Test
+    void thePreviewVersionStillImportsAndSaysWhenItStops() {
+        ImportResult result = declaring("apiVersion: faultora.dev/v1alpha1");
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.catalog().operations()).hasSize(1);
+        assertThat(result.warnings()).anySatisfy(warning -> assertThat(warning)
+                .contains("faultora.dev/v1alpha1", "deprecated", "2.0", "faultora.dev/v1",
+                        "faultora migrate"));
+    }
+
+    @Test
+    void anUnknownVersionIsRefusedBeforeACatalogExists() {
+        ImportResult result = declaring("apiVersion: faultora.dev/v99");
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.catalog()).isNull();
+        assertThat(result.errors()).singleElement().satisfies(error -> {
+            assertThat(error.code()).isEqualTo("UNSUPPORTED_API_VERSION");
+            assertThat(error.message())
+                    .contains("faultora.dev/v99", "faultora.dev/v1", "faultora.dev/v1alpha1");
+        });
+    }
+
+    @Test
+    void aVersionThatIsNotAStringIsRefusedAsUnsupported() {
+        ImportResult result = declaring("apiVersion: 1");
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.errors().get(0).code()).isEqualTo("UNSUPPORTED_API_VERSION");
+    }
+
+    @Test
+    void aDocumentThatDeclaresNoVersionIsRefused() {
+        // Silence is not a version: a catalog that says nothing cannot be held
+        // to any contract, and guessing one would be the very drift a version
+        // exists to prevent.
+        ImportResult result = importer.importSource(SERVER_AND_ONE_OBSERVATION, CONTEXT);
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.catalog()).isNull();
+        assertThat(result.errors()).singleElement().satisfies(error -> {
+            assertThat(error.code()).isEqualTo("MISSING_API_VERSION");
+            assertThat(error.message()).contains("apiVersion: faultora.dev/v1");
+        });
+    }
+
     @Test
     void theImporterAnswersToTheObservationsFamily() {
         assertThat(importer.supportedTypes()).containsExactly("observations-v1");

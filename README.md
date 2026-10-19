@@ -455,7 +455,7 @@ run may read is reviewable in one file that lives beside the deployment.
 
 ```yaml
 # observations.yaml
-apiVersion: faultora.dev/v1alpha1
+apiVersion: faultora.dev/v1
 kind: Observations
 
 servers:
