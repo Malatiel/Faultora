@@ -10,6 +10,12 @@ ADR-023 exists to stop. What has landed so far:
 
 ### Added
 
+- **The HTML report can be filtered by node, fault and status.** A search box
+  and failed / retried / during-a-fault toggles narrow the node and fault
+  tables in place. The report stays one offline file: the controls appear only
+  when its own inline script runs, and a content security policy now permits
+  only that script and style by hash, so the page loads, sends and runs
+  nothing else.
 - `faultora mcp --config <file>` exposes bounded MCP 2025-11-25 stdio tools for
   capabilities, declared catalog descriptions and sealed run preparation.
   Catalog files and policy come from operator startup configuration; tool calls

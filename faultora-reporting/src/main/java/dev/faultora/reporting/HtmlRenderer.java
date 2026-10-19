@@ -5,12 +5,25 @@ import dev.faultora.spi.contract.ReportRenderer;
 
 import java.io.IOException;
 import java.io.Writer;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Base64;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 /**
  * Renders run results as a self-contained HTML report.
  * No external assets, CDN, or JavaScript dependencies.
  * Works offline and in CI artifact viewers.
+ * <p>
+ * One inline script filters the node and fault rows. A content security policy
+ * names the hashes of the report's own style and script and nothing else, so a
+ * value that escaped the escaping still could not load, send or run anything.
  */
 public class HtmlRenderer implements ReportRenderer {
 
@@ -26,10 +39,9 @@ public class HtmlRenderer implements ReportRenderer {
         output.write("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
         output.write("<meta charset=\"UTF-8\">\n");
         output.write("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n");
+        output.write("<meta http-equiv=\"Content-Security-Policy\" content=\"" + POLICY + "\">\n");
         output.write("<title>Faultora Run Report — " + escapeHtml(summary.runId()) + "</title>\n");
-        output.write("<style>\n");
-        output.write(CSS);
-        output.write("</style>\n</head>\n<body>\n");
+        output.write("<style>" + CSS + "</style>\n</head>\n<body>\n");
 
         output.write("<header>\n");
         output.write("<h1>Faultora Run Report</h1>\n");
@@ -51,12 +63,34 @@ public class HtmlRenderer implements ReportRenderer {
         output.write(metaRow("Failed assertions", String.valueOf(summary.failedAssertions())));
         output.write("</table>\n</section>\n");
 
+        // Shown by the script; without it the report reads as it always has.
+        output.write("<section class=\"filter\" id=\"filter\" hidden>\n");
+        output.write("<label>Filter <input id=\"filter-text\" type=\"search\""
+                + " placeholder=\"node, fault or status\"></label>\n");
+        output.write("<label><input id=\"filter-failed\" type=\"checkbox\"> failed</label>\n");
+        output.write("<label><input id=\"filter-retried\" type=\"checkbox\"> retried</label>\n");
+        output.write("<label><input id=\"filter-fault\" type=\"checkbox\"> during a fault</label>\n");
+        output.write("<span id=\"filter-count\" class=\"muted\"></span>\n</section>\n");
+
+        Map<String, List<String>> faultsByNode = new HashMap<>();
+        for (FaultTimeline.Window window : summary.faultWindows()) {
+            for (String affected : window.affectedNodes()) {
+                List<String> faults = faultsByNode.computeIfAbsent(affected, ignored -> new ArrayList<>());
+                faults.add(window.faultType());
+                faults.add(window.handle());
+            }
+        }
+
         output.write("<section class=\"nodes\">\n<h2>Nodes</h2>\n");
         output.write("<table>\n<thead><tr>");
         output.write("<th>Node</th><th>Status</th><th>Status Code</th>");
         output.write("<th>Duration</th><th>Details</th></tr></thead>\n<tbody>\n");
         for (RunSummary.Node node : summary.nodes()) {
-            output.write("<tr>");
+            List<String> searchable = new ArrayList<>(Arrays.asList(node.name(), node.status()));
+            List<String> faults = faultsByNode.getOrDefault(node.name(), List.of());
+            searchable.addAll(faults);
+            output.write(row(searchable, !node.passed() && !node.skipped(),
+                    node.retries() != null && node.retries() > 0, !faults.isEmpty()));
             output.write("<td>" + escapeHtml(node.name()) + "</td>");
             output.write(String.format("<td><span class=\"badge %s\">%s</span></td>",
                     node.passed() ? "pass" : (node.skipped() ? "skip" : "fail"),
@@ -104,7 +138,13 @@ public class HtmlRenderer implements ReportRenderer {
             output.write("<th>Fault</th><th>Target</th><th>Active</th>");
             output.write("<th>Rollback</th><th>Nodes during fault</th></tr></thead>\n<tbody>\n");
             for (FaultTimeline.Window window : summary.faultWindows()) {
-                output.write("<tr>");
+                // The journal allows null type, scope and rollback status; row() drops them.
+                List<String> searchable = new ArrayList<>(Arrays.asList(window.faultType(),
+                        window.handle(), window.targetScope(), window.rollbackStatus()));
+                searchable.addAll(window.affectedNodes());
+                String rollback = String.valueOf(window.rollbackStatus());
+                output.write(row(searchable,
+                        rollback.contains("failed") || "not-rolled-back".equals(rollback), false, true));
                 output.write("<td>" + escapeHtml(window.faultType())
                         + " <span class=\"muted\">(" + escapeHtml(window.handle()) + ")</span></td>");
                 output.write("<td>" + escapeHtml(window.targetScope()) + "</td>");
@@ -125,7 +165,19 @@ public class HtmlRenderer implements ReportRenderer {
         }
 
         output.write("<footer>Generated by Faultora — offline report, no external assets</footer>\n");
+        output.write("<script>" + SCRIPT + "</script>\n");
         output.write("</body>\n</html>\n");
+    }
+
+    /**
+     * A table row the filter can match. The searchable text is lower-cased and
+     * escaped into an attribute; the script compares it and never parses it.
+     */
+    private static String row(List<String> searchable, boolean failed, boolean retried, boolean fault) {
+        String text = String.join(" ", searchable.stream()
+                .filter(value -> value != null && !value.isBlank()).toList()).toLowerCase(Locale.ROOT);
+        return "<tr data-filter=\"" + escapeHtml(text) + "\" data-failed=\"" + failed
+                + "\" data-retried=\"" + retried + "\" data-fault=\"" + fault + "\">";
     }
 
     private static String metaRow(String label, String value) {
@@ -166,5 +218,52 @@ public class HtmlRenderer implements ReportRenderer {
                          overflow-x: auto; font-size: 0.9rem; }
             footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #e0e0e0;
                      color: #888; font-size: 0.85rem; }
+            .filter { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center;
+                      margin: 1rem 0; }
+            .filter[hidden] { display: none; }
+            .filter input[type=search] { padding: 0.3rem; min-width: 16rem; }
             """;
+
+    /** Reads only data attributes and writes only visibility and a count. */
+    private static final String SCRIPT = """
+            (function () {
+              var panel = document.getElementById('filter');
+              if (!panel) { return; }
+              var text = document.getElementById('filter-text');
+              var count = document.getElementById('filter-count');
+              var flags = ['failed', 'retried', 'fault'].map(function (name) {
+                return { name: name, box: document.getElementById('filter-' + name) };
+              });
+              var rows = Array.prototype.slice.call(document.querySelectorAll('tr[data-filter]'));
+              function apply() {
+                var query = text.value.trim().toLowerCase();
+                var shown = 0;
+                rows.forEach(function (row) {
+                  var visible = row.dataset.filter.indexOf(query) !== -1;
+                  flags.forEach(function (flag) {
+                    if (flag.box.checked && row.dataset[flag.name] !== 'true') { visible = false; }
+                  });
+                  row.hidden = !visible;
+                  if (visible) { shown++; }
+                });
+                count.textContent = shown + ' of ' + rows.length + ' rows';
+              }
+              text.addEventListener('input', apply);
+              flags.forEach(function (flag) { flag.box.addEventListener('change', apply); });
+              panel.hidden = false;
+              apply();
+            })();
+            """;
+
+    private static final String POLICY = "default-src 'none'; base-uri 'none'; form-action 'none'; "
+            + "style-src 'sha256-" + sha256(CSS) + "'; script-src 'sha256-" + sha256(SCRIPT) + "'";
+
+    private static String sha256(String text) {
+        try {
+            return Base64.getEncoder().encodeToString(
+                    MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException unavailable) {
+            throw new IllegalStateException("SHA-256 is not available", unavailable);
+        }
+    }
 }
