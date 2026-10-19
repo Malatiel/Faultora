@@ -8,6 +8,10 @@ Docker CLI, and `lsof`. Kafka and PostgreSQL run in disposable containers;
 image pulls, startup and runner image builds must succeed. No repository
 secret or external database/broker credentials are required.
 
+Testcontainers 1.21.4 supplies Docker Engine 29 API compatibility on the 1.x
+release line. Keep its modules on the shared version in the parent POM;
+overriding the Docker API version is not part of the qualification setup.
+
 Run from a clean checkout with no test selection or exclusion overrides:
 
 ```sh

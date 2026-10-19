@@ -56,6 +56,9 @@ ADR-023 exists to stop. What has landed so far:
 
 ### Changed
 
+- **Docker qualification supports Docker Engine 29.** Testcontainers 1.21.4
+  negotiates a compatible Docker API while retaining the existing 1.x test
+  modules and APIs.
 - **Linux qualification requires its infrastructure.** The explicit
   `strict-qualification` profile fails when Docker or `lsof` is unavailable
   instead of skipping required checks. CI also verifies fresh test reports

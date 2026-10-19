@@ -44,7 +44,7 @@
         <assertj.version>3.26.3</assertj.version>
         <jmespath.version>0.5.1</jmespath.version>
         <kafka-clients.version>3.9.1</kafka-clients.version>
-        <testcontainers.version>1.20.6</testcontainers.version>
+        <testcontainers.version>1.21.4</testcontainers.version>
         <h2.version>2.4.240</h2.version>
         <postgresql.version>42.7.3</postgresql.version>
         <httpclient5.version>5.6.1</httpclient5.version>
