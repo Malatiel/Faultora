@@ -76,9 +76,12 @@ final class ObservationFloors {
         Map<TopicPartition, Long> askedAt = new LinkedHashMap<>();
         partitions.forEach(partition -> askedAt.put(partition, observeFromMs));
 
+        // Snapshot the fallback before the timestamp query. An event can arrive
+        // after that query found nothing; a later end offset would skip it for
+        // every observation in this run.
+        Map<TopicPartition, Long> ends = consumer.endOffsets(partitions, METADATA_TIMEOUT);
         Map<TopicPartition, OffsetAndTimestamp> byTime =
                 consumer.offsetsForTimes(askedAt, METADATA_TIMEOUT);
-        Map<TopicPartition, Long> ends = consumer.endOffsets(partitions, METADATA_TIMEOUT);
 
         Map<TopicPartition, Long> floor = new LinkedHashMap<>();
         for (TopicPartition partition : partitions) {
