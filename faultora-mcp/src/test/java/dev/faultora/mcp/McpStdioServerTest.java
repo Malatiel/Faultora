@@ -41,6 +41,10 @@ class McpStdioServerTest {
             initialize = new String(request.readAllBytes(), StandardCharsets.UTF_8).strip();
             expected = McpJson.MAPPER.readTree(response);
         }
+        // The server reports the build's own version, not one written into a fixture.
+        assertThat(dev.faultora.runtime.FaultoraVersion.current()).isNotEqualTo("0");
+        ((com.fasterxml.jackson.databind.node.ObjectNode) expected.path("result").path("serverInfo"))
+                .put("version", dev.faultora.runtime.FaultoraVersion.current());
         var replies = exchange(initialize, McpFixtures.READY,
                 "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}");
         assertThat(replies).hasSize(2);

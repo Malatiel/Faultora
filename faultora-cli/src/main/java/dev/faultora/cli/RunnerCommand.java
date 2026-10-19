@@ -318,9 +318,7 @@ final class RunnerCommand implements Command {
     }
 
     private static String version() {
-        return Optional.ofNullable(
-                RunnerCommand.class.getPackage().getImplementationVersion())
-                .orElse("0.11.0");
+        return dev.faultora.runtime.FaultoraVersion.current();
     }
 
     private void printUsage() {

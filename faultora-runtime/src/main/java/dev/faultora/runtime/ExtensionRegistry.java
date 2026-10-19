@@ -285,25 +285,7 @@ public final class ExtensionRegistry {
      * it is preferred — it is what the artifact was stamped with.
      */
     static String runningVersion() {
-        String packaged = ExtensionRegistry.class.getPackage().getImplementationVersion();
-        return packaged != null ? packaged : BUILT_VERSION;
-    }
-
-    /** What this build is, read once from what Maven filtered in. */
-    private static final String BUILT_VERSION = builtVersion();
-
-    private static String builtVersion() {
-        try (var declared = ExtensionRegistry.class
-                .getResourceAsStream("/faultora-version.properties")) {
-            if (declared == null) {
-                return "0";
-            }
-            var properties = new java.util.Properties();
-            properties.load(declared);
-            return properties.getProperty("version", "0");
-        } catch (Exception unreadable) {
-            return "0";
-        }
+        return FaultoraVersion.current();
     }
 
     /**
