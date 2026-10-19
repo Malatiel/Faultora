@@ -26,7 +26,7 @@ Three consequences worth stating plainly:
   runners to execute exactly that. A team that invests in a scenario suite
   before 1.0 keeps it afterwards.
 
-## 2. Where 0.10.1 stands
+## 2. Where 0.11.0 stands
 
 | Milestone | State |
 |---|---|
@@ -36,7 +36,7 @@ Three consequences worth stating plainly:
 | M3 — Event-driven and cross-component | complete |
 | M4 — Private-network runner | shipped in 0.9.1; runner and image qualification suites exist |
 | M5 — Distributed execution | deferred to 2.0 |
-| M6 — 1.0 hardening | in progress: scenario API frozen; plugin manifest and artifact identity implemented |
+| M6 — 1.0 hardening | in progress: scenario API, run output and runner protocol v1 frozen; plugin trust and artifact identity implemented; MCP preparation and approved execution shipped; extension process isolation not yet |
 
 Shipped and working: OpenAPI, AsyncAPI and observation-catalog import into one
 catalog, HTTP, Kafka and JDBC connectors under one destination policy, scenario
@@ -51,8 +51,8 @@ events and a database against the payment recovery reference system, each one
 run again against the variant that removes the property it checks, and failing
 there.
 
-The remaining M6 work includes result and runner-protocol compatibility,
-out-of-process extensions and enforceable isolation, supply-chain qualification,
+The remaining M6 work includes out-of-process extensions and enforceable
+isolation, supply-chain qualification,
 operational readiness, security qualification, and user experience. ADR-023
 separates manifest and artifact identity from process isolation: the former
 already exists, while a policy requiring the latter is still refused. Existing
@@ -68,6 +68,7 @@ a skipped container or operating-system check is not qualification.
 | 0.8 | M3 part 2 | One scenario proves a business invariant across HTTP, events, and a database |
 | 0.9 | M4 | Runs execute inside a private network without inbound access |
 | 0.10 | M6 part 1 | Frozen scenario API, migration tooling, and compatibility diagnostics |
+| 0.11 | M6 part 2 | Extension trust, runtime budgets, frozen run output, previews and MCP |
 | **1.0** | M6 | Frozen contracts, isolated extensions, signed artifacts, operational docs |
 | 2.0 | M5 | A controller shards one run across workers and returns one result |
 

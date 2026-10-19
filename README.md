@@ -11,11 +11,11 @@ infrastructure and does not require a hosted control plane or telemetry.
 The scenario format is frozen at `faultora.dev/v1`; the application version
 below moves independently of it.
 
-Version 0.10.1 is a runnable technical preview. It targets local development
+Version 0.11.0 is a runnable technical preview. It targets local development
 and CI use on Java 21, and it can now run **inside a private network** as a
 runner that dials out for work.
 
-## What 0.10.1 includes
+## What 0.11.0 includes
 
 Scenario execution:
 
@@ -55,7 +55,13 @@ Scenario execution:
 - assertion parameters are expressions, so an assertion compares a value one
   step produced against a value another one did. That is what makes a
   cross-component invariant expressible without a compound assertion type;
-- console, JSON, HTML, and JUnit reports.
+- console, JSON, HTML, and JUnit reports; the HTML report can be filtered by
+  node, fault and status offline, and loads or runs nothing but its own code;
+- per-run budgets that hold while the run is running: one deadline across
+  retries, polls and redirects, a finite cleanup budget, outgoing HTTP and
+  Kafka payload limits, and connector attempts counted against `maxRequests`;
+- `test --preview` shows the compiled plan without contacting a target, and
+  `--diagnostics=json` gives scripts one versioned result per command.
 
 Fault injection:
 
@@ -97,7 +103,11 @@ Security posture:
 - policy-bounded in-memory evidence for assertions;
 - header filtering, content-type allowlists, body limits, and JSON redaction;
 - manual redirect handling with cross-origin credential stripping;
-- environment-backed bearer-token resolution.
+- environment-backed bearer-token resolution;
+- extension trust decided before any plugin code runs: built-ins are an exact
+  class inventory, and a third-party plugin needs a valid manifest;
+- results, journals, reports and diagnostics export fixed error text and
+  structural facts, never values the evidence policy withholds.
 
 The in-process fault provider acts only on Faultora's own outbound requests.
 It never touches the target system, its infrastructure, or other traffic, so
@@ -119,7 +129,7 @@ accepted.
 Download the release JAR and its checksums:
 
 ```bash
-FAULTORA_VERSION=0.10.1
+FAULTORA_VERSION=0.11.0
 RELEASE_URL="https://github.com/Malatiel/Faultora/releases/download/v${FAULTORA_VERSION}"
 
 curl --fail --location --retry 3 \
@@ -152,7 +162,7 @@ their prerequisites are unavailable; those skips do not prove qualification.
 The executable artifact is written to:
 
 ```text
-faultora-cli/target/faultora-0.10.1.jar
+faultora-cli/target/faultora-0.11.0.jar
 ```
 
 The regular CI build can run without repository secrets. Configure the
@@ -165,9 +175,9 @@ missing.
 Check the executable and validate the example scenario:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.10.1.jar --version
+java -jar faultora-cli/target/faultora-0.11.0.jar --version
 
-java -jar faultora-cli/target/faultora-0.10.1.jar \
+java -jar faultora-cli/target/faultora-0.11.0.jar \
   validate \
   --scenario examples/payment-service/scenarios/passing.yaml
 ```
@@ -175,7 +185,7 @@ java -jar faultora-cli/target/faultora-0.10.1.jar \
 Generate a starter scenario from an OpenAPI document:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.10.1.jar \
+java -jar faultora-cli/target/faultora-0.11.0.jar \
   init \
   --from-openapi examples/payment-service/openapi.yaml \
   --output ./generated
@@ -184,7 +194,7 @@ java -jar faultora-cli/target/faultora-0.10.1.jar \
 Run a scenario against an API:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.10.1.jar \
+java -jar faultora-cli/target/faultora-0.11.0.jar \
   test \
   --scenario examples/payment-service/scenarios/passing.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -210,7 +220,7 @@ With `test --preview`, the preview is nested in the same result. See the
 Add `--preview` to `test` to inspect the compiled plan without running it:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.10.1.jar \
+java -jar faultora-cli/target/faultora-0.11.0.jar \
   test --preview \
   --scenario examples/payment-service/scenarios/passing.yaml \
   --openapi examples/payment-service/openapi.yaml
@@ -267,7 +277,7 @@ race window, then asserts the business invariant that exactly one payment
 exists:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.10.1.jar \
+java -jar faultora-cli/target/faultora-0.11.0.jar \
   test \
   --scenario examples/payment-service/scenarios/fault-concurrent-duplicate.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -376,7 +386,7 @@ An AsyncAPI 3.0 description brings Kafka channels into the same catalog as the
 HTTP operations, and `--openapi` and `--asyncapi` can be given together:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.10.1.jar \
+java -jar faultora-cli/target/faultora-0.11.0.jar \
   test \
   --scenario examples/payment-worker/scenarios/duplicate-delivery.yaml \
   --asyncapi examples/payment-worker/asyncapi.yaml \
@@ -480,7 +490,7 @@ observations:
 ```
 
 ```bash
-java -jar faultora-cli/target/faultora-0.10.1.jar \
+java -jar faultora-cli/target/faultora-0.11.0.jar \
   test \
   --scenario examples/payment-recovery/scenarios/settlement-invariant.yaml \
   --openapi examples/payment-recovery/openapi.yaml \
@@ -617,7 +627,7 @@ handle is mapped to an environment variable with the `FAULTORA_SECRET_` prefix:
 ```bash
 export FAULTORA_SECRET_PAYMENTS_API='replace-with-a-real-token'
 
-java -jar faultora-cli/target/faultora-0.10.1.jar \
+java -jar faultora-cli/target/faultora-0.11.0.jar \
   test \
   --scenario scenario.yaml \
   --openapi openapi.yaml \

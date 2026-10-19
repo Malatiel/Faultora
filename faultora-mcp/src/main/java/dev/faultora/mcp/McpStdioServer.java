@@ -148,7 +148,7 @@ public final class McpStdioServer {
 
     private static String version() {
         String version = McpStdioServer.class.getPackage().getImplementationVersion();
-        return version == null ? "0.10.1" : version;
+        return version == null ? "0.11.0" : version;
     }
 
     private static JsonNode error(JsonNode id, int code, String message) {

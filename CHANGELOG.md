@@ -2,11 +2,17 @@
 
 All notable changes to Faultora are documented in this file.
 
-## Unreleased — M6-02 in progress
+## 0.11.0 — 2026-10-19
 
-Extension isolation arrives as one release rather than a version per slice: a
-release shipping a manifest and calling it isolation would be the defect
-ADR-023 exists to stop. What has landed so far:
+Limits that hold while a run is running, output a tool can rely on, and a way
+for a local assistant to prepare and — with an operator's signature — start a
+run. Plugin trust is now decided before any plugin code runs.
+
+This is not extension isolation. ADR-023 keeps that for its own slice: a policy
+asking for process isolation, a heap ceiling, a network or a secret allowlist is
+still refused rather than quietly unenforced. Several changes below alter what
+an existing run, journal reader or catalog sees; read *Changed* before
+upgrading.
 
 ### Added
 

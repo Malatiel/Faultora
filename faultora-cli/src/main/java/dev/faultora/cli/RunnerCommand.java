@@ -320,7 +320,7 @@ final class RunnerCommand implements Command {
     private static String version() {
         return Optional.ofNullable(
                 RunnerCommand.class.getPackage().getImplementationVersion())
-                .orElse("0.10.1");
+                .orElse("0.11.0");
     }
 
     private void printUsage() {
