@@ -36,8 +36,7 @@ public class FaultoraCli {
     /** Exit code: runner/engine failure. */
     public static final int EXIT_RUNNER_FAILURE = 3;
 
-    private static final String VERSION = Optional.ofNullable(
-            FaultoraCli.class.getPackage().getImplementationVersion()).orElse("0.11.0");
+    private static final String VERSION = dev.faultora.runtime.FaultoraVersion.current();
 
     private final PrintWriter out;
     private final PrintWriter err;

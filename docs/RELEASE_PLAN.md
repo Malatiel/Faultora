@@ -416,6 +416,19 @@ be invoked at all. Each surfaced on the first real run against a real service.
 Whatever the suite says, a new capability is exercised through the packaged
 artifact against a running target before it is called complete.
 
+**Cutting a release.** The version is set once, as `revision` in the parent
+POM; every module inherits it and the code reads it back from the build.
+Change it, rename the *Unreleased* section of the changelog, and update the
+copies people read — README, `docs/`, `Dockerfile`, `deploy/`. The
+`ReleaseVersionConsistencyTest` fails until every one of those names the new
+version. Then commit `release: X.Y.Z` on its own branch, merge it with
+`merge: release X.Y.Z`, tag the merge `vX.Y.Z`, and push the tag: the release
+workflow checks the tag against the POM, builds, scans and publishes.
+
+Installed POMs keep `${revision}` unresolved. Nothing consumes Faultora
+modules from a Maven repository today; publishing them would first need the
+flatten plugin.
+
 ## 5. After 1.0
 
 The 1.x line takes defect fixes, security updates, dependency bumps, and
