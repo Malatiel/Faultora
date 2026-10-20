@@ -177,7 +177,29 @@ class RunnerCommandTest {
         int exit = run(args);
 
         assertThat(exit).isEqualTo(FaultoraCli.EXIT_RUNNER_FAILURE);
-        assertThat(err.toString()).contains("Could not register");
+        // It read "Could not register: null": the JDK refuses a connection
+        // without a message, and the message was all that was printed.
+        assertThat(err.toString())
+                .contains("Could not register: the connection was refused")
+                .doesNotContain("null");
+    }
+
+    @Test
+    void aDispatcherWhoseCertificateIsNotTrustedIsNamedAsATlsProblem() throws Exception {
+        // The commonest first-deployment mistake: the runner was given a
+        // truststore that does not hold the control plane's certificate.
+        Deployment deployment = deploy();
+        Certificates.Identity stranger = Certificates.issue(directory, "stranger", 1);
+        List<String> args = new ArrayList<>(deployment.args());
+        args.set(args.indexOf("--truststore") + 1,
+                Certificates.trusting(directory, "runner-wrong-trust", stranger).toString());
+
+        try (QualificationDispatcher ignored = deployment.dispatcher()) {
+            int exit = run(args);
+
+            assertThat(exit).isEqualTo(FaultoraCli.EXIT_RUNNER_FAILURE);
+            assertThat(err.toString()).contains("Could not register: the TLS handshake failed");
+        }
     }
 
     @Test

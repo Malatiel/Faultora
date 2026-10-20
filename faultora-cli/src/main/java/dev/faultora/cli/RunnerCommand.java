@@ -169,7 +169,7 @@ final class RunnerCommand implements Command {
                     // held is gone with it, so the next thing to do is register
                     // again rather than keep asking into nothing.
                     err.println("The dispatcher could not be reached: "
-                            + unreachable.getMessage());
+                            + DispatcherFailure.describe(unreachable));
                     sessionId = null;
                     if (once || !pause(serving, RECONNECT_DELAY_MS)) {
                         return FaultoraCli.EXIT_RUNNER_FAILURE;
@@ -203,7 +203,7 @@ final class RunnerCommand implements Command {
             Thread.currentThread().interrupt();
             return null;
         } catch (Exception unreachable) {
-            err.println("Could not register: " + unreachable.getMessage());
+            err.println("Could not register: " + DispatcherFailure.describe(unreachable));
             return null;
         }
     }
