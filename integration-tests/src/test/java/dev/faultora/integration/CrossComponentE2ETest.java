@@ -1,5 +1,6 @@
 package dev.faultora.integration;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.faultora.cli.FaultoraCli;
 import dev.faultora.examples.recovery.PaymentRecoverySystem;
 import dev.faultora.examples.recovery.SystemConfig;
@@ -9,9 +10,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 
 import java.io.IOException;
-import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -86,31 +88,22 @@ class CrossComponentE2ETest {
         system.start();
     }
 
-    private int run(String scenario, String seed) throws IOException {
+    private int run(String scenario, String seed) throws Exception {
         // A fresh directory per run. Seeds restart with the JVM, so a reused
         // path would let an assertion about this run's journal be satisfied by
         // the previous suite's — an assertion that cannot fail.
         Path outputDir = Files.createTempDirectory("faultora-e2e-cross-" + seed + "-");
         lastOutputDir = outputDir;
-        return new FaultoraCli(
-                new PrintWriter(System.out, true), new PrintWriter(System.err, true))
-                .run(new String[]{
-                        "test",
-                        "--scenario", RecoveryFixtures.scenario(scenario).toString(),
-                        "--openapi", RecoveryFixtures.openApi().toString(),
-                        "--asyncapi", RecoveryFixtures.asyncApi().toString(),
-                        "--observations", RecoveryFixtures.observations().toString(),
-                        "--target", system.apiBaseUrl(),
-                        "--target", "broker=kafka://"
-                                + RecoveryInfrastructure.bootstrapServers(),
-                        "--target", "ledger=" + RecoveryInfrastructure.jdbcUrl(),
-                        "--db-user", RecoveryInfrastructure.READ_ONLY_USER,
-                        "--db-secret-id", RecoveryInfrastructure.SECRET_ID,
-                        "--allow-private",
-                        "--seed", seed,
-                        "--format", "console,json",
-                        "--output", outputDir.toString()
-                });
+        return PackagedExampleCli.run(outputDir, RecoveryFixtures.scenario(scenario), List.of(
+                "--openapi", RecoveryFixtures.openApi().toString(),
+                "--asyncapi", RecoveryFixtures.asyncApi().toString(),
+                "--observations", RecoveryFixtures.observations().toString(),
+                "--target", system.apiBaseUrl(),
+                "--target", "broker=kafka://" + RecoveryInfrastructure.bootstrapServers(),
+                "--target", "ledger=" + RecoveryInfrastructure.jdbcUrl(),
+                "--db-user", RecoveryInfrastructure.READ_ONLY_USER,
+                "--db-secret-id", RecoveryInfrastructure.SECRET_ID,
+                "--seed", seed));
     }
 
     private Path lastOutputDir;
@@ -133,6 +126,16 @@ class CrossComponentE2ETest {
         // The database was read through the CLI, as the role that may only
         // read it, and the journal says what came back.
         assertThat(journal()).contains("ROWS_OBSERVED");
+        assertThat(journal()).contains("MESSAGES_OBSERVED");
+        var mapper = new ObjectMapper();
+        var assertions = new ArrayList<String>();
+        for (String line : Files.readAllLines(lastOutputDir.resolve("events.ndjson"))) {
+            var event = mapper.readTree(line);
+            if (event.path("eventType").asText().equals("ASSERTION_EVALUATED")) {
+                assertions.add(event.path("outcome").asText());
+            }
+        }
+        assertThat(assertions).hasSize(7).containsOnly("PASS");
     }
 
     @Test

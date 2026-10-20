@@ -1,5 +1,8 @@
 # Payment recovery — the reference system
 
+For commands, observation requirements and the limits of each scenario family,
+see the [examples guide](../README.md#cross-component-http-event-and-ledger-agree).
+
 The system the M3 exit gate runs against: an HTTP command side, a transactional
 outbox, a relay, an idempotent consumer, a double-entry ledger, a payment
 provider that can take a charge and lose the response, and a worker that

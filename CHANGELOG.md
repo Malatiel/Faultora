@@ -2,6 +2,17 @@
 
 All notable changes to Faultora are documented in this file.
 
+## Unreleased
+
+### Added
+
+- **A guide to five scenario families.** The examples now explain how to run
+  contract, retry, eventual, cross-component and fault lifecycle scenarios,
+  which observations each needs and the limits of a passing result. A new
+  lifecycle example deletes its own payment in cleanup and records fault
+  rollback. End-to-end tests exercise the published files through the CLI JAR,
+  including failed assertions and the real Kafka/PostgreSQL reference system.
+
 ## 0.11.0 — 2026-10-19
 
 Limits that hold while a run is running, output a tool can rely on, and a way
