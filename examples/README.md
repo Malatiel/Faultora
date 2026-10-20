@@ -25,7 +25,7 @@ separate, disposable API instance. Only the cross-component family needs Docker.
 In one terminal, start JShell with the API and CLI JARs on its classpath:
 
 ```sh
-jshell --class-path "examples/payment-service/target/payment-service-0.11.0.jar:faultora-cli/target/faultora-0.11.0.jar"
+jshell --class-path "examples/payment-service/target/payment-service-0.11.1.jar:faultora-cli/target/faultora-0.11.1.jar"
 ```
 
 On Windows use `;` between the two JAR paths instead of `:`. In JShell:
@@ -40,7 +40,7 @@ call `api.stop()` when done. Restart it for an empty store. It exposes no
 production credentials and is intended only for a trusted local environment.
 
 In a second terminal, set `FAULTORA_JAR` to the executable
-`faultora-cli/target/faultora-0.11.0.jar`. The following are POSIX shell commands;
+`faultora-cli/target/faultora-0.11.1.jar`. The following are POSIX shell commands;
 in PowerShell use `$env:FAULTORA_JAR` and put each command on one line.
 
 ```sh
