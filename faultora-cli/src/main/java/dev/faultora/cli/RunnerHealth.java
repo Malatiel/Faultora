@@ -76,11 +76,15 @@ final class RunnerHealth implements AutoCloseable {
     private volatile boolean registered;
     private volatile String currentRunId;
     private volatile long runsServed;
+    private final long tickMs;
     private final Thread ticker;
+    /** Guarded by this: once set, nothing is written again. */
+    private boolean closed;
 
-    private RunnerHealth(Path file, String runnerId) {
+    private RunnerHealth(Path file, String runnerId, long tickMs) {
         this.file = file;
         this.runnerId = runnerId;
+        this.tickMs = tickMs;
         this.ticker = new Thread(this::tickUntilStopped, "runner-health");
         this.ticker.setDaemon(true);
     }
@@ -93,7 +97,12 @@ final class RunnerHealth implements AutoCloseable {
      * container while it was still dialling.
      */
     static RunnerHealth reporting(Path file, String runnerId) throws IOException {
-        RunnerHealth health = new RunnerHealth(file, runnerId);
+        return reporting(file, runnerId, TICK_MS);
+    }
+
+    /** As {@link #reporting(Path, String)}, rewriting every {@code tickMs}. */
+    static RunnerHealth reporting(Path file, String runnerId, long tickMs) throws IOException {
+        RunnerHealth health = new RunnerHealth(file, runnerId, tickMs);
         Files.createDirectories(file.toAbsolutePath().getParent());
         health.write();
         health.ticker.start();
@@ -133,7 +142,7 @@ final class RunnerHealth implements AutoCloseable {
         while (!Thread.currentThread().isInterrupted()) {
             writeQuietly();
             try {
-                Thread.sleep(TICK_MS);
+                Thread.sleep(tickMs);
             } catch (InterruptedException stopping) {
                 Thread.currentThread().interrupt();
                 return;
@@ -152,6 +161,9 @@ final class RunnerHealth implements AutoCloseable {
     }
 
     private synchronized void write() throws IOException {
+        if (closed) {
+            return;
+        }
         Status status = new Status(
                 state, runnerId, System.currentTimeMillis(),
                 registered, currentRunId, runsServed);
@@ -166,8 +178,20 @@ final class RunnerHealth implements AutoCloseable {
         return MAPPER.readValue(Files.readString(file), Status.class);
     }
 
+    /**
+     * Stop reporting, with nothing left in flight.
+     * <p>
+     * Interrupting the ticker alone returned while it could still be writing:
+     * the file, or its {@code .partial} sibling, appeared after the caller had
+     * moved on — and an interrupt landing inside the write could abandon the
+     * partial file outright. Taking the write lock first means any write in
+     * progress finishes and none starts; the interrupt then only ends a sleep.
+     */
     @Override
     public void close() {
+        synchronized (this) {
+            closed = true;
+        }
         ticker.interrupt();
     }
 }
