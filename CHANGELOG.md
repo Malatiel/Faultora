@@ -2,6 +2,17 @@
 
 All notable changes to Faultora are documented in this file.
 
+## Unreleased
+
+### Fixed
+
+- **A runner that cannot reach its dispatcher says why.** A refused
+  connection printed `Could not register: null`, because the JDK raises it
+  without a message. Registration and polling failures are now named by kind —
+  connection refused, host not resolving, timeout, TLS handshake, an answer
+  that is not the runner protocol — in fixed text saying what to check, without
+  repeating the exception's own message.
+
 ## 0.11.0 — 2026-10-19
 
 Limits that hold while a run is running, output a tool can rely on, and a way
