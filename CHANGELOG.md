@@ -2,6 +2,15 @@
 
 All notable changes to Faultora are documented in this file.
 
+## Unreleased
+
+### Fixed
+
+- **A stopping runner no longer writes its health file after it has
+  stopped.** Closing the health reporter interrupted its timer without waiting,
+  so a write in progress could finish afterwards — or be cut off and leave a
+  `.partial` file beside the health file in the working directory.
+
 ## 0.11.1 — 2026-10-20
 
 Catalog problems surface before a run instead of inside one, and a runner that
