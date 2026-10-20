@@ -4,6 +4,14 @@ All notable changes to Faultora are documented in this file.
 
 ## Unreleased
 
+### Added
+
+- **`faultora validate` checks catalogs.** It accepts `--openapi`,
+  `--asyncapi` and `--observations` like `test` and imports them the same way
+  without running anything, so a catalog `test` would refuse — an unknown
+  version, a name declared twice — fails `validate` with the same exit code
+  and `CATALOG_IMPORT_FAILED`. Without catalog options it behaves as before.
+
 ### Fixed
 
 - **Catalog importer warnings are no longer dropped.** A skipped server, a
