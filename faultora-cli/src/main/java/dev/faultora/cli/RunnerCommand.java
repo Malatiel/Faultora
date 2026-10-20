@@ -226,6 +226,8 @@ final class RunnerCommand implements Command {
             out.println("Stopped part-way: " + outcome.failure());
             return FaultoraCli.EXIT_RUNNER_FAILURE;
         }
+        outcome.catalogWarnings().forEach(warning -> out.println(
+                "Warning: " + warning.family() + " catalog: " + warning.message()));
         out.println("Finished: " + outcome.result().status()
                 + (outcome.leaseExpired() ? " (the lease ran out)" : "")
                 + " — journal at " + outcome.journalPath());

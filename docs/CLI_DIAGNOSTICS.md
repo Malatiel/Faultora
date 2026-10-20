@@ -63,6 +63,7 @@ unknown future codes and fields. Hint wording is informational.
 | `SCENARIO_INVALID`, `SCENARIO_WARNING` | Parsing or structural validation, with a document location when available. |
 | `PLAN_REFUSED`, `PLAN_WARNING` | Compilation or policy diagnostics, with node/phase when available. |
 | `CATALOG_IMPORT_FAILED`, `CAPABILITY_UNAVAILABLE` | Catalog import or unavailable/admission-restricted contract type. |
+| `CATALOG_WARNING` | An importer accepted a catalog but reported something, such as a skipped server or a deprecated version; path names the catalog family (`openapi`, `asyncapi`, `observations`). The importer's message is printed only in human output. |
 | `INPUT_UNKNOWN`, `INPUT_REQUIRED` | Scenario input binding; path names the input. |
 | `ARTIFACT_WRITE_FAILED`, `REPORT_WRITE_FAILED` | Artifact setup or report writing failed. |
 | `PREPARATION_FAILED` | Preparation stopped without a parser/compiler diagnostic. |

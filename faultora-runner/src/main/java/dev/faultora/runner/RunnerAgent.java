@@ -207,6 +207,11 @@ public final class RunnerAgent {
             described.put("status", outcome.result().status().toString());
             described.put("leaseExpired", outcome.leaseExpired());
         }
+        if (!outcome.catalogWarnings().isEmpty()) {
+            var warnings = described.putArray("catalogWarnings");
+            outcome.catalogWarnings().forEach(warning -> warnings.addObject()
+                    .put("family", warning.family()).put("message", warning.message()));
+        }
         return described.toString();
     }
 }

@@ -39,12 +39,17 @@ public final class RunPreparation {
         }
     }
 
-    /** Parser diagnostics and compiler diagnostics retain their respective source locations. */
+    /**
+     * Parser diagnostics and compiler diagnostics retain their respective source locations.
+     * Catalog warnings are the importers' own and do not make a preparation fail.
+     */
     public record Result(
             ScenarioDocument scenario, ApiCatalog catalog,
-            List<Diagnostic> diagnostics, PlanCompilationResult compilation) {
+            List<Diagnostic> diagnostics, PlanCompilationResult compilation,
+            List<CatalogAssembly.Warning> catalogWarnings) {
         public Result {
             diagnostics = List.copyOf(diagnostics);
+            catalogWarnings = List.copyOf(catalogWarnings);
         }
 
         public boolean isSuccess() {
@@ -57,23 +62,25 @@ public final class RunPreparation {
         var parsed = new ScenarioParser().parse(request.scenarioContent());
         List<Diagnostic> diagnostics = new ArrayList<>(parsed.diagnostics());
         if (!parsed.isSuccess()) {
-            return new Result(null, null, diagnostics, null);
+            return new Result(null, null, diagnostics, null, List.of());
         }
         var validated = new ScenarioValidator().validate(parsed.document());
         diagnostics.addAll(validated.diagnostics());
         if (!validated.isSuccess()) {
-            return new Result(null, null, diagnostics, null);
+            return new Result(null, null, diagnostics, null, List.of());
         }
         ScenarioDocument scenario = validated.document();
-        ApiCatalog catalog = request.documents().isEmpty()
-                ? CatalogAssembly.fromScenario(scenario, request.fallbackTargetUrl())
+        CatalogAssembly.Assembled assembled = request.documents().isEmpty()
+                ? new CatalogAssembly.Assembled(
+                        CatalogAssembly.fromScenario(scenario, request.fallbackTargetUrl()), List.of())
                 : CatalogAssembly.assemble(request.documents(), request.extensions());
+        ApiCatalog catalog = assembled.catalog();
         String catalogDigest = request.catalogDigest() == null
                 ? digest(catalog) : request.catalogDigest();
         var compilation = new PlanCompiler().compile(
                 scenario, catalog, request.targets(), request.runId(), request.seed(),
                 ContentDigest.sha256Uri(request.scenarioContent()), catalogDigest);
-        return new Result(scenario, catalog, diagnostics, compilation);
+        return new Result(scenario, catalog, diagnostics, compilation, assembled.warnings());
     }
 
     static String digest(ApiCatalog catalog) {

@@ -146,6 +146,47 @@ class MachineDiagnosticsTest {
         assertThat(result.json().path("diagnostics").get(0).path("severity").asText()).isEqualTo("WARNING");
     }
 
+    @Test
+    void catalogWarningsNameTheFamilyButNotWhatTheDocumentDeclares() throws Exception {
+        Path scenario = directory.resolve("scenario.yaml");
+        Files.writeString(scenario, SCENARIO);
+        Path asyncApi = directory.resolve("asyncapi.yaml");
+        Files.writeString(asyncApi, hostlessServer(MARKER));
+        var result = invoke("test", "--preview", "--scenario", scenario.toString(), "--asyncapi", asyncApi.toString());
+        assertEnvelope(result, 0);
+        assertThat(result.json().path("diagnostics")).anySatisfy(diagnostic -> {
+            assertThat(diagnostic.path("code").asText()).isEqualTo("CATALOG_WARNING");
+            assertThat(diagnostic.path("severity").asText()).isEqualTo("WARNING");
+            assertThat(diagnostic.path("path").asText()).isEqualTo("asyncapi");
+        });
+    }
+
+    @Test
+    void aHumanRunPrintsTheImportersOwnWordsAndStillRuns() throws Exception {
+        Path scenario = directory.resolve("scenario.yaml");
+        Files.writeString(scenario, SCENARIO);
+        Path asyncApi = directory.resolve("asyncapi.yaml");
+        Files.writeString(asyncApi, hostlessServer("legacy"));
+        StringWriter stdout = new StringWriter();
+        StringWriter stderr = new StringWriter();
+        int exit = new FaultoraCli(new PrintWriter(stdout), new PrintWriter(stderr)).run(new String[]{
+                "test", "--scenario", scenario.toString(), "--asyncapi", asyncApi.toString(),
+                "--output", directory.resolve("reports").toString()});
+        assertThat(exit).isZero();
+        assertThat(stderr.toString())
+                .contains("WARNING: asyncapi catalog: Server 'legacy' names no host and was skipped");
+        assertThat(stdout.toString()).contains("Result: PASSED");
+    }
+
+    private static String hostlessServer(String name) {
+        return """
+                asyncapi: 3.0.0
+                info: { title: Payments, version: 1.0.0 }
+                servers:
+                  %s: { protocol: kafka }
+                """.formatted(name);
+    }
+
     @ParameterizedTest
     @EnumSource(value = RunResult.Status.class, names = {"ERROR", "CANCELLED"})
     void infrastructureAndCancellationDiagnosticsExcludeUnderlyingErrorObjects(RunResult.Status status) throws Exception {

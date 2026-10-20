@@ -101,6 +101,9 @@ public class TestCommand implements Command {
                     extensionPolicy, targetPolicy, runId, options.seed(), null);
             RunPreparation.Result prepared = RunPreparation.prepare(request);
             output.scenario(prepared.diagnostics());
+            output.catalog(prepared.catalogWarnings());
+            prepared.catalogWarnings().forEach(warning -> output.err().println(
+                    "WARNING: " + warning.family() + " catalog: " + warning.message()));
             if (prepared.compilation() != null) {
                 output.plan(prepared.compilation().diagnostics());
             }
