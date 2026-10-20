@@ -22,7 +22,7 @@
 
     <properties>
         <!-- The one place the release version is set; see docs/RELEASE_PLAN.md. -->
-        <revision>0.11.0</revision>
+        <revision>0.11.1</revision>
         <!-- Build -->
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>

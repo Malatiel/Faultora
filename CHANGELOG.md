@@ -2,7 +2,12 @@
 
 All notable changes to Faultora are documented in this file.
 
-## Unreleased
+## 0.11.1 — 2026-10-20
+
+Catalog problems surface before a run instead of inside one, and a runner that
+cannot reach its dispatcher says why. Nothing here changes what an existing
+scenario, journal or report means; the new machine diagnostic code and outcome
+field are additions that consumers already have to accept.
 
 ### Added
 
