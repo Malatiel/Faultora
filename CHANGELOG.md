@@ -11,6 +11,12 @@ All notable changes to Faultora are documented in this file.
   without running anything, so a catalog `test` would refuse — an unknown
   version, a name declared twice — fails `validate` with the same exit code
   and `CATALOG_IMPORT_FAILED`. Without catalog options it behaves as before.
+- **A guide to five scenario families.** The examples now explain how to run
+  contract, retry, eventual, cross-component and fault lifecycle scenarios,
+  which observations each needs and the limits of a passing result. A new
+  lifecycle example deletes its own payment in cleanup and records fault
+  rollback. End-to-end tests exercise the published files through the CLI JAR,
+  including failed assertions and the real Kafka/PostgreSQL reference system.
 
 ### Fixed
 

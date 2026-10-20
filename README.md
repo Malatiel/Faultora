@@ -209,6 +209,10 @@ Operations the description classifies as destructive are withheld in the same
 way: a cleanup that deletes what its setup created is ordinary and supported,
 but it takes `--allow-destructive` to permit it.
 
+The [examples guide](examples/README.md) walks through contract, retry,
+eventual, cross-component and fault lifecycle scenarios, including their
+required observations and the limits of each passing result.
+
 ### Plan preview
 
 For scripts, put `--diagnostics=json` before the command to receive one versioned

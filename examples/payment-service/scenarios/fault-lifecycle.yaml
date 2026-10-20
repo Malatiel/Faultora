@@ -1,0 +1,55 @@
+apiVersion: faultora.dev/v1
+kind: Scenario
+
+metadata:
+  name: payment-fault-lifecycle
+  description: >-
+    Create a payment before activating a local latency fault, read it during
+    the fault, then delete it in cleanup. An ordinary short run ends before
+    the fault's expiry and records end-of-run rollback in its journal.
+  labels:
+    team: payments
+    suite: reliability
+
+timeout: 1m
+
+setup:
+  - id: create-payment
+    type: operation
+    operationId: create-payment
+    outputAs: created
+    inputs:
+      body:
+        amount: 1500
+        currency: EUR
+
+faults:
+  - id: latency-window
+    faultType: http-latency
+    targetScope: "*"
+    duration: 30s
+    params:
+      delayMs: 20
+
+execute:
+  - id: read-during-fault
+    type: operation
+    operationId: get-payment
+    dependsOn: [latency-window, create-payment]
+    inputs:
+      paymentId: "{{steps.created.body.id}}"
+
+assertions:
+  - id: readable-during-fault
+    assertionType: status
+    targetStep: read-during-fault
+    params:
+      expected: 200
+    message: The payment remains readable during the local latency window
+
+cleanup:
+  - id: delete-created-payment
+    type: operation
+    operationId: delete-payment
+    inputs:
+      paymentId: "{{steps.created.body.id}}"
