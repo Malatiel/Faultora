@@ -27,6 +27,7 @@ class ReleaseVersionConsistencyTest {
     /** Phrases that name the version being released, never a historical one. */
     private static final List<Pattern> RELEASE_MENTIONS = List.of(
             Pattern.compile("faultora-" + SEMVER + "\\.jar"),
+            Pattern.compile("payment-service-" + SEMVER + "\\.jar"),
             Pattern.compile("faultora/runner:" + SEMVER),
             Pattern.compile("ARG VERSION=" + SEMVER),
             Pattern.compile("VERSION=\"\\$\\{1:-" + SEMVER + "}\""),
