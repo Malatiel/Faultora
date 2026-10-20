@@ -5,12 +5,18 @@ on:
     branches: [main, dev]
   pull_request:
     branches: [main]
+  schedule:
+    # GitHub evicts caches unused for 7 days. A daily dependency-check keeps the
+    # NVD database warm, so the release gate fetches only recent changes instead
+    # of the whole database.
+    - cron: '17 3 * * *'
 
 permissions:
   contents: read
 
 jobs:
   build:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -81,6 +87,7 @@ jobs:
           key: odc-${{ runner.os }}-12.2.2-${{ steps.date.outputs.value }}
 
   secret-scan:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -92,6 +99,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   format-check:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
