@@ -23,10 +23,16 @@ final class CatalogLoader {
     }
 
     static List<CatalogAssembly.Document> documents(TestOptions options) throws IOException {
+        return documents(options.openApiPath(), options.asyncApiPath(), options.observationsPath());
+    }
+
+    /** Each path may be null; the order is the one a run merges them in. */
+    static List<CatalogAssembly.Document> documents(Path openApi, Path asyncApi, Path observations)
+            throws IOException {
         List<CatalogAssembly.Document> documents = new ArrayList<>();
-        read(documents, "openapi", options.openApiPath());
-        read(documents, "asyncapi", options.asyncApiPath());
-        read(documents, "observations", options.observationsPath());
+        read(documents, "openapi", openApi);
+        read(documents, "asyncapi", asyncApi);
+        read(documents, "observations", observations);
         return List.copyOf(documents);
     }
 

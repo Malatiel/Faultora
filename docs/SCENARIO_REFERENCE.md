@@ -104,6 +104,16 @@ Validate a document before running it:
 java -jar faultora-0.11.0.jar validate --scenario scenario.yaml
 ```
 
+Give it the catalogs the run will use and it imports them as `test` does,
+without starting anything: a catalog `test` would refuse — an unknown version,
+two documents declaring one name — fails `validate` with the same exit code,
+and importer warnings are printed.
+
+```bash
+java -jar faultora-0.11.0.jar validate --scenario scenario.yaml \
+  --openapi openapi.yaml --asyncapi asyncapi.yaml --observations observations.yaml
+```
+
 ## Top-level fields
 
 | Field | Required | Description |
