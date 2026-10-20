@@ -1,9 +1,14 @@
 package dev.faultora.runner;
 
+import dev.faultora.engine.run.RunResult;
+import dev.faultora.model.identifier.RunId;
 import dev.faultora.runner.protocol.Refusal;
+import dev.faultora.runtime.CatalogAssembly;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -43,14 +48,27 @@ class RunnerAgentTest {
 
     @Test
     void aRunThatEndedSaysHowAndWhetherItsPermissionRanOut() {
-        DispatchedRun.Outcome ran = DispatchedRun.Outcome.ran(
-                new dev.faultora.engine.run.RunResult(
-                        new dev.faultora.model.identifier.RunId("run-1"),
-                        dev.faultora.engine.run.RunResult.Status.PASSED,
-                        3, 2, 0, java.util.Map.of(), 10, null),
-                Path.of("run.ndjson"), true);
+        DispatchedRun.Outcome ran = DispatchedRun.Outcome.ran(passed(), Path.of("run.ndjson"), true, List.of());
 
         assertThat(RunnerAgent.describe(ran))
-                .contains("\"status\":\"PASSED\"", "\"leaseExpired\":true");
+                .contains("\"status\":\"PASSED\"", "\"leaseExpired\":true")
+                .doesNotContain("catalogWarnings");
+    }
+
+    @Test
+    void aRunBuiltOnACatalogAnImporterWarnedAboutCarriesTheWarning() {
+        // The importer skipped a server and the run went ahead without it. The
+        // operator who sent the dispatch is the one who can fix the document,
+        // and the runner's own console is not where they are looking.
+        DispatchedRun.Outcome ran = DispatchedRun.Outcome.ran(passed(), Path.of("run.ndjson"), false,
+                List.of(new CatalogAssembly.Warning("asyncapi", "Server 'legacy' names no host and was skipped")));
+
+        assertThat(RunnerAgent.describe(ran)).contains(
+                "\"catalogWarnings\":[{\"family\":\"asyncapi\","
+                        + "\"message\":\"Server 'legacy' names no host and was skipped\"}]");
+    }
+
+    private static RunResult passed() {
+        return new RunResult(new RunId("run-1"), RunResult.Status.PASSED, 3, 2, 0, Map.of(), 10, null);
     }
 }

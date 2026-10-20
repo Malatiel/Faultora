@@ -2,6 +2,7 @@ package dev.faultora.cli;
 
 import dev.faultora.engine.plan.PlanDiagnostic;
 import dev.faultora.engine.run.RunResult;
+import dev.faultora.runtime.CatalogAssembly;
 import dev.faultora.runtime.PlanPreview;
 import dev.faultora.spec.parser.Diagnostic;
 import dev.faultora.spi.result.AssertionResult;
@@ -43,6 +44,12 @@ final class CommandOutput {
         source.forEach(diagnostic -> diagnostics.add(CliDiagnostic.of(
                 diagnostic.isError() ? CliDiagnostic.Code.SCENARIO_INVALID : CliDiagnostic.Code.SCENARIO_WARNING,
                 diagnostic.severity().name(), null, diagnostic.path())));
+    }
+
+    /** The family is the location: the importer's message stays in human output only. */
+    void catalog(List<CatalogAssembly.Warning> source) {
+        source.forEach(warning -> diagnostics.add(CliDiagnostic.of(
+                CliDiagnostic.Code.CATALOG_WARNING, "WARNING", null, warning.family())));
     }
 
     void plan(List<PlanDiagnostic> source) {

@@ -11,6 +11,7 @@ import dev.faultora.model.security.ContentDigest;
 import dev.faultora.model.security.ExtensionPolicy;
 import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.runner.protocol.Dispatch;
+import dev.faultora.runner.protocol.DispatchedDocument;
 import dev.faultora.runner.protocol.EffectivePolicy;
 import dev.faultora.runner.protocol.Lease;
 import dev.faultora.runner.protocol.Refusal;
@@ -173,6 +174,31 @@ class DispatchedRunTest {
         assertThat(outcome.journalPath()).exists();
         assertThat(Files.readString(outcome.journalPath()))
                 .contains("RUN_STARTED", "run-dispatched-1");
+    }
+
+    @Test
+    void whatAnImporterSaidAboutTheDispatchedCatalogComesBackWithTheOutcome() {
+        String scenario = scenarioOfWaits(1, "1ms");
+        List<DispatchedDocument> documents = List.of(new DispatchedDocument("asyncapi", """
+                asyncapi: 3.0.0
+                info: { title: Payments, version: 1.0.0 }
+                servers:
+                  legacy: { protocol: kafka }
+                """));
+        Dispatch dispatch = new Dispatch(
+                "run-catalog-warnings", System.currentTimeMillis(), "nonce", scenario, documents,
+                Map.of(), Map.of("", "http://localhost:1"),
+                new Dispatch.Credentials(null, "faultora_readonly", "ledger-password"), 1L, signedPolicy(),
+                new Lease(System.currentTimeMillis(), 60_000, 10_000),
+                ContentDigest.sha256Uri(scenario), Dispatch.digestOfDocuments(documents));
+
+        DispatchedRun.Outcome outcome = runner().execute(dispatch, Map.of(), EXTENSIONS);
+
+        assertThat(outcome.completed()).as(() -> String.valueOf(outcome.refusal())).isTrue();
+        assertThat(outcome.catalogWarnings()).anySatisfy(warning -> {
+            assertThat(warning.family()).isEqualTo("asyncapi");
+            assertThat(warning.message()).isEqualTo("Server 'legacy' names no host and was skipped");
+        });
     }
 
     @Test

@@ -213,7 +213,7 @@ public final class DispatchedRun {
             whileRunning.started(lease, journalPath);
             RunResult result = sealed.execute(request, settings, faultProviders, journal, cancellation);
             return Outcome.ran(JournalWriter.closeJournal(journal, result),
-                    journalPath, lease.hasExpired());
+                    journalPath, lease.hasExpired(), prepared.catalogWarnings());
         }
     }
 
@@ -281,23 +281,29 @@ public final class DispatchedRun {
      * @param journalPath  where the events were written, null when it never ran
      * @param leaseExpired whether the lease is what ended it
      * @param refusal      why it did not run, null when it did
+     * @param catalogWarnings what the importers reported about a catalog the run was built on
      */
     public record Outcome(
             RunResult result, Path journalPath, boolean leaseExpired,
-            Refusal refusal, String failure) {
+            Refusal refusal, String failure, List<CatalogAssembly.Warning> catalogWarnings) {
 
-        static Outcome ran(RunResult result, Path journalPath, boolean leaseExpired) {
-            return new Outcome(result, journalPath, leaseExpired, null, null);
+        public Outcome {
+            catalogWarnings = List.copyOf(catalogWarnings);
+        }
+
+        static Outcome ran(RunResult result, Path journalPath, boolean leaseExpired,
+                           List<CatalogAssembly.Warning> catalogWarnings) {
+            return new Outcome(result, journalPath, leaseExpired, null, null, catalogWarnings);
         }
 
         /** Never started: no journal exists, and the reason is a rule. */
         static Outcome refused(Refusal refusal) {
-            return new Outcome(null, null, false, refusal, null);
+            return new Outcome(null, null, false, refusal, null, List.of());
         }
 
         /** Started and stopped part-way: the journal holds what it managed. */
         static Outcome broke(Path journalPath, String failure) {
-            return new Outcome(null, journalPath, false, null, failure);
+            return new Outcome(null, journalPath, false, null, failure, List.of());
         }
 
         /** Whether the engine was reached at all. */

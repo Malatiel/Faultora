@@ -54,6 +54,21 @@ public final class CatalogAssembly {
     public record Document(String family, String content) {
     }
 
+    /**
+     * Something an importer accepted but wants read: a server it skipped, a
+     * version that is going away. The message is the importer's own, and may
+     * name what the document declares.
+     */
+    public record Warning(String family, String message) {
+    }
+
+    /** The catalog, and what its importers had to say while building it. */
+    public record Assembled(ApiCatalog catalog, List<Warning> warnings) {
+        public Assembled {
+            warnings = List.copyOf(warnings);
+        }
+    }
+
     /** Raised when documents cannot become one catalog. */
     public static final class AssemblyException extends RuntimeException {
         public AssemblyException(String message) {
@@ -63,19 +78,29 @@ public final class CatalogAssembly {
 
     /**
      * Import and merge, in the order given.
+     * <p>
+     * Warnings are kept rather than dropped: an importer that skips a server
+     * or reads a deprecated version still succeeds, and a run built on what
+     * it skipped should not leave its author guessing why.
      *
      * @throws AssemblyException when an importer is missing, a document does
      *                           not import, or two documents claim one name
      */
-    public static ApiCatalog assemble(List<Document> documents, ExtensionPolicy extensions) {
+    public static Assembled assemble(List<Document> documents, ExtensionPolicy extensions) {
         List<ApiCatalog> imported = new ArrayList<>();
+        List<Warning> warnings = new ArrayList<>();
         for (Document document : documents) {
-            imported.add(importOne(document, extensions));
+            ImportResult result = importOne(document, extensions);
+            imported.add(result.catalog());
+            if (result.warnings() != null) {
+                result.warnings().forEach(message ->
+                        warnings.add(new Warning(document.family(), message)));
+            }
         }
-        return imported.size() == 1 ? imported.get(0) : merge(imported);
+        return new Assembled(imported.size() == 1 ? imported.get(0) : merge(imported), warnings);
     }
 
-    private static ApiCatalog importOne(Document document, ExtensionPolicy extensions) {
+    private static ImportResult importOne(Document document, ExtensionPolicy extensions) {
         SourceImporter importer = ExtensionRegistry.importerFor(document.family(), extensions);
         if (importer == null) {
             throw new AssemblyException(
@@ -89,7 +114,7 @@ public final class CatalogAssembly {
             result.errors().forEach(error -> why.append("\n  ").append(error.message()));
             throw new AssemblyException(why.toString());
         }
-        return result.catalog();
+        return result;
     }
 
     /** One catalog from several, in the order the documents were named. */

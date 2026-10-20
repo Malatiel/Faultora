@@ -73,7 +73,8 @@ class CatalogLoaderTest {
         }
         TestOptions options = TestOptions.parse(
                 List.of(arguments(openApiPath, asyncApiPath)));
-        return CatalogAssembly.assemble(CatalogLoader.documents(options), RunPolicies.extensionPolicy(options));
+        return CatalogAssembly.assemble(CatalogLoader.documents(options), RunPolicies.extensionPolicy(options))
+                .catalog();
     }
 
     private static String[] arguments(Path openApi, Path asyncApi) {

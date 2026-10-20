@@ -37,6 +37,10 @@ public record PlanPreview(
         prepared.diagnostics().forEach(diagnostic -> diagnostics.add(new Diagnostic(
                 diagnostic.severity().name(), "scenario", null, diagnostic.path(),
                 diagnostic.isError() ? "Scenario validation failed" : "Scenario diagnostic")));
+        // The importer's own words name what the document declares, so the
+        // preview says only which family spoke; the operator reads the rest.
+        prepared.catalogWarnings().forEach(warning -> diagnostics.add(new Diagnostic(
+                "WARNING", "catalog", null, warning.family(), "Catalog import warning")));
         long timeout = 0;
         if (prepared.compilation() != null) {
             prepared.compilation().diagnostics().forEach(diagnostic -> diagnostics.add(new Diagnostic(

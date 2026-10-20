@@ -2,6 +2,19 @@
 
 All notable changes to Faultora are documented in this file.
 
+## Unreleased
+
+### Fixed
+
+- **Catalog importer warnings are no longer dropped.** A skipped server, a
+  channel without an address or the deprecated `faultora.dev/v1alpha1`
+  observation version imported silently. `faultora test` now prints each
+  warning with its catalog family and reports `CATALOG_WARNING` under
+  `--diagnostics=json`; the structural preview, and so MCP `prepare_run`,
+  lists a `catalog` warning naming the family only; a runner prints them and
+  adds `catalogWarnings` to the outcome it sends the dispatcher. A warning never
+  fails a run.
+
 ## 0.11.0 — 2026-10-19
 
 Limits that hold while a run is running, output a tool can rely on, and a way

@@ -12,6 +12,7 @@ record CliDiagnostic(Code code, String severity, String node, String path, Strin
         PLAN_REFUSED("Review the node, catalog references and effective execution policy."),
         PLAN_WARNING("Review the node and effective execution budgets."),
         CATALOG_IMPORT_FAILED("Check catalog syntax, source family and duplicate identifiers."),
+        CATALOG_WARNING("Review the catalog document of the named family; the importer kept going."),
         CAPABILITY_UNAVAILABLE("Choose an installed capability admitted by the deployment policy."),
         INPUT_UNKNOWN("Use only inputs declared by the scenario."),
         INPUT_REQUIRED("Supply the declared input with --input name=value."),

@@ -97,6 +97,31 @@ class McpToolsTest {
     }
 
     @Test
+    void aPreparationSaysWhichCatalogAnImporterWarnedAboutWithoutRepeatingTheDocument() throws Exception {
+        String hostless = """
+                asyncapi: 3.0.0
+                info: { title: Events, version: 1.0.0 }
+                servers:
+                  %s: { protocol: kafka }
+                """.formatted(McpFixtures.MARKER);
+        var configuration = new McpConfiguration(Map.of(
+                "demo", new CatalogAssembly.Document("openapi", McpFixtures.CATALOG),
+                "events", new CatalogAssembly.Document("asyncapi", hostless)), McpFixtures.policy());
+        var arguments = McpJson.MAPPER.createObjectNode().put("scenario", McpFixtures.SCENARIO).put("seed", 42);
+        arguments.putArray("catalogIds").add("demo").add("events");
+        try (var tools = new McpTools(configuration)) {
+            var result = tools.call("prepare_run", arguments);
+            assertThat(result.path("isError").asBoolean()).isFalse();
+            assertThat(result.path("structuredContent").path("preview").path("diagnostics")).anySatisfy(diagnostic -> {
+                assertThat(diagnostic.path("severity").asText()).isEqualTo("WARNING");
+                assertThat(diagnostic.path("phase").asText()).isEqualTo("catalog");
+                assertThat(diagnostic.path("path").asText()).isEqualTo("asyncapi");
+            });
+            assertThat(result.toString()).doesNotContain(McpFixtures.MARKER);
+        }
+    }
+
+    @Test
     void parserCompilerAndImporterRefusalsHaveStructuredSanitizedResults() throws Exception {
         try (var tools = new McpTools(McpFixtures.configuration())) {
             for (String scenario : java.util.List.of("[invalid", McpFixtures.SCENARIO.replace("operationId: read",

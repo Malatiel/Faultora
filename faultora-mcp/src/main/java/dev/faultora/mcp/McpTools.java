@@ -174,7 +174,7 @@ final class McpTools implements AutoCloseable {
     private JsonNode describe(JsonNode arguments) {
         McpConfiguration.fields(arguments, Set.of("catalogId"));
         var catalog = CatalogAssembly.assemble(List.of(catalog(McpConfiguration.text(arguments, "catalogId"))),
-                BUILT_INS);
+                BUILT_INS).catalog();
         return McpJson.MAPPER.valueToTree(CatalogDescription.describe(catalog, configuration.targets()));
     }
 
