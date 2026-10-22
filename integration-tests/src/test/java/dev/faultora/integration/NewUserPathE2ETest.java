@@ -52,7 +52,12 @@ class NewUserPathE2ETest {
         // Double-quoted, "catalog $NAME.yaml" was expanded by PowerShell and sh
         // into a different file. The variable is set here so expansion would
         // show; the command must still find the file it names.
-        Path catalog = directory.resolve("catalog $FAULTORA_E07_LITERAL it's.yaml");
+        // On Linux the catalog is named with a backslash and nothing else that
+        // forces quoting, which sh would treat as an escape; on Windows it would
+        // be a separator. The output directory carries the space and the $.
+        Path catalog = directory.resolve(windows()
+                ? "catalog $FAULTORA_E07_LITERAL it's.yaml"
+                : "catalog\\literal.yaml");
         Files.copy(ExampleFixtures.openApi(), catalog);
         Ran init = faultora("init", "--from-openapi", catalog.toString(),
                 "--output", "starter $FAULTORA_E07_LITERAL");

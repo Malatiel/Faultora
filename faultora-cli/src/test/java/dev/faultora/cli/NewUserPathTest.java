@@ -124,8 +124,18 @@ class NewUserPathTest {
                 .isEqualTo("'" + awkward.toString().replace("'", "''") + "'");
         assertThat(InitCommand.quoted(awkward, false))
                 .isEqualTo("'" + awkward.toString().replace("'", "'\\''") + "'");
-        assertThat(InitCommand.quoted(Path.of("plain", "scenario.yaml"), false))
-                .isEqualTo(Path.of("plain", "scenario.yaml").toString());
+        assertThat(InitCommand.quoted(Path.of("plain-scenario.yaml"), false)).isEqualTo("plain-scenario.yaml");
+        assertThat(InitCommand.quoted(Path.of("plain-scenario.yaml"), true)).isEqualTo("plain-scenario.yaml");
+    }
+
+    @Test
+    void aBackslashIsQuotedForAPosixShellButIsAPlainSeparatorForPowerShell() {
+        // Unquoted, sh read catalog\literal.yaml as catalogliteral.yaml.
+        Path linuxName = Path.of("catalog\\literal.yaml");
+        Path windowsPath = Path.of("C:\\work\\catalog.yaml");
+
+        assertThat(InitCommand.quoted(linuxName, false)).isEqualTo("'" + linuxName + "'");
+        assertThat(InitCommand.quoted(windowsPath, true)).isEqualTo(windowsPath.toString());
     }
 
     @Test

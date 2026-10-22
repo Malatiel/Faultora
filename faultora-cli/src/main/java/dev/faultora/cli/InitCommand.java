@@ -190,7 +190,9 @@ public class InitCommand implements Command {
      */
     static String quoted(Path path, boolean powerShell) {
         String text = path.toString();
-        if (text.matches("[A-Za-z0-9_./:\\\\-]+")) {
+        // A backslash is an ordinary path character to PowerShell but an escape
+        // to a POSIX shell, which would drop it from an unquoted Linux name.
+        if (text.matches(powerShell ? "[A-Za-z0-9_./:\\\\-]+" : "[A-Za-z0-9_./:-]+")) {
             return text;
         }
         return powerShell
