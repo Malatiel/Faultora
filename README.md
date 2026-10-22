@@ -129,6 +129,23 @@ accepted.
 
 ## Install
 
+### CLI archive
+
+The build produces `faultora-VERSION.zip` and `faultora-VERSION.tar.gz`, each
+with Windows and Linux launchers, the executable JAR, licenses, documentation
+and YAML examples. Extract an archive, keep its directories together, and run
+`bin/faultora` on Linux or `bin\faultora.cmd` on Windows. Java is selected from
+`JAVA_HOME`, or from `PATH` when `JAVA_HOME` is unset; no runtime is installed.
+
+See [Installing the CLI](docs/INSTALLATION.md) for checksums, commands for both
+platforms, and the archive layout. The published v0.11.1 release contains the
+standalone JAR; archives become release assets with the first release that
+includes this packaging. Until then, build them locally with
+`./mvnw package -DskipTests` (`.\mvnw.cmd package -DskipTests` on Windows), under
+`faultora-cli/target/`.
+
+### Standalone JAR
+
 Download the release JAR and its checksums:
 
 ```bash

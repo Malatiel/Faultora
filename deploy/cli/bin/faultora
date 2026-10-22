@@ -1,0 +1,31 @@
+#!/bin/sh
+set -eu
+
+PRG=$0
+case $PRG in
+    */*) ;;
+    *)
+        if [ -f "$PRG" ]; then
+            PRG=./$PRG
+        elif ! PRG=$(command -v "$PRG"); then
+            printf '%s\n' 'faultora: cannot locate launcher script' >&2
+            exit 127
+        fi
+        ;;
+esac
+while [ -L "$PRG" ]; do
+    BIN_DIR=$(CDPATH= cd -- "${PRG%/*}" && pwd -P)
+    LINK=$(readlink "$PRG")
+    case $LINK in
+        /*) PRG=$LINK ;;
+        *) PRG=$BIN_DIR/$LINK ;;
+    esac
+done
+APP_HOME=$(CDPATH= cd -- "${PRG%/*}/.." && pwd -P)
+if [ -n "${JAVA_HOME:-}" ]; then
+    JAVA="$JAVA_HOME/bin/java"
+else
+    JAVA=java
+fi
+
+exec "$JAVA" -jar "$APP_HOME/lib/faultora-${project.version}.jar" "$@"

@@ -19,6 +19,14 @@ All notable changes to Faultora are documented in this file.
   class.
 - The GitHub Actions example downloads the current release instead of 0.7.2,
   and checks pull requests with `validate` on the catalog and `test --preview`.
+- **CLI archives with Windows and Linux launchers.** The versioned ZIP and
+  tar.gz include the executable, licenses, installation guide and YAML examples.
+  The launchers use an existing Java runtime and work outside the installation
+  directory. Release checksums and attestations also cover both archives.
+  The Linux launcher also follows symbolic links. Local links in the bundled
+  guides include their referenced documents, CI example and report image.
+  Running `sh faultora` from `bin` also works with an empty `PATH` when
+  `JAVA_HOME` is set; a failed launcher lookup reports why it stopped.
 
 ### Changed
 
