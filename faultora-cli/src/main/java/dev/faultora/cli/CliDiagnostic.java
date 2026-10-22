@@ -24,7 +24,7 @@ record CliDiagnostic(Code code, String severity, String node, String path, Strin
         NODE_FAILED("Review this node's result and dependencies in the run journal."),
         NODE_ERROR("Review this node's configuration and permitted target capabilities."),
         DESTINATION_BLOCKED("Target a public address, or permit private and loopback ones with --allow-private."),
-        PARAMETER_MISSING("Give the step a value for each path parameter of its operation under inputs."),
+        PARAMETER_MISSING("Give the step, under inputs, a value for each parameter its operation requires."),
         RUN_FAILED("Review the failed nodes in the run journal."),
         RUN_ERROR("Review deployment configuration and the run journal before retrying."),
         RUN_CANCELLED("Check cancellation, deadlines and lease state before retrying."),

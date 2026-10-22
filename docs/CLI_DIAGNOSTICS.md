@@ -69,7 +69,7 @@ unknown future codes and fields. Hint wording is informational.
 | `PREPARATION_FAILED` | Preparation stopped without a parser/compiler diagnostic. |
 | `ASSERTION_FAILED`, `ASSERTION_INDETERMINATE` | A node's assertion failed or lacked usable evidence. |
 | `DESTINATION_BLOCKED` | The node's target address is outside the destination policy — most often a local or private target run without `--allow-private`. |
-| `PARAMETER_MISSING` | The node's operation has a path parameter the step gives no value. |
+| `PARAMETER_MISSING` | The node's operation requires a parameter the step gives no value — an HTTP path parameter or an observation's SQL bind variable. |
 | `NODE_FAILED`, `NODE_ERROR` | Other node failures, including connector or policy errors. |
 | `RUN_FAILED`, `RUN_ERROR`, `RUN_CANCELLED` | Run-level failure, infrastructure error or cancellation. |
 | `COMMAND_INVALID`, `COMMAND_FAILED` | Fallback for command failures without a more specific diagnostic, including health checks. |

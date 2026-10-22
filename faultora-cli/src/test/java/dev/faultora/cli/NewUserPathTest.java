@@ -93,12 +93,97 @@ class NewUserPathTest {
         assertThat(init.exit()).isEqualTo(FaultoraCli.EXIT_PASS);
         String generated = Files.readString(directory.resolve("starter/scenario.yaml"));
         assertThat(generated)
-                .contains("operationId: list-payments", "operationId: create-payment")
-                .doesNotContain("operationId: get-payment", "operationId: delete-payment")
+                .contains("operationId: list-payments")
+                .doesNotContain("operationId: get-payment", "operationId: delete-payment",
+                        "operationId: create-payment")
                 .contains("#   get-payment: needs paymentId under inputs")
                 .contains("#   delete-payment: destructive; runs only with --allow-destructive")
                 .contains("expected: 200");
         assertThat(init.stdout()).contains("Next:", "--preview", "--allow-private");
+    }
+
+    @Test
+    void anOperationThatNeedsARequestBodyIsLeftForTheAuthorToFillIn() throws Exception {
+        // Generated as a step, the POST went out with an empty body; an API
+        // that checks its input answered 400 and the starter scenario failed.
+        run("init", "--from-openapi", openApi().toString(), "--output", directory.resolve("starter").toString());
+
+        assertThat(Files.readString(directory.resolve("starter/scenario.yaml")))
+                .doesNotContain("operationId: create-payment")
+                .contains("#   create-payment: needs a request body under inputs");
+    }
+
+    @Test
+    void theNextCommandsSurviveSpacesInThePaths() throws Exception {
+        Path catalog = Files.writeString(directory.resolve("catalog with spaces.yaml"), OPENAPI);
+        Path starter = directory.resolve("starter with spaces");
+
+        var init = run("init", "--from-openapi", catalog.toString(), "--output", starter.toString());
+
+        String validate = init.stdout().lines().map(String::strip)
+                .filter(line -> line.startsWith("faultora validate ")).findFirst().orElseThrow();
+        List<String> arguments = splitLikeAShell(validate.substring("faultora ".length()));
+        assertThat(arguments).containsExactly("validate",
+                "--scenario", starter.resolve("scenario.yaml").toString(), "--openapi", catalog.toString());
+        assertThat(run(arguments.toArray(String[]::new)).exit()).isEqualTo(FaultoraCli.EXIT_PASS);
+    }
+
+    @Test
+    void aMissingSqlBindVariableIsNotDescribedAsAUrlPath() throws Exception {
+        // PARAMETER_MISSING is also what an observation reports for an unbound
+        // :name, and the hint said "path" to someone who had written SQL.
+        Path observations = Files.writeString(directory.resolve("observations.yaml"), """
+                apiVersion: faultora.dev/v1
+                kind: Observations
+                servers:
+                  ledger: { url: "jdbc:h2:mem:new-user-path" }
+                observations:
+                  entries-for: { server: ledger, sql: "SELECT :paymentId AS payment_id" }
+                """);
+        Path scenario = scenario("""
+                  - id: entries
+                    operationId: entries-for
+                """);
+
+        var tested = run("--diagnostics=json", "test", "--scenario", scenario.toString(),
+                "--observations", observations.toString(), "--output", directory.resolve("json").toString());
+        var human = run("test", "--scenario", scenario.toString(),
+                "--observations", observations.toString(), "--output", directory.resolve("human").toString());
+
+        assertThat(JSON.readTree(tested.stdout()).path("diagnostics")).anySatisfy(diagnostic -> {
+            assertThat(diagnostic.path("code").asText()).isEqualTo("PARAMETER_MISSING");
+            assertThat(diagnostic.path("hint").asText()).doesNotContain("path");
+        });
+        assertThat(human.exit()).isEqualTo(FaultoraCli.EXIT_TEST_FAILURE);
+        assertThat(human.stderr()).contains("bind variable", "under the step's inputs")
+                .doesNotContain("whose path has");
+    }
+
+    /** Double quotes group, as cmd, PowerShell and POSIX shells read these lines. */
+    private static List<String> splitLikeAShell(String line) {
+        List<String> arguments = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean quoted = false;
+        boolean started = false;
+        for (char c : line.toCharArray()) {
+            if (c == '"') {
+                quoted = !quoted;
+                started = true;
+            } else if (c == ' ' && !quoted) {
+                if (started) {
+                    arguments.add(current.toString());
+                    current.setLength(0);
+                    started = false;
+                }
+            } else {
+                current.append(c);
+                started = true;
+            }
+        }
+        if (started) {
+            arguments.add(current.toString());
+        }
+        return arguments;
     }
 
     @Test
@@ -176,7 +261,7 @@ class NewUserPathTest {
                 "--output", directory.resolve("out").toString());
 
         assertThat(tested.exit()).isEqualTo(FaultoraCli.EXIT_TEST_FAILURE);
-        assertThat(tested.stderr()).contains("path has a parameter with no value", "under the step's inputs");
+        assertThat(tested.stderr()).contains("an ID in a URL path", "under the step's inputs");
         assertThat(Files.readString(directory.resolve("out/events.ndjson")))
                 .contains("\"code\":\"PARAMETER_MISSING\"");
     }

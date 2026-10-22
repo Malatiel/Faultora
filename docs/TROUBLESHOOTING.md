@@ -18,7 +18,7 @@ faultora test --scenario faultora/scenario.yaml --openapi openapi.yaml \
 ```
 
 `init` generates steps only for operations that can run with nothing filled
-in. Operations that need a path parameter, or that are destructive, are listed
+in. Operations that need a parameter or a request body, or that are destructive, are listed
 at the top of the file as comments saying what they need; turn them into steps
 once you have decided what to give them.
 
@@ -60,8 +60,10 @@ service needs `--allow-private`. With it set, the message says the address is
 outside the policy even so — for example a redirect to a disallowed scheme.
 
 **A step that reads one item fails at once** — `PARAMETER_MISSING`, exit 1.
-The operation's path has a parameter such as `{paymentId}` that the step does
-not supply. Give it under the step's inputs, usually from an earlier step:
+The operation requires a parameter the step does not supply: a path parameter
+such as `{paymentId}`, or a bind variable such as `:paymentId` in an
+observation's SQL. Nothing is sent. Give it under the step's inputs, usually
+from an earlier step:
 
 ```yaml
   - id: read-payment

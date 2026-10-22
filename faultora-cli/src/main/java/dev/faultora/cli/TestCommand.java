@@ -213,7 +213,7 @@ public class TestCommand implements Command {
      * <p>
      * The report withholds provider detail by design, which left "operation
      * failed" as all a person learned when they had pointed Faultora at
-     * localhost or forgotten an ID in the path. Both causes are policy or
+     * localhost or forgotten an ID the operation needs. Both causes are policy or
      * scenario facts, not provider prose, so they can be named.
      */
     private void printHints(RunResult result, TestOptions options) {
@@ -230,8 +230,11 @@ public class TestCommand implements Command {
                             : "A local or private target, such as localhost, needs --allow-private."));
         }
         if (missing > 0) {
-            output.err().println("Hint: " + missing + " step(s) call an operation whose path has a parameter"
-                    + " with no value. Set it under the step's inputs, for example"
+            // Said for every protocol: an HTTP path placeholder and an
+            // observation's SQL bind variable both arrive here with this code.
+            output.err().println("Hint: " + missing + " step(s) left a parameter their operation requires"
+                    + " without a value, such as an ID in a URL path or a query's bind variable."
+                    + " Set it under the step's inputs, for example"
                     + " <name>: \"{{steps.<earlier-step>.body.id}}\".");
         }
     }

@@ -104,11 +104,10 @@ public class InitCommand implements Command {
             output.out().println("Generated scenario: " + scenarioPath);
             output.out().println();
             output.out().println("Next:");
-            output.out().println("  faultora validate --scenario " + scenarioPath + " --openapi " + openApiPath);
-            output.out().println("  faultora test --scenario " + scenarioPath + " --openapi " + openApiPath
-                    + " --target <base-url> --preview");
-            output.out().println("  faultora test --scenario " + scenarioPath + " --openapi " + openApiPath
-                    + " --target <base-url> --format console,html");
+            String files = "--scenario " + quoted(scenarioPath) + " --openapi " + quoted(openApiPath);
+            output.out().println("  faultora validate " + files);
+            output.out().println("  faultora test " + files + " --target <base-url> --preview");
+            output.out().println("  faultora test " + files + " --target <base-url> --format console,html");
             output.out().println("Add --allow-private when the target is localhost or another private address.");
 
             return FaultoraCli.EXIT_PASS;
@@ -173,16 +172,29 @@ public class InitCommand implements Command {
         return sb.toString();
     }
 
+    /**
+     * A path as one argument in a command someone will paste: quoted unless it
+     * plainly needs no quoting. Double quotes are read the same way by cmd,
+     * PowerShell and POSIX shells for the paths this prints.
+     */
+    static String quoted(Path path) {
+        String text = path.toString();
+        return text.matches("[A-Za-z0-9_./:\\\\-]+") ? text : "\"" + text + "\"";
+    }
+
     /** Null when the operation runs with nothing filled in; otherwise why not. */
     private static String whyNotRunnableAsGenerated(OperationDefinition op) {
         if (op.safety() == SafetyClassification.DESTRUCTIVE) {
             return "destructive; runs only with --allow-destructive";
         }
+        // A required body counts too: nothing generates one unless the step
+        // asks for it, and an empty POST is refused by any API that checks.
         List<String> needed = new ArrayList<>();
         if (op.inputs() != null) {
             op.inputs().values().forEach(input -> {
-                if (input.required() && input.location() != InputDefinition.InputLocation.BODY) {
-                    needed.add(input.name());
+                if (input.required()) {
+                    needed.add(input.location() == InputDefinition.InputLocation.BODY
+                            ? "a request body" : input.name());
                 }
             });
         }
