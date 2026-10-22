@@ -2,7 +2,12 @@
 
 All notable changes to Faultora are documented in this file.
 
-## Unreleased
+## 0.11.2 — 2026-10-22
+
+A first run that works: `init` writes a scenario that runs as generated, the
+failures a new user meets name what to change, and the CLI comes as archives
+with launchers. Two machine diagnostic codes become more specific — read
+*Changed*; exit codes and the diagnostic schema are unchanged.
 
 ### Added
 
