@@ -24,7 +24,7 @@ class MachineDiagnosticsE2ETest {
     @TempDir Path directory;
 
     @ParameterizedTest
-    @ValueSource(strings = {"pass", "fail", "indeterminate", "node-failed", "node-error", "preview", "preview-refused",
+    @ValueSource(strings = {"pass", "fail", "indeterminate", "node-failed", "destination-blocked", "preview", "preview-refused",
             "report-failure", "artifact-failure", "owned-artifact", "invalid-yaml", "invalid-structure", "input-unknown",
             "input-required", "catalog-refused", "missing-scenario", "missing-catalog", "invalid-option", "invalid-format"})
     void machineModeProducesOnlyOneSafeJsonResultAndPreservesExitCodes(String mode) throws Exception {
@@ -94,7 +94,7 @@ class MachineDiagnosticsE2ETest {
             List<String> args = new ArrayList<>(List.of("--diagnostics=json", "test", "--scenario", scenario.toString(),
                     "--target", "http://127.0.0.1:" + server.getAddress().getPort() + "/" + MARKER,
                     "--allow-private", "--seed", "42", "--format", "console,json,html,junit", "--output", output.toString()));
-            if (mode.equals("node-error")) {
+            if (mode.equals("destination-blocked")) {
                 args.remove("--allow-private");
             }
             if (mode.startsWith("preview")) {
@@ -134,7 +134,7 @@ class MachineDiagnosticsE2ETest {
             }
             int expectedExit = switch (mode) {
                 case "pass", "preview" -> 0;
-                case "fail", "indeterminate", "node-failed", "node-error" -> 1;
+                case "fail", "indeterminate", "node-failed", "destination-blocked" -> 1;
                 case "report-failure", "artifact-failure", "owned-artifact", "missing-scenario", "missing-catalog" -> 3;
                 default -> 2;
             };
@@ -151,7 +151,7 @@ class MachineDiagnosticsE2ETest {
                 case "fail" -> "ASSERTION_FAILED";
                 case "indeterminate" -> "ASSERTION_INDETERMINATE";
                 case "node-failed" -> "NODE_FAILED";
-                case "node-error" -> "NODE_ERROR";
+                case "destination-blocked" -> "DESTINATION_BLOCKED";
                 case "preview-refused" -> "PLAN_REFUSED";
                 case "report-failure" -> "REPORT_WRITE_FAILED";
                 case "artifact-failure", "owned-artifact" -> "ARTIFACT_WRITE_FAILED";
@@ -177,7 +177,8 @@ class MachineDiagnosticsE2ETest {
                 assertThat(output).doesNotExist();
             }
             if (expectedExit == 2 || mode.startsWith("preview") || mode.startsWith("missing")
-                    || mode.equals("artifact-failure") || mode.equals("owned-artifact") || mode.startsWith("node-")) {
+                    || mode.equals("artifact-failure") || mode.equals("owned-artifact") || mode.startsWith("node-")
+                    || mode.equals("destination-blocked")) {
                 assertThat(requests).hasValue(0);
             } else {
                 assertThat(requests).hasValue(1);

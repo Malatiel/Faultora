@@ -4,6 +4,7 @@ import dev.faultora.engine.evidence.NodeEvidence;
 import dev.faultora.engine.plan.PlanNode;
 import dev.faultora.model.catalog.NormalizedError;
 import dev.faultora.model.catalog.TargetDefinition;
+import dev.faultora.net.DestinationPolicyViolation;
 import dev.faultora.spi.contract.Connector;
 import dev.faultora.spi.context.ConnectorContext;
 import dev.faultora.spi.result.OperationResult;
@@ -83,7 +84,21 @@ public final class OperationInvoker {
             return budgetExhausted();
         }
         context.journal().operationAttempted(node.nodeId(), node.operationId(), attempt);
-        var prepared = connector.prepare(target, operationContext);
+        Connector.PreparedTarget prepared;
+        try {
+            prepared = connector.prepare(target, operationContext);
+        } catch (DestinationPolicyViolation refused) {
+            // The commonest first run of all — a local service, without
+            // --allow-private — used to escape as an exception and read as
+            // "node execution failed", an internal error with nothing to act
+            // on. A target outside the destination policy is a policy answer,
+            // and it gets the code the connector already gives a refused URL.
+            return OperationResult.failure(new NormalizedError(
+                    NormalizedError.ErrorCategory.POLICY_VIOLATION,
+                    "DESTINATION_BLOCKED",
+                    "Destination blocked by policy",
+                    false, Map.of()), 0);
+        }
         try {
             halt = halt(context);
             if (halt != null) {

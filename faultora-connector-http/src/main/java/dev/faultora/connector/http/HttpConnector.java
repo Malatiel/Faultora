@@ -206,6 +206,16 @@ public class HttpConnector implements Connector {
             // Build the request URL
             String method = (String) operation.protocolMetadata().getOrDefault("method", "GET");
             String path = (String) operation.protocolMetadata().getOrDefault("path", "/");
+            if (UNFILLED_PATH_PARAMETER.matcher(fill(path, inputs)).find()) {
+                // Left in place, the placeholder reached URI.create as a brace
+                // and surfaced as an internal error, though the step had simply
+                // not been told which payment, order or user it is about.
+                return OperationResult.failure(new NormalizedError(
+                        NormalizedError.ErrorCategory.VALIDATION,
+                        "PARAMETER_MISSING",
+                        "A path parameter of this operation has no value",
+                        false, Map.of()), 0);
+            }
             String url = buildUrl(httpTarget.targetDefinition().baseUrl(), path, inputs);
 
             // Validate the resolved URL against destination policy (includes DNS resolution)
@@ -599,15 +609,25 @@ public class HttpConnector implements Connector {
 
     // ---- Helpers ----
 
-    private String buildUrl(String baseUrl, String path, Map<String, Object> inputs) {
+    /** A path placeholder no input filled; a null value fills nothing either. */
+    private static final java.util.regex.Pattern UNFILLED_PATH_PARAMETER =
+            java.util.regex.Pattern.compile("\\{[^/{}]+}");
+
+    /** The path with each placeholder that has a non-null input replaced. */
+    private static String fill(String path, Map<String, Object> inputs) {
         String resolvedPath = path;
         for (Map.Entry<String, Object> entry : inputs.entrySet()) {
             String placeholder = "{" + entry.getKey() + "}";
-            if (resolvedPath.contains(placeholder)) {
+            if (entry.getValue() != null && resolvedPath.contains(placeholder)) {
                 resolvedPath = resolvedPath.replace(placeholder,
-                        entry.getValue() != null ? encodePathSegment(entry.getValue().toString()) : "");
+                        encodePathSegment(entry.getValue().toString()));
             }
         }
+        return resolvedPath;
+    }
+
+    private String buildUrl(String baseUrl, String path, Map<String, Object> inputs) {
+        String resolvedPath = fill(path, inputs);
 
         // Add query parameters
         StringBuilder url = new StringBuilder(baseUrl.endsWith("/") ?

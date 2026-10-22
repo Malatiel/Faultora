@@ -110,7 +110,15 @@ public class ValidateCommand implements Command {
             return FaultoraCli.EXIT_INVALID_CONFIG;
         }
 
-        return validateCatalogs(openApiPath, asyncApiPath, observationsPath);
+        int exit = validateCatalogs(openApiPath, asyncApiPath, observationsPath);
+        if (exit == FaultoraCli.EXIT_PASS) {
+            // VALID describes the documents, not whether the run's policy will
+            // admit them; a destructive step passes here and is refused by
+            // test. The preview answers that question without a request.
+            output.out().println("Next: test --preview with the same files and a --target checks the plan"
+                    + " against the execution policy without contacting the target.");
+        }
+        return exit;
     }
 
     /**

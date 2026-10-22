@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 env:
-  FAULTORA_VERSION: '0.7.2'
+  FAULTORA_VERSION: '0.11.1'
 
 jobs:
   api-checks:
@@ -40,11 +40,22 @@ jobs:
           grep " faultora-${FAULTORA_VERSION}.jar$" SHA256SUMS \
             | sha256sum --check --strict -
 
-      - name: Validate Faultora scenario
+      - name: Validate Faultora scenario and catalog
         run: >
           java -jar "faultora-${FAULTORA_VERSION}.jar"
           validate
           --scenario faultora/scenario.yaml
+          --openapi faultora/openapi.yaml
+
+      # Compiles the plan against the execution policy the run step uses, so a
+      # pull request learns about a refused step without credentials and
+      # without a request reaching the target.
+      - name: Check the Faultora plan
+        run: >
+          java -jar "faultora-${FAULTORA_VERSION}.jar"
+          test --preview
+          --scenario faultora/scenario.yaml
+          --openapi faultora/openapi.yaml
 
       - name: Run Faultora
         if: github.event_name != 'pull_request'

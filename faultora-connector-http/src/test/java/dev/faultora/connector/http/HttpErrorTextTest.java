@@ -203,10 +203,49 @@ class HttpErrorTextTest {
         }
     }
 
+    @Test
+    void aPathParameterWithNoValueIsNamedAsMissingBeforeAnyRequest() {
+        // The placeholder used to reach URI.create as a brace and come back as
+        // an internal error, though the step had only not been given an ID.
+        OperationResult result = execute(new HttpConnector(DestinationPolicy.permissive()),
+                "http://127.0.0.1:1", "GET", "/payments/{paymentId}", Map.of());
+
+        assertWithheld(result, "PARAMETER_MISSING", NormalizedError.ErrorCategory.VALIDATION);
+    }
+
+    @Test
+    void aNullPathParameterIsMissingRatherThanAnEmptySegment() {
+        // Filled with nothing, /payments/{paymentId} became /payments/ — a
+        // different endpoint, called as though it were the one asked for.
+        Map<String, Object> inputs = new java.util.HashMap<>();
+        inputs.put("paymentId", null);
+
+        OperationResult result = execute(new HttpConnector(DestinationPolicy.permissive()),
+                "http://127.0.0.1:1", "GET", "/payments/{paymentId}", inputs);
+
+        assertWithheld(result, "PARAMETER_MISSING", NormalizedError.ErrorCategory.VALIDATION);
+    }
+
     private static OperationResult execute(
             HttpConnector connector, String baseUrl, String method, String path,
             Function<String, SecretHandle> resolver, String secretId) {
         return execute(connector, baseUrl, method, path, resolver, secretId, 1_000, 2_000);
+    }
+
+    private static OperationResult execute(
+            HttpConnector connector, String baseUrl, String method, String path, Map<String, Object> inputs) {
+        ConnectorContext context = new ConnectorContext(
+                EvidencePolicy.MINIMAL, null, 1_000, 1_000, 2_000, Map.of("baseUrl", baseUrl));
+        TargetDefinition target = new TargetDefinition(
+                new TargetId("errors"), "Errors", baseUrl,
+                List.of(new ProtocolId("http")), List.of(), Map.of());
+        OperationDefinition operation = new OperationDefinition(
+                new OperationId("errors-op"), new ProtocolId("http"), new TargetId("errors"),
+                SafetyClassification.READ_ONLY, Map.of(), null, Map.of(),
+                Map.of("method", method, "path", path));
+        try (connector) {
+            return connector.execute(connector.prepare(target, context), operation, inputs, context);
+        }
     }
 
     private static OperationResult execute(

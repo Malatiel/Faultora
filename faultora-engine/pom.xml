@@ -28,6 +28,10 @@
             <artifactId>faultora-spec</artifactId>
         </dependency>
         <dependency>
+            <groupId>dev.faultora</groupId>
+            <artifactId>faultora-net</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
         </dependency>
