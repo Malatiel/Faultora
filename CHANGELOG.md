@@ -4,6 +4,13 @@ All notable changes to Faultora are documented in this file.
 
 ## Unreleased
 
+### Added
+
+- **CLI archives with Windows and Linux launchers.** The versioned ZIP and
+  tar.gz include the executable, licenses, installation guide and YAML examples.
+  The launchers use an existing Java runtime and work outside the installation
+  directory. Release checksums and attestations also cover both archives.
+
 ### Fixed
 
 - **A stopping runner no longer writes its health file after it has

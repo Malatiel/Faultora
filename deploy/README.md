@@ -1,5 +1,10 @@
 # Running a runner
 
+For a local CLI installation with Windows and Linux launchers, see
+[Installing the CLI](../docs/INSTALLATION.md). The CLI archive includes the same
+executable used by the runner; it does not include a Java runtime or container
+image.
+
 A Faultora runner sits inside the network it tests and dials out for work.
 Nothing connects to it: not the control plane, which it calls; not a health
 probe, which runs a command inside the container; not a metrics scrape. That

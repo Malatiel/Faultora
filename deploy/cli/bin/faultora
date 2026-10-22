@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+case $0 in
+    */*) BIN_DIR=${0%/*} ;;
+    *) BIN_DIR=. ;;
+esac
+APP_HOME=$(CDPATH= cd -- "$BIN_DIR/.." && pwd)
+if [ -n "${JAVA_HOME:-}" ]; then
+    JAVA="$JAVA_HOME/bin/java"
+else
+    JAVA=java
+fi
+
+exec "$JAVA" -jar "$APP_HOME/lib/faultora-${project.version}.jar" "$@"

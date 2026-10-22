@@ -87,10 +87,13 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           cp "faultora-cli/target/faultora-${VERSION}.jar" dist/
+          cp "faultora-cli/target/faultora-${VERSION}.zip" dist/
+          cp "faultora-cli/target/faultora-${VERSION}.tar.gz" dist/
           cp "target/faultora-${VERSION}-sbom.json" dist/
           cp LICENSE dist/
           cd dist
-          sha256sum "faultora-${VERSION}.jar" "faultora-${VERSION}-sbom.json" LICENSE > SHA256SUMS
+          sha256sum "faultora-${VERSION}.jar" "faultora-${VERSION}.zip" \
+            "faultora-${VERSION}.tar.gz" "faultora-${VERSION}-sbom.json" LICENSE > SHA256SUMS
 
       - name: Attest release artifacts
         if: github.event.repository.private == false
@@ -104,6 +107,8 @@ jobs:
         run: >
           gh release create "${GITHUB_REF_NAME}"
           "dist/faultora-${VERSION}.jar"
+          "dist/faultora-${VERSION}.zip"
+          "dist/faultora-${VERSION}.tar.gz"
           "dist/faultora-${VERSION}-sbom.json"
           dist/LICENSE
           dist/SHA256SUMS
