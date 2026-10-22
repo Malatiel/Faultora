@@ -13,10 +13,10 @@ The tar.gz preserves the executable bit for Linux; ZIP is convenient on Windows.
 
 Published archives are downloaded from the corresponding
 [GitHub release](https://github.com/Malatiel/Faultora/releases), together with
-`SHA256SUMS`. Archive publication starts with the first release containing this
-packaging. The already published v0.11.1 provides the standalone JAR instead;
-its installation commands remain in [the README](../README.md#standalone-jar).
-To try archives before that release, build from a checkout:
+`SHA256SUMS`. Releases from 0.11.2 publish both archives; earlier releases
+provide the standalone JAR only, installed as described in
+[the README](../README.md#standalone-jar). To build the archives from a
+checkout instead:
 
 ```sh
 ./mvnw package -DskipTests
@@ -35,7 +35,7 @@ Public release artifacts also have GitHub build attestations, which can be
 verified with `gh attestation verify ARCHIVE --repo Malatiel/Faultora`.
 
 ```sh
-FAULTORA_VERSION=0.11.1
+FAULTORA_VERSION=0.11.2
 grep " faultora-${FAULTORA_VERSION}.tar.gz$" SHA256SUMS \
   | sha256sum --check --strict -
 tar -xzf "faultora-${FAULTORA_VERSION}.tar.gz"
@@ -68,7 +68,7 @@ downloaded file. It works without changing PowerShell execution policy; the
 launcher is a `.cmd` file.
 
 ```powershell
-$version = '0.11.1'
+$version = '0.11.2'
 $archive = "faultora-$version.zip"
 $entries = @(Get-Content -LiteralPath SHA256SUMS |
     Where-Object { $_ -match ("^[0-9a-f]{64}  " + [regex]::Escape($archive) + '$') })

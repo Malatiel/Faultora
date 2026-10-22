@@ -11,11 +11,11 @@ infrastructure and does not require a hosted control plane or telemetry.
 The scenario format is frozen at `faultora.dev/v1`; the application version
 below moves independently of it.
 
-Version 0.11.1 is a runnable technical preview. It targets local development
+Version 0.11.2 is a runnable technical preview. It targets local development
 and CI use on Java 21, and it can now run **inside a private network** as a
 runner that dials out for work.
 
-## What 0.11.1 includes
+## What 0.11.2 includes
 
 Scenario execution:
 
@@ -64,7 +64,12 @@ Scenario execution:
   `--diagnostics=json` gives scripts one versioned result per command;
 - `validate` imports the catalogs a run would use, so a catalog `test` would
   refuse is refused before anything runs, and importer warnings — a skipped
-  server, a deprecated version — are reported instead of dropped.
+  server, a deprecated version — are reported instead of dropped;
+- `init` writes a starter scenario that runs as generated, and a first run
+  against localhost, or with an ID left out, says which flag or input to add;
+  [troubleshooting](docs/TROUBLESHOOTING.md) walks through each failure class;
+- ZIP and tar.gz archives with Windows and Linux launchers, using an existing
+  Java; see [Installing the CLI](docs/INSTALLATION.md).
 
 Fault injection:
 
@@ -138,18 +143,17 @@ and YAML examples. Extract an archive, keep its directories together, and run
 `JAVA_HOME`, or from `PATH` when `JAVA_HOME` is unset; no runtime is installed.
 
 See [Installing the CLI](docs/INSTALLATION.md) for checksums, commands for both
-platforms, and the archive layout. The published v0.11.1 release contains the
-standalone JAR; archives become release assets with the first release that
-includes this packaging. Until then, build them locally with
-`./mvnw package -DskipTests` (`.\mvnw.cmd package -DskipTests` on Windows), under
-`faultora-cli/target/`.
+platforms, and the archive layout. Releases from 0.11.2 publish both archives
+beside the standalone JAR; to build them from a checkout, run
+`./mvnw package -DskipTests` (`.\mvnw.cmd package -DskipTests` on Windows) and
+find them under `faultora-cli/target/`.
 
 ### Standalone JAR
 
 Download the release JAR and its checksums:
 
 ```bash
-FAULTORA_VERSION=0.11.1
+FAULTORA_VERSION=0.11.2
 RELEASE_URL="https://github.com/Malatiel/Faultora/releases/download/v${FAULTORA_VERSION}"
 
 curl --fail --location --retry 3 \
@@ -182,7 +186,7 @@ their prerequisites are unavailable; those skips do not prove qualification.
 The executable artifact is written to:
 
 ```text
-faultora-cli/target/faultora-0.11.1.jar
+faultora-cli/target/faultora-0.11.2.jar
 ```
 
 The regular CI build can run without repository secrets. Configure the
@@ -195,9 +199,9 @@ missing.
 Check the executable and validate the example scenario:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.11.1.jar --version
+java -jar faultora-cli/target/faultora-0.11.2.jar --version
 
-java -jar faultora-cli/target/faultora-0.11.1.jar \
+java -jar faultora-cli/target/faultora-0.11.2.jar \
   validate \
   --scenario examples/payment-service/scenarios/passing.yaml
 ```
@@ -205,7 +209,7 @@ java -jar faultora-cli/target/faultora-0.11.1.jar \
 Generate a starter scenario from an OpenAPI document:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.11.1.jar \
+java -jar faultora-cli/target/faultora-0.11.2.jar \
   init \
   --from-openapi examples/payment-service/openapi.yaml \
   --output ./generated
@@ -214,7 +218,7 @@ java -jar faultora-cli/target/faultora-0.11.1.jar \
 Run a scenario against an API:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.11.1.jar \
+java -jar faultora-cli/target/faultora-0.11.2.jar \
   test \
   --scenario examples/payment-service/scenarios/passing.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -244,7 +248,7 @@ With `test --preview`, the preview is nested in the same result. See the
 Add `--preview` to `test` to inspect the compiled plan without running it:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.11.1.jar \
+java -jar faultora-cli/target/faultora-0.11.2.jar \
   test --preview \
   --scenario examples/payment-service/scenarios/passing.yaml \
   --openapi examples/payment-service/openapi.yaml
@@ -301,7 +305,7 @@ race window, then asserts the business invariant that exactly one payment
 exists:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.11.1.jar \
+java -jar faultora-cli/target/faultora-0.11.2.jar \
   test \
   --scenario examples/payment-service/scenarios/fault-concurrent-duplicate.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -410,7 +414,7 @@ An AsyncAPI 3.0 description brings Kafka channels into the same catalog as the
 HTTP operations, and `--openapi` and `--asyncapi` can be given together:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.11.1.jar \
+java -jar faultora-cli/target/faultora-0.11.2.jar \
   test \
   --scenario examples/payment-worker/scenarios/duplicate-delivery.yaml \
   --asyncapi examples/payment-worker/asyncapi.yaml \
@@ -514,7 +518,7 @@ observations:
 ```
 
 ```bash
-java -jar faultora-cli/target/faultora-0.11.1.jar \
+java -jar faultora-cli/target/faultora-0.11.2.jar \
   test \
   --scenario examples/payment-recovery/scenarios/settlement-invariant.yaml \
   --openapi examples/payment-recovery/openapi.yaml \
@@ -651,7 +655,7 @@ handle is mapped to an environment variable with the `FAULTORA_SECRET_` prefix:
 ```bash
 export FAULTORA_SECRET_PAYMENTS_API='replace-with-a-real-token'
 
-java -jar faultora-cli/target/faultora-0.11.1.jar \
+java -jar faultora-cli/target/faultora-0.11.2.jar \
   test \
   --scenario scenario.yaml \
   --openapi openapi.yaml \
