@@ -114,18 +114,18 @@ class NewUserPathTest {
     }
 
     @Test
-    void theNextCommandsSurviveSpacesInThePaths() throws Exception {
-        Path catalog = Files.writeString(directory.resolve("catalog with spaces.yaml"), OPENAPI);
-        Path starter = directory.resolve("starter with spaces");
+    void pathsInTheNextCommandsAreQuotedSoNothingInThemIsExpanded() {
+        // Double quotes still expand $name in PowerShell and POSIX shells, so a
+        // file called "catalog $X.yaml" became another path once pasted. Single
+        // quotes are literal in both; each escapes its own quote differently.
+        Path awkward = Path.of("dir with space", "catalog $X it's.yaml");
 
-        var init = run("init", "--from-openapi", catalog.toString(), "--output", starter.toString());
-
-        String validate = init.stdout().lines().map(String::strip)
-                .filter(line -> line.startsWith("faultora validate ")).findFirst().orElseThrow();
-        List<String> arguments = splitLikeAShell(validate.substring("faultora ".length()));
-        assertThat(arguments).containsExactly("validate",
-                "--scenario", starter.resolve("scenario.yaml").toString(), "--openapi", catalog.toString());
-        assertThat(run(arguments.toArray(String[]::new)).exit()).isEqualTo(FaultoraCli.EXIT_PASS);
+        assertThat(InitCommand.quoted(awkward, true))
+                .isEqualTo("'" + awkward.toString().replace("'", "''") + "'");
+        assertThat(InitCommand.quoted(awkward, false))
+                .isEqualTo("'" + awkward.toString().replace("'", "'\\''") + "'");
+        assertThat(InitCommand.quoted(Path.of("plain", "scenario.yaml"), false))
+                .isEqualTo(Path.of("plain", "scenario.yaml").toString());
     }
 
     @Test
@@ -159,32 +159,6 @@ class NewUserPathTest {
                 .doesNotContain("whose path has");
     }
 
-    /** Double quotes group, as cmd, PowerShell and POSIX shells read these lines. */
-    private static List<String> splitLikeAShell(String line) {
-        List<String> arguments = new ArrayList<>();
-        StringBuilder current = new StringBuilder();
-        boolean quoted = false;
-        boolean started = false;
-        for (char c : line.toCharArray()) {
-            if (c == '"') {
-                quoted = !quoted;
-                started = true;
-            } else if (c == ' ' && !quoted) {
-                if (started) {
-                    arguments.add(current.toString());
-                    current.setLength(0);
-                    started = false;
-                }
-            } else {
-                current.append(c);
-                started = true;
-            }
-        }
-        if (started) {
-            arguments.add(current.toString());
-        }
-        return arguments;
-    }
 
     @Test
     void theGeneratedScenarioPassesValidateAndCompilesUnderTheDefaultPolicy() throws Exception {

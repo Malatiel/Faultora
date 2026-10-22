@@ -104,11 +104,15 @@ public class InitCommand implements Command {
             output.out().println("Generated scenario: " + scenarioPath);
             output.out().println();
             output.out().println("Next:");
-            String files = "--scenario " + quoted(scenarioPath) + " --openapi " + quoted(openApiPath);
+            String files = "--scenario " + quoted(scenarioPath, POWERSHELL)
+                    + " --openapi " + quoted(openApiPath, POWERSHELL);
             output.out().println("  faultora validate " + files);
             output.out().println("  faultora test " + files + " --target <base-url> --preview");
             output.out().println("  faultora test " + files + " --target <base-url> --format console,html");
             output.out().println("Add --allow-private when the target is localhost or another private address.");
+            if (POWERSHELL && files.contains("'")) {
+                output.out().println("The paths above are quoted for PowerShell.");
+            }
 
             return FaultoraCli.EXIT_PASS;
         } catch (IOException e) {
@@ -172,14 +176,26 @@ public class InitCommand implements Command {
         return sb.toString();
     }
 
+    /** Whether the commands printed here are for PowerShell rather than a POSIX shell. */
+    private static final boolean POWERSHELL =
+            System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
+
     /**
-     * A path as one argument in a command someone will paste: quoted unless it
-     * plainly needs no quoting. Double quotes are read the same way by cmd,
-     * PowerShell and POSIX shells for the paths this prints.
+     * A path as exactly one literal argument in a command someone will paste.
+     * <p>
+     * No quoting means the same thing to cmd, PowerShell and a POSIX shell:
+     * double quotes still expand {@code $name} in two of them. Single quotes are
+     * literal in PowerShell — the Windows shell the installation guide uses —
+     * and in POSIX shells, so those are what is printed, escaped each its own way.
      */
-    static String quoted(Path path) {
+    static String quoted(Path path, boolean powerShell) {
         String text = path.toString();
-        return text.matches("[A-Za-z0-9_./:\\\\-]+") ? text : "\"" + text + "\"";
+        if (text.matches("[A-Za-z0-9_./:\\\\-]+")) {
+            return text;
+        }
+        return powerShell
+                ? "'" + text.replace("'", "''") + "'"
+                : "'" + text.replace("'", "'\\''") + "'";
     }
 
     /** Null when the operation runs with nothing filled in; otherwise why not. */

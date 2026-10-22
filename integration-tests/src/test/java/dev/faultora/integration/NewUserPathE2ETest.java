@@ -48,6 +48,49 @@ class NewUserPathE2ETest {
     }
 
     @Test
+    void theCommandInitPrintsRunsWhenPastedIntoARealShell() throws Exception {
+        // Double-quoted, "catalog $NAME.yaml" was expanded by PowerShell and sh
+        // into a different file. The variable is set here so expansion would
+        // show; the command must still find the file it names.
+        Path catalog = directory.resolve("catalog $FAULTORA_E07_LITERAL it's.yaml");
+        Files.copy(ExampleFixtures.openApi(), catalog);
+        Ran init = faultora("init", "--from-openapi", catalog.toString(),
+                "--output", "starter $FAULTORA_E07_LITERAL");
+        assertThat(init.exit()).as(init.stderr()).isZero();
+        String validate = init.stdout().lines().map(String::strip)
+                .filter(line -> line.startsWith("faultora validate ")).findFirst().orElseThrow();
+
+        String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+        String jar = Path.of(System.getProperty("faultora.cliJar")).toAbsolutePath().toString();
+        List<String> shell = windows()
+                ? List.of("powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+                        "& " + powerShellQuoted(java) + " -jar " + powerShellQuoted(jar)
+                                + validate.substring("faultora".length()) + "; exit $LASTEXITCODE")
+                : List.of("/bin/sh", "-c",
+                        shQuoted(java) + " -jar " + shQuoted(jar) + validate.substring("faultora".length()));
+        ProcessBuilder pasted = new ProcessBuilder(shell).directory(directory.toFile()).redirectErrorStream(true);
+        pasted.environment().put("FAULTORA_E07_LITERAL", "expanded");
+        Process process = pasted.start();
+        String output = new String(process.getInputStream().readAllBytes());
+        assertThat(process.waitFor(120, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(process.exitValue()).as(validate + "\n" + output).isZero();
+        assertThat(output).contains("Scenario is VALID", "Catalog is VALID");
+    }
+
+    private static boolean windows() {
+        return System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT).contains("win");
+    }
+
+    private static String powerShellQuoted(String text) {
+        return "'" + text.replace("'", "''") + "'";
+    }
+
+    private static String shQuoted(String text) {
+        return "'" + text.replace("'", "'\\''") + "'";
+    }
+
+    @Test
     void initThenValidateThenTestThenReportsWorksAsGenerated() throws Exception {
         String openApi = ExampleFixtures.openApi().toAbsolutePath().toString();
         PaymentApi api = new PaymentApi();
