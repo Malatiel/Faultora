@@ -12,6 +12,8 @@ All notable changes to Faultora are documented in this file.
   directory. Release checksums and attestations also cover both archives.
   The Linux launcher also follows symbolic links. Local links in the bundled
   guides include their referenced documents, CI example and report image.
+  Running `sh faultora` from `bin` also works with an empty `PATH` when
+  `JAVA_HOME` is set; a failed launcher lookup reports why it stopped.
 
 ### Fixed
 

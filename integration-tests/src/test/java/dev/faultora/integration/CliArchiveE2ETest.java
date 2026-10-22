@@ -57,6 +57,28 @@ class CliArchiveE2ETest {
         checkCommands(home, false, relative);
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"zip", "tar.gz"})
+    @EnabledOnOs(OS.LINUX)
+    void shellCanRunLocalLauncherWithoutPath(String format) throws Exception {
+        Path home = unpack(format);
+        Path bin = home.resolve("bin");
+        Result version = process(List.of("/bin/sh", "faultora", "--version"), bin, true);
+        assertThat(version.code()).as(version.output()).isZero();
+        assertThat(version.output()).contains("faultora " + System.getProperty("faultora.version"));
+        Result validated = process(List.of("/bin/sh", "faultora", "validate",
+                "--scenario", "../examples/payment-service/scenarios/passing.yaml",
+                "--openapi", "../examples/payment-service/openapi.yaml"), bin, true);
+        assertThat(validated.code()).as(validated.output()).isZero();
+        Result rejected = process(List.of("/bin/sh", "faultora", "validate"), bin, true);
+        assertThat(rejected.code()).as(rejected.output()).isEqualTo(2);
+
+        Result missing = process(List.of("/bin/sh", "-c", Files.readString(bin.resolve("faultora")),
+                "missing-faultora-launcher"), bin, true);
+        assertThat(missing.code()).as(missing.output()).isEqualTo(127);
+        assertThat(missing.output()).contains("faultora: cannot locate launcher script");
+    }
+
     private Path unpack(String format) throws Exception {
         String name = "faultora-" + System.getProperty("faultora.version");
         Path archive = Path.of(System.getProperty("faultora.cliJar"))
@@ -212,7 +234,7 @@ class CliArchiveE2ETest {
                 // the Java that happened to be on the caller's PATH.
                 String pathKey = builder.environment().keySet().stream()
                         .filter(key -> key.equalsIgnoreCase("PATH")).findFirst().orElse("PATH");
-                builder.environment().put(pathKey, work.toString());
+                builder.environment().put(pathKey, "");
             } else {
                 builder.environment().remove("JAVA_HOME");
                 String pathKey = builder.environment().keySet().stream()
