@@ -66,7 +66,10 @@ final class CommandOutput {
         result.nodeResults().values().stream()
                 .sorted(Comparator.comparing(node -> node.nodeId().value()))
                 .forEach(node -> {
-                    if (node.status() == RunResult.Status.FAILED) {
+                    CliDiagnostic.Code known = knownCause(node);
+                    if (known != null) {
+                        error(known, node.nodeId().value(), null);
+                    } else if (node.status() == RunResult.Status.FAILED) {
                         boolean failed = node.assertions().stream().anyMatch(assertion ->
                                 assertion.outcome() == AssertionResult.Outcome.FAIL);
                         boolean indeterminate = node.assertions().stream().anyMatch(assertion ->
@@ -93,6 +96,21 @@ final class CommandOutput {
         if (result.status() == RunResult.Status.FAILED && !hasErrors()) {
             error(CliDiagnostic.Code.RUN_FAILED, null, null);
         }
+    }
+
+    /**
+     * A node failure with a cause the operator can fix from the command line,
+     * named by its own code rather than as a generic node failure; null otherwise.
+     */
+    static CliDiagnostic.Code knownCause(RunResult.NodeResult node) {
+        if (node.error() == null || node.status() == RunResult.Status.PASSED) {
+            return null;
+        }
+        return switch (String.valueOf(node.error().code())) {
+            case "DESTINATION_BLOCKED" -> CliDiagnostic.Code.DESTINATION_BLOCKED;
+            case "PARAMETER_MISSING" -> CliDiagnostic.Code.PARAMETER_MISSING;
+            default -> null;
+        };
     }
 
     boolean hasErrors() {

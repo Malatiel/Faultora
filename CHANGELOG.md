@@ -4,6 +4,36 @@ All notable changes to Faultora are documented in this file.
 
 ## Unreleased
 
+### Added
+
+- **A first run that works as generated, and says what to change when it does
+  not.** `init` generates steps only for operations that run with nothing
+  filled in, lists the others with what they need, takes the expected status
+  from the description, prints the next commands and no longer overwrites an
+  existing `scenario.yaml`. A step refused because its target is local or
+  private now fails as `DESTINATION_BLOCKED`, and a missing HTTP path parameter
+  as `PARAMETER_MISSING`, instead of an internal "node execution failed"; `test`
+  prints a hint for both and for a destructive step refused without
+  `--allow-destructive`, and `--diagnostics=json` reports both codes.
+  [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) walks through each failure
+  class.
+- The GitHub Actions example downloads the current release instead of 0.7.2,
+  and checks pull requests with `validate` on the catalog and `test --preview`.
+
+### Changed
+
+- The `test` summary line counts assertions as assertions —
+  `3 nodes (1 failed), 1 passed assertions, 0 failed assertions` — instead of
+  reading as node counts beside a FAILED status.
+- A null path parameter is reported as missing rather than sent as an empty
+  segment, which reached a different endpoint than the one the step named.
+- Under `--diagnostics=json`, a node refused by the destination policy reports
+  `DESTINATION_BLOCKED` instead of `NODE_ERROR`, and a missing required
+  parameter — an HTTP path parameter or an observation's SQL bind variable —
+  `PARAMETER_MISSING` instead of `NODE_FAILED`. The journal records
+  `DESTINATION_BLOCKED` and the HTTP case as `PARAMETER_MISSING` instead of
+  `EXECUTION_ERROR`. Exit codes are unchanged.
+
 ### Fixed
 
 - **A stopping runner no longer writes its health file after it has

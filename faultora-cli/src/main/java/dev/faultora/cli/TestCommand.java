@@ -128,6 +128,11 @@ public class TestCommand implements Command {
             if (compilation.plan() == null) {
                 output.err().println("Plan compilation failed:");
                 compilation.diagnostics().forEach(d -> output.err().println("  " + d.message()));
+                if (!options.allowDestructive() && compilation.diagnostics().stream()
+                        .anyMatch(d -> d.isError() && d.message().contains("safety DESTRUCTIVE"))) {
+                    output.err().println("Hint: destructive operations run only with --allow-destructive;"
+                            + " remove those steps to run without it.");
+                }
                 return FaultoraCli.EXIT_INVALID_CONFIG;
             }
             compilation.diagnostics().stream()
@@ -162,10 +167,18 @@ public class TestCommand implements Command {
             ReportWriter.writeAll(
                     options.formats(), renderers, executed.events(), outputDir, output.out());
 
-            output.out().printf("%nResult: %s — %d nodes, %d passed, %d failed (%dms)%n",
+            // The counts were of assertions while the line read as nodes, so a
+            // run with a failed step said "0 failed" beside FAILED.
+            long failedNodes = result.nodeResults().values().stream()
+                    .filter(node -> node.status() == RunResult.Status.FAILED
+                            || node.status() == RunResult.Status.ERROR)
+                    .count();
+            output.out().printf("%nResult: %s — %d nodes%s, %d passed assertions, %d failed assertions (%dms)%n",
                     result.status(), result.totalNodes(),
+                    failedNodes == 0 ? "" : " (" + failedNodes + " failed)",
                     result.passedAssertions(), result.failedAssertions(),
                     result.durationMs());
+            printHints(result, options);
 
             return switch (result.status()) {
                 case PASSED -> FaultoraCli.EXIT_PASS;
@@ -194,6 +207,37 @@ public class TestCommand implements Command {
     }
 
     private record ExecutedRun(RunResult result, List<RunEvent> events) { }
+
+    /**
+     * What to change, for the failures a first run usually meets.
+     * <p>
+     * The report withholds provider detail by design, which left "operation
+     * failed" as all a person learned when they had pointed Faultora at
+     * localhost or forgotten an ID the operation needs. Both causes are policy or
+     * scenario facts, not provider prose, so they can be named.
+     */
+    private void printHints(RunResult result, TestOptions options) {
+        long blocked = result.nodeResults().values().stream()
+                .filter(node -> CommandOutput.knownCause(node) == CliDiagnostic.Code.DESTINATION_BLOCKED)
+                .count();
+        long missing = result.nodeResults().values().stream()
+                .filter(node -> CommandOutput.knownCause(node) == CliDiagnostic.Code.PARAMETER_MISSING)
+                .count();
+        if (blocked > 0) {
+            output.err().println("Hint: " + blocked + " step(s) were refused by the destination policy. "
+                    + (options.allowPrivate()
+                            ? "Their address is outside it even with --allow-private."
+                            : "A local or private target, such as localhost, needs --allow-private."));
+        }
+        if (missing > 0) {
+            // Said for every protocol: an HTTP path placeholder and an
+            // observation's SQL bind variable both arrive here with this code.
+            output.err().println("Hint: " + missing + " step(s) left a parameter their operation requires"
+                    + " without a value, such as an ID in a URL path or a query's bind variable."
+                    + " Set it under the step's inputs, for example"
+                    + " <name>: \"{{steps.<earlier-step>.body.id}}\".");
+        }
+    }
 
     /**
      * Execute the compiled plan.
