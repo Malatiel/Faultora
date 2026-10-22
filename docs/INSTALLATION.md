@@ -56,6 +56,10 @@ relative to the launcher, while scenario paths remain relative to your current
 directory. It preserves argument boundaries and the CLI's exit code. If you
 unpack the ZIP on Linux and the extraction tool discards permissions, run
 `chmod +x bin/faultora` in the extracted directory before invoking it.
+The Linux launcher follows absolute and relative symbolic links, including
+chains of links, using `readlink` on `PATH`. A link to `bin/faultora` can therefore
+live outside the installation directory; the JAR is found beside the resolved
+launcher, and input paths still use the caller's current directory.
 
 ## Windows PowerShell
 
@@ -96,8 +100,10 @@ faultora-VERSION/
   NOTICE
   THIRD-PARTY.txt
   README.md
+  CHANGELOG.md
+  deploy/README.md              runner deployment guide
   docs/
-  examples/                     YAML/JSON catalogs and scenarios, example guides
+  examples/                     YAML/JSON catalogs and scenarios, CI, guides
 ```
 
 The single JAR in `lib/` is the same merged executable as the standalone

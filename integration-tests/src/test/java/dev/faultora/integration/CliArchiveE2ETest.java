@@ -1,6 +1,8 @@
 package dev.faultora.integration;
 
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -13,6 +15,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.jar.JarFile;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
@@ -39,6 +43,18 @@ class CliArchiveE2ETest {
     @ValueSource(strings = {"zip", "tar.gz"})
     void launcherAlsoFindsJavaOnPath(String format) throws Exception {
         checkCommands(unpack(format), false);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"zip", "tar.gz"})
+    @EnabledOnOs(OS.LINUX)
+    void launcherResolvesAbsoluteAndRelativeSymbolicLinks(String format) throws Exception {
+        Path home = unpack(format);
+        Path links = Files.createDirectory(directory.resolve("linked launchers with spaces"));
+        Path absolute = Files.createSymbolicLink(links.resolve("absolute"), home.resolve("bin/faultora"));
+        Path relative = Files.createSymbolicLink(links.resolve("relative"), Path.of("absolute"));
+        checkCommands(home, false, absolute);
+        checkCommands(home, false, relative);
     }
 
     private Path unpack(String format) throws Exception {
@@ -107,6 +123,7 @@ class CliArchiveE2ETest {
         assertThat(home.resolve("THIRD-PARTY.txt")).isRegularFile();
         assertThat(home.resolve("README.md")).isRegularFile();
         assertThat(home.resolve("docs/INSTALLATION.md")).isRegularFile();
+        checkLocalLinks(home);
         assertThat(Files.readString(home.resolve("bin/faultora")))
                 .startsWith("#!/bin/sh\n").contains("faultora-" + version + ".jar").doesNotContain("\r");
         assertThat(Files.readString(home.resolve("bin/faultora.cmd")))
@@ -134,15 +151,19 @@ class CliArchiveE2ETest {
     }
 
     private void checkCommands(Path home, boolean javaHome) throws Exception {
-        Path work = Files.createDirectory(directory.resolve("caller with spaces " + PATH_LABEL));
+        checkCommands(home, javaHome, home.resolve(windows() ? "bin/faultora.cmd" : "bin/faultora"));
+    }
+
+    private void checkCommands(Path home, boolean javaHome, Path launcher) throws Exception {
+        Path work = Files.createTempDirectory(directory, "caller with spaces " + PATH_LABEL);
         Path scenario = work.resolve("scenario with spaces " + PATH_LABEL + ".yaml");
         Files.copy(home.resolve("examples/payment-service/scenarios/passing.yaml"), scenario);
         Path openapi = home.resolve("examples/payment-service/openapi.yaml");
         List<String> command = new ArrayList<>();
         if (windows()) {
-            command.addAll(List.of("cmd.exe", "/d", "/c", "call", home.resolve("bin/faultora.cmd").toString()));
+            command.addAll(List.of("cmd.exe", "/d", "/c", "call", launcher.toString()));
         } else {
-            command.add(home.resolve("bin/faultora").toString());
+            command.add(launcher.toString());
         }
         Result version = launch(command, work, javaHome, "--version");
         assertThat(version.code()).as(version.output()).isZero();
@@ -152,6 +173,26 @@ class CliArchiveE2ETest {
         assertThat(validated.code()).as(validated.output()).isZero();
         Result rejected = launch(command, work, javaHome, "validate");
         assertThat(rejected.code()).as(rejected.output()).isEqualTo(2);
+    }
+
+    private static void checkLocalLinks(Path home) throws IOException {
+        Pattern link = Pattern.compile("\\]\\(([^\\s)]+)\\)");
+        try (Stream<Path> files = Files.walk(home)) {
+            for (Path guide : files.filter(path -> path.toString().endsWith(".md")).toList()) {
+                Matcher matcher = link.matcher(Files.readString(guide));
+                while (matcher.find()) {
+                    String target = matcher.group(1);
+                    if (target.startsWith("#") || target.startsWith("//")
+                            || target.matches("[a-zA-Z][a-zA-Z0-9+.-]*:.*")) {
+                        continue;
+                    }
+                    String path = target.split("[#?]", 2)[0];
+                    Path resolved = guide.getParent().resolve(path).normalize();
+                    assertThat(resolved.startsWith(home)).as("local link stays in archive: %s", target).isTrue();
+                    assertThat(resolved).as("local link %s in %s", target, home.relativize(guide)).exists();
+                }
+            }
+        }
     }
 
     private Result launch(List<String> prefix, Path work, boolean javaHome, String... args) throws Exception {

@@ -1,11 +1,20 @@
 #!/bin/sh
 set -eu
 
-case $0 in
-    */*) BIN_DIR=${0%/*} ;;
-    *) BIN_DIR=. ;;
+PRG=$0
+case $PRG in
+    */*) ;;
+    *) PRG=$(command -v "$PRG") ;;
 esac
-APP_HOME=$(CDPATH= cd -- "$BIN_DIR/.." && pwd)
+while [ -L "$PRG" ]; do
+    BIN_DIR=$(CDPATH= cd -- "${PRG%/*}" && pwd -P)
+    LINK=$(readlink "$PRG")
+    case $LINK in
+        /*) PRG=$LINK ;;
+        *) PRG=$BIN_DIR/$LINK ;;
+    esac
+done
+APP_HOME=$(CDPATH= cd -- "${PRG%/*}/.." && pwd -P)
 if [ -n "${JAVA_HOME:-}" ]; then
     JAVA="$JAVA_HOME/bin/java"
 else

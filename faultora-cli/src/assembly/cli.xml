@@ -37,6 +37,8 @@
                 <include>NOTICE</include>
                 <include>THIRD-PARTY.txt</include>
                 <include>README.md</include>
+                <include>CHANGELOG.md</include>
+                <include>deploy/README.md</include>
             </includes>
             <fileMode>0644</fileMode>
         </fileSet>
@@ -45,6 +47,7 @@
             <outputDirectory>docs</outputDirectory>
             <includes>
                 <include>**/*.md</include>
+                <include>assets/**</include>
             </includes>
             <fileMode>0644</fileMode>
         </fileSet>
@@ -53,6 +56,7 @@
             <outputDirectory>examples</outputDirectory>
             <includes>
                 <include>**/*.yaml</include>
+                <include>**/*.yml</include>
                 <include>**/*.json</include>
                 <include>**/README.md</include>
             </includes>

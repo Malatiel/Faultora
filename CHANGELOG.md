@@ -10,6 +10,8 @@ All notable changes to Faultora are documented in this file.
   tar.gz include the executable, licenses, installation guide and YAML examples.
   The launchers use an existing Java runtime and work outside the installation
   directory. Release checksums and attestations also cover both archives.
+  The Linux launcher also follows symbolic links. Local links in the bundled
+  guides include their referenced documents, CI example and report image.
 
 ### Fixed
 
