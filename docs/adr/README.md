@@ -32,3 +32,4 @@
 | [ADR-028](ADR-028-mcp-preparation.md) | MCP inspection and preparation stay within operator authority | Accepted |
 | [ADR-029](ADR-029-mcp-execution.md) | Exact operator approval and session-owned MCP runs | Accepted |
 | [ADR-030](ADR-030-observation-catalog-version.md) | The observation catalog declares a version it is read by | Accepted |
+| [ADR-031](ADR-031-runner-recovery-ownership.md) | Durable delivery does not replay execution | Accepted design; implementation pending |
