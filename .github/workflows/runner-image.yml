@@ -28,6 +28,16 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      # The image attestation names this workflow's ref, and consumers accept
+      # only refs/heads/main. A dispatch from any other branch is refused
+      # before anything is checked out, built or signed.
+      - name: Publish only from main
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Runner images are published only by a dispatch from main, not $GITHUB_REF"
+            exit 1
+          fi
+
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.tag }}
@@ -52,9 +62,17 @@ jobs:
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
             --pattern "faultora-${version}.jar" --pattern SHA256SUMS --dir "$RUNNER_TEMP/release"
           jar="$RUNNER_TEMP/release/faultora-${version}.jar"
+          # Trust gate before ANY code from the tag runs: this workflow's own
+          # gh call, not a script the tag ships, must find release.yml's
+          # attestation for this tag and commit. Until it does, the checked-out
+          # tag is just text.
+          gh attestation verify "$jar" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+            --source-ref "refs/tags/$RELEASE_TAG" --source-digest "$revision" \
+            --deny-self-hosted-runners
+          # The commit is now attested as a release build, so its own checks
+          # may run: listed checksum and JAR version, as a user runs them.
           python3 -B -m unittest discover -s deploy -p 'test_verify_release.py'
-          # The same check a user runs: listed checksum, JAR version, and an
-          # attestation by release.yml for this tag and commit.
           python3 -B deploy/verify-release.py "$jar" --sums "$RUNNER_TEMP/release/SHA256SUMS" \
             --tag "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --source-digest "$revision"
           mkdir -p faultora-cli/target
@@ -110,12 +128,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker buildx bake -f deploy/runner-image.hcl image --set image.output=type=registry
-          manifest="$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest}}')"
-          jq -e '[.manifests[].platform | select(.os == "linux") | .architecture] | sort == ["amd64", "arm64"]' \
-            <<< "$manifest"
-          digest="$(jq -r .digest <<< "$manifest")"
+          metadata="$RUNNER_TEMP/bake-metadata.json"
+          docker buildx bake -f deploy/runner-image.hcl image --set image.output=type=registry \
+            --metadata-file "$metadata"
+          # The digest of what this run built and pushed, from Buildx itself.
+          # The tag is not consulted: another writer could move it between the
+          # push and a lookup, and the attestation would then vouch for their
+          # image. No metadata, no digest, no attestation.
+          digest="$(jq -r '.image["containerimage.digest"] // empty' "$metadata")"
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          docker buildx imagetools inspect "$IMAGE@$digest" --format '{{json .Manifest}}' | jq -e '
+            [.manifests[].platform | select(.os == "linux") | .architecture] | sort == ["amd64", "arm64"]'
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
       # The image gets its own provenance, pinned to the index digest, so a
