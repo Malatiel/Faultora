@@ -90,6 +90,14 @@ isolation would be this ADR's own defect, one level up.
 
 ## Consequences
 
+The protocol design is now specified in
+[Extension wire protocol 1.0](../EXTENSION_PROTOCOL.md), with data-only fixtures
+and a test-only conformance probe. This completes the specification slice,
+not a production codec, child lifecycle, adapter or isolation control. No
+entry in `notYetEnforced` is removed by that specification. Only the three
+pure contracts above are admitted; process supervision and artifact staging
+still require their own implementation and tests.
+
 - Nothing in this repository sets any of the four, so nothing changes for any
   run made today. That is the point: the refusal is for the operator who was
   going to configure one and be misled.

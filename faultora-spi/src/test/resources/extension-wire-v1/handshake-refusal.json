@@ -1,0 +1,10 @@
+{
+  "protocol": "faultora.extension",
+  "kind": "error",
+  "version": null,
+  "sessionId": "0123456789abcdef0123456789abcdef",
+  "id": "0",
+  "data": {
+    "code": "UNSUPPORTED_PROVIDER"
+  }
+}

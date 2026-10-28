@@ -1,0 +1,23 @@
+{
+  "protocol": "faultora.extension",
+  "kind": "request",
+  "version": "1.0",
+  "sessionId": "0123456789abcdef0123456789abcdef",
+  "id": "1",
+  "data": {
+    "provider": {
+      "kind": "importer",
+      "name": "openapi-3.0"
+    },
+    "timeoutMs": 1000,
+    "input": {
+      "sourceContent": "{\"openapi\":\"3.0.3\",\"info\":{\"title\":\"Synthetic\",\"version\":\"1\"},\"paths\":{}}",
+      "context": {
+        "sourceType": "openapi-3.0",
+        "maxRefDepth": 8,
+        "maxDocSizeBytes": 65536,
+        "config": {}
+      }
+    }
+  }
+}

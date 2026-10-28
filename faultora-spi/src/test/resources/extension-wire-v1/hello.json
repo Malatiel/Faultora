@@ -1,0 +1,31 @@
+{
+  "protocol": "faultora.extension",
+  "kind": "hello",
+  "version": null,
+  "sessionId": "0123456789abcdef0123456789abcdef",
+  "id": "0",
+  "data": {
+    "versions": [
+      "1.0"
+    ],
+    "maxFrameBytes": 1048576,
+    "plugin": {
+      "id": "example.pure",
+      "version": "1.0.0"
+    },
+    "providers": [
+      {
+        "kind": "assertion",
+        "name": "sample.status"
+      },
+      {
+        "kind": "importer",
+        "name": "openapi-3.0"
+      },
+      {
+        "kind": "renderer",
+        "name": "sample.json"
+      }
+    ]
+  }
+}
