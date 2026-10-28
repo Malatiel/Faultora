@@ -1,0 +1,37 @@
+{
+  "protocol": "faultora.extension",
+  "kind": "request",
+  "version": "1.0",
+  "sessionId": "0123456789abcdef0123456789abcdef",
+  "id": "1",
+  "data": {
+    "provider": {
+      "kind": "assertion",
+      "name": "sample.status"
+    },
+    "timeoutMs": 1000,
+    "input": {
+      "params": {
+        "expected": 200
+      },
+      "evidence": {
+        "statusCode": 200,
+        "responseHeaders": {
+          "content-type": [
+            "application/json"
+          ]
+        },
+        "responseBody": "eyJvayI6dHJ1ZX0=",
+        "bodyComplete": true,
+        "durationMs": 3,
+        "error": null,
+        "protocolEvidence": {}
+      },
+      "context": {
+        "nodeId": "check-status",
+        "config": {},
+        "schema": null
+      }
+    }
+  }
+}

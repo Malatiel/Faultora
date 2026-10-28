@@ -1,0 +1,27 @@
+{
+  "protocol": "faultora.extension",
+  "kind": "request",
+  "version": "1.0",
+  "sessionId": "0123456789abcdef0123456789abcdef",
+  "id": "1",
+  "data": {
+    "provider": {
+      "kind": "renderer",
+      "name": "sample.json"
+    },
+    "timeoutMs": 1000,
+    "input": {
+      "events": [
+        {
+          "eventType": "RUN_COMPLETED",
+          "timestamp": 1000,
+          "runId": "run-synthetic-1",
+          "totalNodes": 0,
+          "passedAssertions": 0,
+          "failedAssertions": 0,
+          "durationMs": 1
+        }
+      ]
+    }
+  }
+}

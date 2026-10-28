@@ -2,6 +2,15 @@
 
 All notable changes to Faultora are documented in this file.
 
+## Unreleased
+
+### Added
+
+- **Extension protocol specification.** Defines framing, negotiation, request
+  correlation, deadlines and data-only payloads for assertions, importers and
+  renderers, with executable compatibility fixtures. A production codec and
+  process isolation remain pending; existing policy refusals are unchanged.
+
 ## 0.11.3 — 2026-10-28
 
 A download can be checked for who built it, and a dependency finding at CVSS

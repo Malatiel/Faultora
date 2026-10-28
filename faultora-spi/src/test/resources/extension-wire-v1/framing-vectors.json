@@ -1,0 +1,80 @@
+[
+  {
+    "name": "empty-object-framing-only",
+    "hex": "000000027b7d",
+    "value": {}
+  },
+  {
+    "name": "utf8-framing-only",
+    "hex": "000000177b2274657874223a22d09fd180d0b8d0bcd0b5d180227d",
+    "value": {
+      "text": "Пример"
+    }
+  },
+  {
+    "name": "zero-length",
+    "hex": "00000000",
+    "error": "MALFORMED_FRAME"
+  },
+  {
+    "name": "ceiling-plus-one-header-only",
+    "hex": "00100001",
+    "error": "MESSAGE_TOO_LARGE"
+  },
+  {
+    "name": "unsigned-overflow-header-only",
+    "hex": "ffffffff",
+    "error": "MESSAGE_TOO_LARGE"
+  },
+  {
+    "name": "short-prefix",
+    "hex": "0001",
+    "error": "TRUNCATED_FRAME"
+  },
+  {
+    "name": "short-payload",
+    "hex": "000000057b7d",
+    "error": "TRUNCATED_FRAME"
+  },
+  {
+    "name": "invalid-utf8",
+    "hex": "00000002c328",
+    "error": "MALFORMED_MESSAGE"
+  },
+  {
+    "name": "malformed-json",
+    "hex": "000000017b",
+    "error": "MALFORMED_MESSAGE"
+  },
+  {
+    "name": "duplicate-key",
+    "hex": "0000000d7b2278223a312c2278223a327d",
+    "error": "MALFORMED_MESSAGE"
+  },
+  {
+    "name": "trailing-json",
+    "hex": "000000057b7d207b7d",
+    "error": "MALFORMED_MESSAGE"
+  },
+  {
+    "name": "array-root",
+    "hex": "000000025b5d",
+    "error": "MALFORMED_MESSAGE"
+  },
+  {
+    "name": "byte-order-mark",
+    "hex": "00000005efbbbf7b7d",
+    "error": "MALFORMED_MESSAGE"
+  },
+  {
+    "name": "whitespace-only",
+    "hex": "0000000120",
+    "error": "MALFORMED_MESSAGE"
+  },
+  {
+    "name": "negotiated-ceiling-plus-one",
+    "hex": "00000401",
+    "limit": 1024,
+    "error": "MESSAGE_TOO_LARGE"
+  }
+]

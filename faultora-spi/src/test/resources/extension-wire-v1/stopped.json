@@ -1,0 +1,8 @@
+{
+  "protocol": "faultora.extension",
+  "kind": "stopped",
+  "version": "1.0",
+  "sessionId": "0123456789abcdef0123456789abcdef",
+  "id": "2",
+  "data": {}
+}
