@@ -116,23 +116,19 @@ class RunnerImageE2ETest {
     }
 
     /**
-     * The jar the packaging copies in.
+     * The jar the packaging copies in: exactly the one this build produced.
      * <p>
-     * Found rather than named, because the version moves and a test that
-     * hard-coded it would start testing an image built from something older.
+     * It used to be the first faultora-*.jar found in target/, and a working
+     * copy that had built earlier versions without cleaning had several; the
+     * image was then built from whichever came first — 0.10.1 here — and the
+     * boundary tests passed against an image of something older.
      */
-    private static Path shadedJar() throws IOException {
-        Path target = PROJECT_ROOT.resolve("faultora-cli").resolve("target");
-        try (var entries = Files.list(target)) {
-            return entries
-                    .filter(path -> path.getFileName().toString().startsWith("faultora-")
-                            && path.getFileName().toString().endsWith(".jar"))
-                    .filter(path -> !path.getFileName().toString().startsWith("original-"))
-                    .filter(path -> !path.getFileName().toString().startsWith("faultora-cli-"))
-                    .findFirst()
-                    .orElseThrow(() -> new IllegalStateException(
-                            "No packaged jar in " + target + " — run ./mvnw package first"));
+    private static Path shadedJar() {
+        Path jar = Path.of(System.getProperty("faultora.cliJar")).toAbsolutePath().normalize();
+        if (!Files.isRegularFile(jar)) {
+            throw new IllegalStateException("No packaged jar at " + jar + " — run ./mvnw package first");
         }
+        return jar;
     }
 
     @Test
