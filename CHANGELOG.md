@@ -16,7 +16,8 @@ All notable changes to Faultora are documented in this file.
 
 - `THIRD-PARTY.txt` lists the PostgreSQL JDBC driver bundled in the
   executable, with its BSD 2-Clause notice and those of the OnGres SCRAM and
-  stringprep libraries it includes; it was missing.
+  stringprep libraries it includes, and the MIT-licensed Checker Framework
+  qualifiers the driver brings with it; both were missing.
 
 ### Security
 
@@ -28,7 +29,9 @@ All notable changes to Faultora are documented in this file.
 - Upgraded the dependencies the scan had flagged: kafka-clients 3.9.2
   (CVE-2026-35554, producer messages could reach the wrong topic),
   jackson-databind 2.21.5 (CVE-2026-54512, CVE-2026-54513 and five lower),
-  PostgreSQL JDBC 42.7.11 (CVE-2026-42198), httpclient5 5.6.4 (CVE-2026-71290,
+  PostgreSQL JDBC 42.7.14 (CVE-2026-42198, and CVE-2026-54291, a downgrade of
+  `channelBinding=require` that the new gate found in 42.7.11 on its first run),
+  httpclient5 5.6.4 (CVE-2026-71290,
   which affects only the asynchronous client Faultora does not use, and
   CVE-2026-64607) and assertj 3.27.7 in the test kit (CVE-2026-24400).
   kafka-clients now brings LZ4 as `at.yawk.lz4:lz4-java`, the maintained fork.

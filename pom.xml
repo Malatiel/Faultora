@@ -48,7 +48,7 @@
         <kafka-clients.version>3.9.2</kafka-clients.version>
         <testcontainers.version>1.21.4</testcontainers.version>
         <h2.version>2.4.240</h2.version>
-        <postgresql.version>42.7.11</postgresql.version>
+        <postgresql.version>42.7.14</postgresql.version>
         <httpclient5.version>5.6.4</httpclient5.version>
         <httpcore5.version>5.4.3</httpcore5.version>
 
