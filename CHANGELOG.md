@@ -34,6 +34,12 @@ All notable changes to Faultora are documented in this file.
   digest, like its base image already was. Dependabot proposes updates weekly,
   and a test refuses an unpinned reference. A release built from its tag is
   byte-identical to the published files; `docs/SECURITY.md` says how to check.
+- **A critical vulnerability in the runner image stops its publication.** The
+  image workflow scans each platform's operating-system packages with a
+  digest-pinned Trivy before pushing, and an unwaived CRITICAL finding fails
+  it; waivers carry an owner, a reason and an expiry like dependency ones.
+  The one current waiver is CVE-2023-45853 in zlib1g, which Debian does not
+  build into that package. HIGH findings are reported and kept, not blocking.
 
 ## 0.11.3 — 2026-10-28
 

@@ -697,6 +697,21 @@ release matches its source. A Windows checkout with
 `core.autocrlf` differs only in the `pom.properties` files Maven writes with
 the platform line separator.
 
+**Runner image vulnerability gate.** Before the image workflow publishes, it
+scans the operating-system packages of each platform's image with Trivy,
+itself pinned by digest, given a saved archive rather than the Docker socket.
+`scripts/image_vulnerability_gate.py` reads the JSON report: a **CRITICAL**
+finding stops publication unless `.github/image-vulnerability-exceptions.json`
+waives it, with the same owner, reason and expiry rules as the dependency
+gate. HIGH findings are listed in the log and the kept report without
+blocking; most are fixes Debian has published that the distroless base has
+not yet picked up, and the answer is moving the base digest when it does. The
+scan covers the base image's packages, not the jar's dependencies (the
+dependency gate's job), and the images it scans are the ones the workflow
+builds for its pre-publication checks from the same definition as the pushed
+index. Passing it is not a security qualification of the image: it says only
+that no known unwaived critical vulnerability is in those packages today.
+
 ## 15. Logging, telemetry, and diagnostics
 
 - Usage telemetry is absent by default.

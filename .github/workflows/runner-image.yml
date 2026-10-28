@@ -123,6 +123,39 @@ jobs:
               "$image" health --file /var/faultora/health.json --max-age 1m
           done
 
+      # The operating-system packages the base image brings, which the
+      # dependency gate never sees. The scanner gets each image as a saved
+      # archive rather than the Docker socket, and a CRITICAL finding stops
+      # publication unless .github/image-vulnerability-exceptions.json waives it.
+      - name: Scan each image before publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          scans="$RUNNER_TEMP/image-scans"
+          mkdir -p "$scans"
+          status=0
+          for arch in amd64 arm64; do
+            docker save "faultora/runner:check-$arch" -o "$scans/runner-$arch.tar"
+            docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+              --tmpfs /tmp:rw,size=1g --tmpfs /cache:rw,size=3g -e TRIVY_CACHE_DIR=/cache \
+              -v "$scans:/scan" \
+              aquasec/trivy@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c \
+              image --input "/scan/runner-$arch.tar" --scanners vuln --pkg-types os \
+              --skip-java-db-update --format json --output "/scan/report-$arch.json" --quiet
+            echo "linux/$arch:"
+            python3 -B scripts/image_vulnerability_gate.py --report "$scans/report-$arch.json" \
+              --exceptions .github/image-vulnerability-exceptions.json || status=1
+            rm "$scans/runner-$arch.tar"
+          done
+          exit "$status"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: runner-image-scans
+          path: ${{ runner.temp }}/image-scans/report-*.json
+          if-no-files-found: warn
+
       - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
