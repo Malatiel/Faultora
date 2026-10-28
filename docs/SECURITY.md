@@ -673,6 +673,30 @@ Upgrading the dependency is the expected answer; a waiver is for a finding
 that does not apply or has no fixed release yet, and says which. The HTML and
 JSON reports are kept as a workflow artifact.
 
+**Pinned build inputs.** Every action a workflow uses is pinned to a full
+commit SHA, with the release it was taken from in a trailing comment, so a
+moved or republished tag cannot change what runs with the workflow's token.
+The runner image's base, the QEMU emulator and the BuildKit builder that
+produce the published image are pinned by index digest. A pin is changed only
+after checking that the commit is the one the publisher's release tag points
+to in the publisher's own repository and that GitHub reports it as verified,
+or, for an image, that the tag being adopted resolves to that digest in the
+publisher's registry. `scripts/test_pinned_build_inputs.py` refuses an
+unpinned reference.
+
+Dependabot proposes updates weekly for actions and the base image, as a pull
+request that goes through review like any change. The emulator and builder
+images sit in `with:` inputs Dependabot does not read; they are moved by hand,
+with `docker buildx imagetools inspect <image>:<tag>` giving the digest to
+record.
+
+A release is reproducible: the JAR, ZIP and tar.gz built from a release tag in
+an LF checkout with Java 21 are byte-identical to the published ones (checked
+for 0.11.3, offline in a Linux container), which is what lets anyone confirm a
+release matches its source. A Windows checkout with
+`core.autocrlf` differs only in the `pom.properties` files Maven writes with
+the platform line separator.
+
 ## 15. Logging, telemetry, and diagnostics
 
 - Usage telemetry is absent by default.
