@@ -28,6 +28,7 @@ class ReleaseVersionConsistencyTest {
     private static final List<Pattern> RELEASE_MENTIONS = List.of(
             Pattern.compile("faultora-" + SEMVER + "\\.jar"),
             Pattern.compile("payment-service-" + SEMVER + "\\.jar"),
+            Pattern.compile("catalog-service-" + SEMVER + "\\.jar"),
             Pattern.compile("faultora/runner:" + SEMVER),
             Pattern.compile("faultora-" + SEMVER + "-offline"),
             Pattern.compile("ARG VERSION=" + SEMVER),
@@ -43,7 +44,7 @@ class ReleaseVersionConsistencyTest {
             Pattern.compile("## 2\\. Where " + SEMVER + " stands"));
 
     private static final List<String> FILES = List.of(
-            "README.md", "examples/README.md", "docs/INSTALLATION.md", "Dockerfile", "deploy/docker-compose.yml", "deploy/offline-bundle.sh",
+            "README.md", "examples/README.md", "examples/catalog-service/README.md", "docs/INSTALLATION.md", "Dockerfile", "deploy/docker-compose.yml", "deploy/offline-bundle.sh",
             "deploy/kubernetes/runner.yaml", "deploy/README.md",
             "docs/CLI_DIAGNOSTICS.md", "docs/MCP.md", "docs/RELEASE_PLAN.md",
             "docs/SCENARIO_REFERENCE.md", "examples/github-actions/faultora.yml");
