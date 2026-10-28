@@ -2,7 +2,13 @@
 
 All notable changes to Faultora are documented in this file.
 
-## Unreleased
+## 0.11.3 — 2026-10-28
+
+A download can be checked for who built it, and a dependency finding at CVSS
+7.0 or above now blocks a release. The PostgreSQL JDBC driver moves to 42.7.14
+for CVE-2026-54291. Adds a paired qualification example and multi-platform
+runner images. No change to the scenario format, exit codes or the diagnostic
+schema.
 
 ### Added
 

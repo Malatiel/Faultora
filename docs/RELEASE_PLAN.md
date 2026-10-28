@@ -26,7 +26,7 @@ Three consequences worth stating plainly:
   runners to execute exactly that. A team that invests in a scenario suite
   before 1.0 keeps it afterwards.
 
-## 2. Where 0.11.2 stands
+## 2. Where 0.11.3 stands
 
 | Milestone | State |
 |---|---|
