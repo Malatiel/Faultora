@@ -2,6 +2,23 @@
 
 All notable changes to Faultora are documented in this file.
 
+## Unreleased
+
+### Added
+
+- **An offline bundle is checked on arrival, not only summed.** It now
+  carries `verify-offline-bundle.sh`, which refuses a file that does not match
+  its `SHA256SUMS`, a missing or unlisted file, a link and a path leaving the
+  bundle, and then runs the bundled CLI on the bundled example with nothing
+  from the network. Given the release's attested `SHA256SUMS`, it also refuses
+  a replaced jar whose checksum line was rewritten to match. The bundle script
+  prints a fingerprint of `SHA256SUMS` to record apart from the medium.
+
+### Fixed
+
+- The Kubernetes example named runner image 0.9.0; it now names the release
+  version and is held to it with the other version mentions.
+
 ## 0.11.3 — 2026-10-28
 
 A download can be checked for who built it, and a dependency finding at CVSS

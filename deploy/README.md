@@ -107,7 +107,40 @@ outlives the container.
 | `kubernetes/runner.yaml` | Deployment with every capability dropped, a read-only root, and exec probes |
 | `kubernetes/network-policy.yaml` | Deny-all first, then the two things a runner does |
 | `offline-bundle.sh` | Jar, saved image, examples and checksums in one file |
+| `verify-offline-bundle.sh` | Checks a bundle on arrival; travels inside it |
 | `runner-image.hcl` | Local multi-platform OCI archive and single-platform runtime builds |
+
+## Carrying a bundle across an air gap
+
+`offline-bundle.sh` prints a **SHA256SUMS fingerprint** when it writes the
+bundle. Record it somewhere other than the medium the bundle travels on. On
+arrival, unpack it anywhere and run the script it carries:
+
+```bash
+tar xzf faultora-0.11.3-offline.tar.gz
+sh faultora-0.11.3-offline/verify-offline-bundle.sh --release-sums SHA256SUMS
+```
+
+It refuses a file that does not match `SHA256SUMS`, a listed file that is
+missing, a file the list does not name, a link, and a listed path that leaves
+the bundle. It then runs the bundled CLI against the bundled example, which
+needs a local Java 21 and nothing from the network.
+
+Matching checksums only show the files agree with the list that came with
+them; whoever could change a file could change the list. Two things close
+that gap. `--release-sums` takes the release's own `SHA256SUMS`, checked with
+`gh attestation verify` on the connected side (see
+[Verifying a download](../docs/INSTALLATION.md#verifying-a-download)) and
+carried separately, and refuses a `faultora.jar` that is not the released one.
+The fingerprint the script prints at the end must equal the one recorded when
+the bundle was made. A saved image is covered by the checksums only: they say
+it arrived as it was saved, not where it came from. Save one pulled from GHCR
+and verified as [Runner images](../docs/RUNNER_IMAGE.md) describes, or one
+built from the checked jar.
+
+`OfflineBundleE2ETest` builds a bundle, unpacks it in a new directory and makes
+each of those alterations once, including a replaced jar with a rewritten
+`SHA256SUMS`, which only the release checksums catch.
 
 **"Without infrastructure fault permissions" is two statements that have to
 agree.** The pod drops every capability and is not privileged, *and* the runner
