@@ -37,19 +37,19 @@
         <maven.compiler.release>${java.version}</maven.compiler.release>
 
         <!-- Dependency versions -->
-        <jackson.version>2.21.3</jackson.version>
+        <jackson.version>2.21.5</jackson.version>
         <jackson-annotations.version>2.21</jackson-annotations.version>
         <snakeyaml.version>2.5</snakeyaml.version>
         <slf4j.version>2.0.17</slf4j.version>
         <logback.version>1.5.34</logback.version>
         <junit.version>5.10.3</junit.version>
-        <assertj.version>3.26.3</assertj.version>
+        <assertj.version>3.27.7</assertj.version>
         <jmespath.version>0.5.1</jmespath.version>
-        <kafka-clients.version>3.9.1</kafka-clients.version>
+        <kafka-clients.version>3.9.2</kafka-clients.version>
         <testcontainers.version>1.21.4</testcontainers.version>
         <h2.version>2.4.240</h2.version>
-        <postgresql.version>42.7.3</postgresql.version>
-        <httpclient5.version>5.6.1</httpclient5.version>
+        <postgresql.version>42.7.11</postgresql.version>
+        <httpclient5.version>5.6.4</httpclient5.version>
         <httpcore5.version>5.4.3</httpcore5.version>
 
         <!-- Plugin versions -->

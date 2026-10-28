@@ -50,7 +50,7 @@ jobs:
           restore-keys: |
             odc-${{ runner.os }}-12.2.2-
 
-      - name: Dependency vulnerability gate
+      - name: Dependency vulnerability scan
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: |
@@ -63,6 +63,7 @@ jobs:
             -DdataDirectory="${{ github.workspace }}/.odc-data" \
             -DnvdValidForHours=24 \
             -DnvdMaxRetryCount=5 \
+            -Dformats=HTML,JSON \
             -B
 
       - name: Save Dependency Check database
@@ -71,6 +72,25 @@ jobs:
         with:
           path: .odc-data
           key: odc-${{ runner.os }}-12.2.2-${{ steps.date.outputs.value }}
+
+      # Blocks the release: a finding at or above the threshold stops it unless
+      # .github/vulnerability-exceptions.json waives it with owner, reason and
+      # an expiry that has not passed. Same threshold as CI.
+      - name: Dependency vulnerability gate
+        env:
+          VULNERABILITY_THRESHOLD: '7.0'
+        run: >
+          python3 -B scripts/vulnerability_gate.py
+          --report target/dependency-check-report.json
+          --threshold "${VULNERABILITY_THRESHOLD}"
+          --exceptions .github/vulnerability-exceptions.json
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: dependency-check-report
+          path: target/dependency-check-report.*
+          if-no-files-found: warn
 
       - name: Generate CycloneDX SBOM
         run: >
