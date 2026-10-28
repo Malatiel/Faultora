@@ -13,12 +13,17 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
+import java.util.function.UnaryOperator;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -26,7 +31,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * The offline bundle as its recipient meets it: built by the published script,
  * unpacked somewhere new, and checked by the script it carries before anything
  * in it is run. Each way a bundle can be altered on its way across is made once,
- * and each has to be refused.
+ * and each has to be refused before the bundled jar is started — which a
+ * {@code java} on {@code PATH} that records every start makes observable.
  */
 @EnabledOnOs(OS.LINUX)
 class OfflineBundleE2ETest {
@@ -37,6 +43,8 @@ class OfflineBundleE2ETest {
     Path directory;
 
     private Path archive;
+    private String fingerprint;
+    private Path starts;
 
     @BeforeEach
     void build() throws Exception {
@@ -46,25 +54,41 @@ class OfflineBundleE2ETest {
         Result built = run(List.of("sh", ROOT.resolve("deploy/offline-bundle.sh").toString(), VERSION), ROOT,
                 "OUT", out.toString(), "IMAGE", "faultora/runner:not-built-" + UUID.randomUUID());
         assertThat(built.code()).as(built.output()).isZero();
-        assertThat(built.output()).containsPattern("SHA256SUMS fingerprint: [0-9a-f]{64}");
+        Matcher printed = Pattern.compile("SHA256SUMS fingerprint: ([0-9a-f]{64})").matcher(built.output());
+        assertThat(printed.find()).as(built.output()).isTrue();
+        fingerprint = printed.group(1);
         archive = out.resolve("faultora-" + VERSION + "-offline.tar.gz");
         assertThat(archive).isRegularFile();
+        starts = directory.resolve("java-starts");
     }
 
     @Test
-    void aFreshlyUnpackedBundleVerifiesAndItsCliRunsTheExample() throws Exception {
+    void aFreshlyUnpackedBundleWithItsRecordedFingerprintVerifiesAndItsCliRuns() throws Exception {
         Path bundle = unpack();
-        Result verified = verify(bundle);
+        assertThat(sha256(bundle.resolve("SHA256SUMS"))).as("the printed fingerprint").isEqualTo(fingerprint);
+
+        Result verified = verify(bundle, null, "--fingerprint", fingerprint);
         assertThat(verified.code()).as(verified.output()).isZero();
-        assertThat(verified.output())
-                .contains("Bundle " + VERSION + " verified")
-                .contains("SHA256SUMS fingerprint: " + sha256(bundle.resolve("SHA256SUMS")))
-                .contains("do not say who made the bundle");
+        assertThat(verified.output()).contains("Bundle " + VERSION + " verified", "not compared with a release");
+        assertThat(javaStarts()).as("--version and validate").isEqualTo(2);
 
         Path releaseSums = releaseSums(sha256(bundle.resolve("faultora.jar")));
-        Result attested = verify(bundle, "--release-sums", releaseSums.toString());
+        Result attested = verify(bundle, null, "--fingerprint", fingerprint, "--release-sums", releaseSums.toString());
         assertThat(attested.code()).as(attested.output()).isZero();
-        assertThat(attested.output()).doesNotContain("do not say who made the bundle");
+        assertThat(attested.output()).doesNotContain("not compared with a release");
+    }
+
+    @Test
+    void withoutAFingerprintNothingIsTrustedOrRun() throws Exception {
+        Path bundle = unpack();
+        Result refused = verify(bundle, null);
+        assertThat(refused.code()).as(refused.output()).isNotZero();
+        assertThat(refused.output()).contains("no --fingerprint");
+
+        Result selfOnly = verify(bundle, null, "--self-consistency-only");
+        assertThat(selfOnly.code()).as(selfOnly.output()).isZero();
+        assertThat(selfOnly.output()).contains("NOT a trust check").doesNotContain("verified");
+        assertThat(javaStarts()).isZero();
     }
 
     enum Tampering {
@@ -82,9 +106,10 @@ class OfflineBundleE2ETest {
         }
     }
 
+    /** Checked against the bundle's own list, where only the list's contents can catch them. */
     @ParameterizedTest
     @EnumSource(Tampering.class)
-    void anAlteredBundleIsRefused(Tampering tampering) throws Exception {
+    void anAlteredBundleIsRefusedBeforeItsJarRuns(Tampering tampering) throws Exception {
         Path bundle = unpack();
         Path sums = bundle.resolve("SHA256SUMS");
         switch (tampering) {
@@ -96,34 +121,46 @@ class OfflineBundleE2ETest {
                     StandardOpenOption.APPEND);
             case UNLISTED_REQUIRED_FILE -> {
                 Files.delete(bundle.resolve("LICENSE"));
-                rewriteSums(bundle, line -> !line.endsWith("  ./LICENSE"));
+                rewriteSums(bundle, line -> !line.endsWith("  ./LICENSE"), line -> line);
             }
         }
-        Result refused = verify(bundle);
+        // The fingerprint of whatever list arrived, so that only the checks
+        // after it are exercised; a recorded one would refuse the edits above first.
+        Result refused = verify(bundle, null, "--fingerprint", sha256(sums));
         assertThat(refused.code()).as(refused.output()).isNotZero();
         assertThat(refused.output()).contains(tampering.refusal).doesNotContain("verified");
+        assertThat(javaStarts()).isZero();
     }
 
     @Test
-    void aReplacedJarWithRewrittenChecksumsIsCaughtByTheReleaseChecksums() throws Exception {
+    void aReplacedJarWithRewrittenChecksumsIsRefusedBeforeItRuns() throws Exception {
         Path bundle = unpack();
         String released = sha256(bundle.resolve("faultora.jar"));
-        String fingerprint = sha256(bundle.resolve("SHA256SUMS"));
         // A different jar that still runs: the bytes go in as the archive
-        // comment, so the CLI starts and only a checksum from outside the
-        // bundle can tell the two apart.
+        // comment, so only something from outside the bundle can tell the two apart.
         plantComment(bundle.resolve("faultora.jar"), "planted");
         String replaced = sha256(bundle.resolve("faultora.jar"));
         rewriteSums(bundle, line -> true, line -> line.endsWith("  ./faultora.jar")
                 ? replaced + "  ./faultora.jar" : line);
 
-        Result selfConsistent = verify(bundle);
-        assertThat(selfConsistent.code()).as(selfConsistent.output()).isZero();
-        assertThat(selfConsistent.output()).doesNotContain("SHA256SUMS fingerprint: " + fingerprint);
+        Result byFingerprint = verify(bundle, null, "--fingerprint", fingerprint);
+        assertThat(byFingerprint.code()).as(byFingerprint.output()).isNotZero();
+        assertThat(byFingerprint.output()).contains("not the recorded " + fingerprint, "nothing here was run");
+        assertThat(javaStarts()).isZero();
 
-        Result refused = verify(bundle, "--release-sums", releaseSums(released).toString());
+        Result byRelease = verify(bundle, null, "--fingerprint", sha256(bundle.resolve("SHA256SUMS")),
+                "--release-sums", releaseSums(released).toString());
+        assertThat(byRelease.code()).as(byRelease.output()).isNotZero();
+        assertThat(byRelease.output()).contains("faultora.jar is not the released faultora-" + VERSION + ".jar");
+        assertThat(javaStarts()).isZero();
+    }
+
+    @Test
+    void aJarReportingAVersionThatOnlyStartsWithTheBundlesIsRefused() throws Exception {
+        Path bundle = unpack();
+        Result refused = verify(bundle, "faultora " + VERSION + "0", "--fingerprint", fingerprint);
         assertThat(refused.code()).as(refused.output()).isNotZero();
-        assertThat(refused.output()).contains("faultora.jar is not the released faultora-" + VERSION + ".jar");
+        assertThat(refused.output()).contains("reports 'faultora " + VERSION + "0', not faultora " + VERSION);
     }
 
     private Path unpack() throws Exception {
@@ -133,12 +170,33 @@ class OfflineBundleE2ETest {
         return destination.resolve("faultora-" + VERSION + "-offline");
     }
 
-    private Result verify(Path bundle, String... arguments) throws Exception {
+    /**
+     * Run the bundled verifier from elsewhere, with a {@code java} on {@code PATH}
+     * that counts its starts and then runs this JVM's java — or, given
+     * {@code reportedVersion}, answers {@code --version} with it instead.
+     */
+    private Result verify(Path bundle, String reportedVersion, String... arguments) throws Exception {
+        Path bin = Files.createDirectories(directory.resolve("bin"));
+        Path java = bin.resolve("java");
+        Files.writeString(java, """
+                #!/bin/sh
+                echo started >> "$JAVA_STARTS"
+                if [ -n "${REPORTED_VERSION:-}" ] && [ "$3" = "--version" ]; then
+                    echo "$REPORTED_VERSION"
+                    exit 0
+                fi
+                exec "$REAL_JAVA" "$@"
+                """);
+        Files.setPosixFilePermissions(java, PosixFilePermissions.fromString("rwxr-xr-x"));
         List<String> command = new ArrayList<>(List.of("sh", bundle.resolve("verify-offline-bundle.sh").toString()));
         command.addAll(List.of(arguments));
-        // From somewhere else entirely, with only this JVM's java on PATH.
-        return run(command, directory, "PATH",
-                Path.of(System.getProperty("java.home"), "bin") + ":/usr/bin:/bin");
+        return run(command, directory, "PATH", bin + ":/usr/bin:/bin", "JAVA_STARTS", starts.toString(),
+                "REAL_JAVA", Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                "REPORTED_VERSION", reportedVersion == null ? "" : reportedVersion);
+    }
+
+    private long javaStarts() throws IOException {
+        return Files.exists(starts) ? Files.readAllLines(starts).size() : 0;
     }
 
     private Path releaseSums(String jarDigest) throws IOException {
@@ -148,12 +206,8 @@ class OfflineBundleE2ETest {
         return sums;
     }
 
-    private static void rewriteSums(Path bundle, java.util.function.Predicate<String> keep) throws IOException {
-        rewriteSums(bundle, keep, line -> line);
-    }
-
-    private static void rewriteSums(Path bundle, java.util.function.Predicate<String> keep,
-            java.util.function.UnaryOperator<String> change) throws IOException {
+    private static void rewriteSums(Path bundle, Predicate<String> keep, UnaryOperator<String> change)
+            throws IOException {
         Path sums = bundle.resolve("SHA256SUMS");
         List<String> lines = Files.readAllLines(sums).stream().filter(keep).map(change).toList();
         Files.write(sums, lines);

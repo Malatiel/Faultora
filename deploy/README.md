@@ -112,35 +112,54 @@ outlives the container.
 
 ## Carrying a bundle across an air gap
 
-`offline-bundle.sh` prints a **SHA256SUMS fingerprint** when it writes the
-bundle. Record it somewhere other than the medium the bundle travels on. On
-arrival, unpack it anywhere and run the script it carries:
+Matching checksums only show that the files agree with the list that came
+with them: whoever could change a file could change the list, and the
+verification script inside the bundle with it. So trust starts outside the
+bundle. `offline-bundle.sh` prints a **SHA256SUMS fingerprint** when it writes
+the bundle; the sender records it somewhere other than the medium the bundle
+travels on, and the recipient starts from it.
+
+On arrival, unpack the bundle anywhere. Before running anything in it, check
+the fingerprint and every listed file, the verification script included, with
+the system's own `sha256sum`:
 
 ```bash
 tar xzf faultora-0.11.3-offline.tar.gz
-sh faultora-0.11.3-offline/verify-offline-bundle.sh --release-sums SHA256SUMS
+cd faultora-0.11.3-offline
+FINGERPRINT=the-recorded-64-hex-digits
+echo "${FINGERPRINT}  SHA256SUMS" | sha256sum -c - && sha256sum -c --quiet SHA256SUMS
 ```
 
-It refuses a file that does not match `SHA256SUMS`, a listed file that is
+Only then is the bundled script worth running:
+
+```bash
+sh verify-offline-bundle.sh --fingerprint "${FINGERPRINT}" --release-sums ../SHA256SUMS
+```
+
+It compares the fingerprint first and runs nothing from the bundle when it
+differs. It then refuses a file that does not match, a listed file that is
 missing, a file the list does not name, a link, and a listed path that leaves
-the bundle. It then runs the bundled CLI against the bundled example, which
+the bundle, and finally runs the bundled CLI on the bundled example, which
 needs a local Java 21 and nothing from the network.
 
-Matching checksums only show the files agree with the list that came with
-them; whoever could change a file could change the list. Two things close
-that gap. `--release-sums` takes the release's own `SHA256SUMS`, checked with
+`--release-sums` takes the release's own `SHA256SUMS`, checked with
 `gh attestation verify` on the connected side (see
 [Verifying a download](../docs/INSTALLATION.md#verifying-a-download)) and
-carried separately, and refuses a `faultora.jar` that is not the released one.
-The fingerprint the script prints at the end must equal the one recorded when
-the bundle was made. A saved image is covered by the checksums only: they say
-it arrived as it was saved, not where it came from. Save one pulled from GHCR
-and verified as [Runner images](../docs/RUNNER_IMAGE.md) describes, or one
-built from the checked jar.
+carried separately, and refuses a `faultora.jar` that is not the published
+one: the fingerprint says the bundle is the one that was sent, the release
+checksums say its jar is the one that was released. Without a fingerprint
+the script refuses to run, unless asked for `--self-consistency-only`, which
+checks the files against their own list, says that this is not a trust
+check, and runs nothing.
+
+A saved image is covered by the checksums only: they say it arrived as it was
+saved, not where it came from. Save one pulled from GHCR and verified as
+[Runner images](../docs/RUNNER_IMAGE.md) describes, or one built from the
+checked jar.
 
 `OfflineBundleE2ETest` builds a bundle, unpacks it in a new directory and makes
-each of those alterations once, including a replaced jar with a rewritten
-`SHA256SUMS`, which only the release checksums catch.
+each of those alterations once, with a `java` on `PATH` that records whether it
+was started: a refused bundle must never reach it.
 
 **"Without infrastructure fault permissions" is two statements that have to
 agree.** The pod drops every capability and is not privileged, *and* the runner

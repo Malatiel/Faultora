@@ -68,5 +68,5 @@ rm -rf "${STAGE}"
 
 echo "Wrote ${OUT}/faultora-${VERSION}-offline.tar.gz"
 echo "SHA256SUMS fingerprint: ${FINGERPRINT}"
-echo "Record the fingerprint apart from the bundle; on arrival run:"
-echo "  tar xzf faultora-${VERSION}-offline.tar.gz && sh faultora-${VERSION}-offline/verify-offline-bundle.sh"
+echo "Record the fingerprint apart from the bundle: it is what the recipient checks first."
+echo "See deploy/README.md, Carrying a bundle across an air gap."
