@@ -157,8 +157,9 @@ the importer adapter must refuse external references, rather than fetching
 files or URLs implicitly. Host-approved reference preparation, if needed,
 belongs to the later importer adapter and must preserve this data-only profile.
 The bootstrap constructs a private local context with no external-reference
-domains. `maxDocSizeBytes` cannot exceed the negotiated frame ceiling, and
-decoded source bytes must fit it. A successful ImportResult has a non-null
+domains. `maxDocSizeBytes` cannot exceed the negotiated frame ceiling. It
+limits the UTF-8 bytes of `sourceContent` after parsing its JSON string, not
+the escaped JSON representation. A successful ImportResult has a non-null
 catalog and no errors; an ordinary import failure has a null catalog and at
 least one normalized error. Catalog content remains subject to parent-side
 semantic validation, destination policy and operation admission.
