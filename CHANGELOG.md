@@ -4,6 +4,20 @@ All notable changes to Faultora are documented in this file.
 
 ## Unreleased
 
+### Added
+
+- **Multi-platform runner images.** Bake exports a local OCI archive for
+  linux/amd64 and linux/arm64 or loads one platform for a runtime check. The
+  Distroless index is pinned, with the same nonroot user, absent shell and
+  outbound-only runner. A separate manually dispatched workflow verifies an
+  existing release JAR before publishing both platforms to GHCR.
+
+### Fixed
+
+- `THIRD-PARTY.txt` lists the PostgreSQL JDBC driver bundled in the
+  executable, with its BSD 2-Clause notice and those of the OnGres SCRAM and
+  stringprep libraries it includes; it was missing.
+
 ### Security
 
 - **Dependency vulnerabilities now block a release.** The scan ran but nothing
@@ -18,12 +32,6 @@ All notable changes to Faultora are documented in this file.
   which affects only the asynchronous client Faultora does not use, and
   CVE-2026-64607) and assertj 3.27.7 in the test kit (CVE-2026-24400).
   kafka-clients now brings LZ4 as `at.yawk.lz4:lz4-java`, the maintained fork.
-
-### Fixed
-
-- `THIRD-PARTY.txt` lists the PostgreSQL JDBC driver bundled in the
-  executable, with its BSD 2-Clause notice and those of the OnGres SCRAM and
-  stringprep libraries it includes; it was missing.
 
 ## 0.11.2 — 2026-10-22
 

@@ -1,0 +1,112 @@
+name: Publish runner image
+
+# Publication is explicit and follows a completed release, not a source rebuild
+# that could bypass the release's verification and dependency gate.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Published stable release tag containing runner image packaging (vMAJOR.MINOR.PATCH)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runner-image-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      attestations: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+
+      - name: Verify and obtain the released JAR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json tagName,isDraft,isPrerelease \
+            --jq 'select(.isDraft == false and .isPrerelease == false).tagName')" = "$RELEASE_TAG"
+          version="${RELEASE_TAG#v}"
+          revision="$(git rev-parse HEAD)"
+          test "$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")" = "$revision"
+          test -f deploy/runner-image.hcl
+          mkdir -p "$RUNNER_TEMP/release"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "faultora-${version}.jar" --pattern SHA256SUMS --dir "$RUNNER_TEMP/release"
+          jar="$RUNNER_TEMP/release/faultora-${version}.jar"
+          gh attestation verify "$jar" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+            --source-ref "refs/tags/$RELEASE_TAG" --source-digest "$revision"
+          python3 -B -m unittest discover -s deploy -p 'test_verify_release_jar.py'
+          python3 -B deploy/verify-release-jar.py "$jar" "$RUNNER_TEMP/release/SHA256SUMS" "$version"
+          mkdir -p faultora-cli/target
+          cp "$jar" "faultora-cli/target/faultora-${version}.jar"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "JAR=faultora-cli/target/faultora-${version}.jar" >> "$GITHUB_ENV"
+          echo "REVISION=$revision" >> "$GITHUB_ENV"
+          echo "SOURCE=https://github.com/$GITHUB_REPOSITORY" >> "$GITHUB_ENV"
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}-runner" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Check each image before publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            docker buildx bake -f deploy/runner-image.hcl load \
+              --set "load.platform=linux/$arch" --set "load.tags=faultora/runner:check-$arch"
+            image="faultora/runner:check-$arch"
+            docker image inspect "$image" | jq -e --arg arch "$arch" '
+              .[0] | .Os == "linux" and .Architecture == $arch and
+              .Config.User == "nonroot" and ((.Config.ExposedPorts // {}) | length) == 0'
+            docker run --rm --platform "linux/$arch" --network none --read-only \
+              --cap-drop ALL --security-opt no-new-privileges:true "$image" --version
+            for shell in /bin/sh /bin/bash /busybox/sh; do
+              if docker run --rm --platform "linux/$arch" --network none \
+                --entrypoint "$shell" "$image" -c 'exit 0'; then
+                echo "Image unexpectedly contains a shell" >&2
+                exit 1
+              fi
+            done
+            printf '{"state":"WAITING","runnerId":"probe","updatedAtEpochMs":%s,"registered":true,"currentRunId":null,"runsServed":0}\n' \
+              "$(date +%s%3N)" > "$RUNNER_TEMP/health.json"
+            docker run --rm --platform "linux/$arch" --network none --read-only \
+              --cap-drop ALL --security-opt no-new-privileges:true \
+              --mount "type=bind,src=$RUNNER_TEMP/health.json,dst=/var/faultora/health.json,readonly" \
+              "$image" health --file /var/faultora/health.json --max-age 1m
+          done
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish the two-platform index
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx bake -f deploy/runner-image.hcl image --set image.output=type=registry
+          docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest}}' | jq -e '
+            [.manifests[].platform | select(.os == "linux") | .architecture] | sort == ["amd64", "arm64"]'
