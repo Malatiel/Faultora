@@ -35,7 +35,7 @@ attestation, or a missing `gh`, stops before anything is extracted or run; the
 chain does not close your shell when it stops.
 
 ```sh
-FAULTORA_VERSION=0.11.2
+FAULTORA_VERSION=0.11.3
 archive="faultora-${FAULTORA_VERSION}.tar.gz"
 grep " ${archive}\$" SHA256SUMS | sha256sum --check --strict - &&
 gh attestation verify "$archive" --repo Malatiel/Faultora \
@@ -75,7 +75,7 @@ extract and run the archive.
 ```powershell
 & {
     $ErrorActionPreference = 'Stop'
-    $version = '0.11.2'
+    $version = '0.11.3'
     $archive = "faultora-$version.zip"
     $entries = @(Get-Content -LiteralPath SHA256SUMS |
         Where-Object { $_ -match ("^[0-9a-f]{64}  " + [regex]::Escape($archive) + '$') })

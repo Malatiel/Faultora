@@ -9,11 +9,11 @@
 # the person who carries it has no other way to tell it arrived intact.
 #
 #   ./mvnw -o package -DskipTests
-#   deploy/offline-bundle.sh 0.11.2
+#   deploy/offline-bundle.sh 0.11.3
 #
 set -eu
 
-VERSION="${1:-0.11.2}"
+VERSION="${1:-0.11.3}"
 IMAGE="${IMAGE:-faultora/runner:${VERSION}}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 JAR="${ROOT}/faultora-cli/target/faultora-${VERSION}.jar"
