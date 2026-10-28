@@ -3,10 +3,11 @@
 ## Status and scope
 
 This is the normative data contract for the process-boundary slice of
-[ADR-023](adr/ADR-023-extension-isolation.md). The fixtures and a **test-only**
-conformance probe exist; a production codec, child lifecycle and adapters do
-not. Requesting process isolation still fails closed. This document does not
-claim a sandbox, a memory ceiling, network isolation or safe process shutdown.
+[ADR-023](adr/ADR-023-extension-isolation.md). The fixtures, a **test-only**
+conformance probe and the bounded `faultora-extension-protocol` codec exist.
+A child lifecycle and adapters remain unimplemented. Requesting process
+isolation still fails closed. This document does not claim a sandbox, a memory
+ceiling, network isolation or safe process shutdown.
 Those controls need their own implementation and negative tests.
 
 Only `AssertionProvider`, `SourceImporter` and `ReportRenderer` cross this
@@ -209,7 +210,13 @@ version/provider/correlation/state errors and virtual-time late responses.
 The test-only probe is an executable interpretation of this specification;
 it is deliberately not a production codec and is not loaded by the runtime.
 
-The production codec is the next slice, followed by a real supervised child,
+The bounded codec validates framing and envelope fields, including reply
+correlation, in a module that depends only on Jackson. Its streams are owned
+by the caller, which must discard the channel after a refusal and enforce I/O
+deadlines. Handshake state, provider payloads, process start/stop and policy
+enforcement are not implemented by the codec.
+
+The next slices are a real supervised child,
 the three adapters, resource/network/secret enforcement and packaged plugin
 qualification. Existing ADR-023 policy refusals remain until those controls
 are implemented. Do not infer isolation from passing these conformance tests.

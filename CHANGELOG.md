@@ -6,10 +6,14 @@ All notable changes to Faultora are documented in this file.
 
 ### Added
 
+- **Bounded extension codec.** A separate data-only module reads and writes
+  length-prefixed JSON with byte limits, strict envelope checks and reply
+  correlation. It does not start a plugin or change isolation policy refusals.
+
 - **Extension protocol specification.** Defines framing, negotiation, request
   correlation, deadlines and data-only payloads for assertions, importers and
-  renderers, with executable compatibility fixtures. A production codec and
-  process isolation remain pending; existing policy refusals are unchanged.
+  renderers, with executable compatibility fixtures. Process isolation remains
+  pending; existing policy refusals are unchanged.
 - **An offline bundle is checked on arrival, not only summed.** The bundle
   script prints a fingerprint of `SHA256SUMS` to record apart from the medium,
   and the bundle carries `verify-offline-bundle.sh --fingerprint`, which

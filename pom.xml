@@ -68,6 +68,7 @@
     <modules>
         <module>faultora-model</module>
         <module>faultora-spi</module>
+        <module>faultora-extension-protocol</module>
         <module>faultora-spec</module>
         <module>faultora-schema</module>
         <module>faultora-net</module>
