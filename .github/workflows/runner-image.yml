@@ -23,8 +23,10 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      attestations: read
       packages: write
+      # Read the release JAR's attestation, and write the image's own.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v6
         with:
@@ -50,11 +52,11 @@ jobs:
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
             --pattern "faultora-${version}.jar" --pattern SHA256SUMS --dir "$RUNNER_TEMP/release"
           jar="$RUNNER_TEMP/release/faultora-${version}.jar"
-          gh attestation verify "$jar" --repo "$GITHUB_REPOSITORY" \
-            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
-            --source-ref "refs/tags/$RELEASE_TAG" --source-digest "$revision"
-          python3 -B -m unittest discover -s deploy -p 'test_verify_release_jar.py'
-          python3 -B deploy/verify-release-jar.py "$jar" "$RUNNER_TEMP/release/SHA256SUMS" "$version"
+          python3 -B -m unittest discover -s deploy -p 'test_verify_release.py'
+          # The same check a user runs: listed checksum, JAR version, and an
+          # attestation by release.yml for this tag and commit.
+          python3 -B deploy/verify-release.py "$jar" --sums "$RUNNER_TEMP/release/SHA256SUMS" \
+            --tag "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --source-digest "$revision"
           mkdir -p faultora-cli/target
           cp "$jar" "faultora-cli/target/faultora-${version}.jar"
           echo "VERSION=$version" >> "$GITHUB_ENV"
@@ -104,9 +106,23 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish the two-platform index
+        id: publish
         shell: bash
         run: |
           set -euo pipefail
           docker buildx bake -f deploy/runner-image.hcl image --set image.output=type=registry
-          docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest}}' | jq -e '
-            [.manifests[].platform | select(.os == "linux") | .architecture] | sort == ["amd64", "arm64"]'
+          manifest="$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest}}')"
+          jq -e '[.manifests[].platform | select(.os == "linux") | .architecture] | sort == ["amd64", "arm64"]' \
+            <<< "$manifest"
+          digest="$(jq -r .digest <<< "$manifest")"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      # The image gets its own provenance, pinned to the index digest, so a
+      # pulled image can be checked the way a downloaded archive is.
+      - name: Attest the published image
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true

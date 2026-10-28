@@ -651,7 +651,9 @@ Development and release controls include:
 - generated CycloneDX SBOM;
 - SLSA-compatible build provenance;
 - signed archives, images, manifests, and offline bundles;
-- documented verification commands;
+- documented verification commands — checksum plus a GitHub attestation pinned
+  to `release.yml`, the release tag and a GitHub-hosted runner (see
+  `docs/INSTALLATION.md`, *Verifying a download*);
 - a vulnerability disclosure and supported-version policy;
 - no runtime dependency installation by the runner.
 

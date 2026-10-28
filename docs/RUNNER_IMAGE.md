@@ -102,13 +102,29 @@ the first release containing this packaging; the earlier CLI releases do not
 imply a published multi-platform runner image.
 
 The workflow checks out that exact tag, requires a published release, downloads
-its existing JAR and `SHA256SUMS`, checks the bytes and manifest version, and
-verifies the release attestation against this repository's `release.yml`, tag
-and commit. It requires that attestation; it does not fall back to rebuilding
+its existing JAR and `SHA256SUMS`, and runs `deploy/verify-release.py` — the
+same check a user runs on a download — for the bytes, the manifest version and
+the release attestation against this repository's `release.yml`, tag and commit. It requires that attestation; it does not fall back to rebuilding
 the application or skip the release's security gate. It then checks both
 platforms with QEMU available, logs in to GHCR using the job's package token,
 and publishes one index as `ghcr.io/OWNER/REPOSITORY-runner:VERSION`. No `latest`
-tag is moved. The job prints and checks the resulting platform index.
+tag is moved. The job prints and checks the resulting platform index, then
+attests it: the provenance names the index digest and is pushed to the registry
+beside the image.
+
+To check a pulled image was published by this workflow:
+
+```sh
+gh attestation verify oci://ghcr.io/malatiel/faultora-runner:VERSION \
+  --repo Malatiel/Faultora \
+  --signer-workflow Malatiel/Faultora/.github/workflows/runner-image.yml \
+  --deny-self-hosted-runners
+```
+
+Pull by the digest the verification reports, not by the tag, so what runs is
+what was checked. The image's attestation is made by the dispatched image
+workflow, which runs from the default branch; its JAR was separately verified
+against the release's own attestation, as described above.
 
 The image workflow's CLI/health smoke checks are smaller than the mTLS runtime
 suite and the release qualification that produced the JAR. Registry publication
