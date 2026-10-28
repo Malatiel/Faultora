@@ -710,6 +710,21 @@ the platform line separator.
 - Diagnostic bundles require an explicit action, show their contents before
   export, and pass through the same minimization policy as reports.
 
+**What a log line holds today.** The CLI and the runner log to standard error,
+apart from command output and reports on standard output. A line carries the
+time, level, logger, the message as written at the call site, the `runId` and
+`nodeId` it belongs to when it has them, and a failure's exception class names.
+Message arguments are never rendered, so a library's message keeps its `{}`
+placeholders; exception messages are never written, because they quote what
+the failing code held; and of the logging context only the run and node
+identifiers leave the process. `FAULTORA_LOG_FORMAT=json` makes each line one
+JSON object with exactly those fields, for a collector; `text`, the default, is
+the same content for a person. `FAULTORA_LOG_LEVEL` sets the level (`INFO` by
+default; `DEBUG` adds a line as each run and node starts and finishes).
+`StructuredLogsE2ETest` runs the packaged CLI with a credential in its
+environment and requires every line to parse, to name its run and node, and
+the credential to appear in neither stream nor in any report.
+
 ## 16. Security verification program
 
 ### 16.1 Every change

@@ -6,6 +6,7 @@ import dev.faultora.spi.contract.FaultProvider;
 import dev.faultora.spi.result.ActiveFault;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -170,7 +171,7 @@ public final class FaultSession implements AutoCloseable {
             record.provider.rollback(record.fault, record.context);
         } catch (Exception e) {
             record.failed = true;
-            LOG.warn("Fault rollback failed");
+            warnInRun("Fault rollback failed");
             status = reason + "-rollback-failed";
         }
         try {
@@ -179,6 +180,21 @@ public final class FaultSession implements AutoCloseable {
             record.completed = true;
         }
         return true;
+    }
+
+    /** The hard-expiry watchdog has a thread of its own, so it names the run itself. */
+    private void warnInRun(String message) {
+        Object run = ownership.get(FaultContext.RUN_ID);
+        if (run == null || MDC.get("runId") != null) {
+            LOG.warn(message);
+            return;
+        }
+        MDC.put("runId", run.toString());
+        try {
+            LOG.warn(message);
+        } finally {
+            MDC.remove("runId");
+        }
     }
 
     public record RollbackOutcome(int failures, int unconfirmed) { }

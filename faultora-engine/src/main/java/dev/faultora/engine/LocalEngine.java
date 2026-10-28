@@ -26,6 +26,9 @@ import dev.faultora.spi.contract.Connector;
 import dev.faultora.spi.contract.FaultProvider;
 import dev.faultora.spi.context.ConnectorContext;
 import dev.faultora.spi.result.AssertionResult;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -47,6 +50,8 @@ import java.util.function.LongFunction;
  * it.
  */
 public class LocalEngine {
+
+    private static final Logger LOG = LoggerFactory.getLogger(LocalEngine.class);
 
     /** Shared budget for declared cleanup steps, independent of the main run. */
     public static final long DEFAULT_CLEANUP_TIMEOUT_MS = 30_000;
@@ -115,6 +120,30 @@ public class LocalEngine {
      * @return the run result
      */
     public RunResult execute(
+            ExecutionPlan plan,
+            RunJournal journal,
+            ExpressionContext context,
+            ConnectorContext connectorContext,
+            AtomicBoolean cancellation
+    ) {
+        // Log lines from the run's own thread name it, as node lines do.
+        String outerRun = MDC.get("runId");
+        MDC.put("runId", plan.runId().value());
+        LOG.debug("Run started");
+        try {
+            RunResult result = executeRun(plan, journal, context, connectorContext, cancellation);
+            LOG.debug("Run finished");
+            return result;
+        } finally {
+            if (outerRun == null) {
+                MDC.remove("runId");
+            } else {
+                MDC.put("runId", outerRun);
+            }
+        }
+    }
+
+    private RunResult executeRun(
             ExecutionPlan plan,
             RunJournal journal,
             ExpressionContext context,

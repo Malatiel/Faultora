@@ -11,6 +11,9 @@ import dev.faultora.spec.expression.ExpressionEvaluationException;
 import dev.faultora.spi.contract.AssertionProvider;
 import dev.faultora.spi.contract.FaultProvider;
 import dev.faultora.spi.result.OperationResult;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 
 import java.util.List;
 import java.util.Map;
@@ -28,6 +31,8 @@ import java.util.Optional;
  */
 public final class NodeExecutor {
 
+    private static final Logger LOG = LoggerFactory.getLogger(NodeExecutor.class);
+
     private final OperationInvoker invoker;
     private final InputResolver inputResolver = new InputResolver();
     private final AssertionNodeExecutor assertions;
@@ -44,6 +49,33 @@ public final class NodeExecutor {
     }
 
     public RunResult.NodeResult execute(
+            PlanNode node, NodeContext context, ExpressionContext expressionContext) {
+        // Every log line written while this node runs names its run and node,
+        // on whichever thread runs it: a parallel group's worker inherits nothing.
+        String outerRun = MDC.get("runId");
+        String outerNode = MDC.get("nodeId");
+        MDC.put("runId", context.plan().runId().value());
+        MDC.put("nodeId", node.nodeId().value());
+        LOG.debug("Node started");
+        try {
+            RunResult.NodeResult result = executeNode(node, context, expressionContext);
+            LOG.debug("Node finished");
+            return result;
+        } finally {
+            restore("runId", outerRun);
+            restore("nodeId", outerNode);
+        }
+    }
+
+    private static void restore(String key, String value) {
+        if (value == null) {
+            MDC.remove(key);
+        } else {
+            MDC.put(key, value);
+        }
+    }
+
+    private RunResult.NodeResult executeNode(
             PlanNode node, NodeContext context, ExpressionContext expressionContext) {
         NodeId nodeId = node.nodeId();
         long nodeStart = System.currentTimeMillis();
