@@ -1,0 +1,15 @@
+# Updates to pinned build inputs arrive as pull requests and are reviewed like
+# any change; see docs/SECURITY.md, "Pinned build inputs".
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly

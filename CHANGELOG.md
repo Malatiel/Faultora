@@ -11,6 +11,16 @@ All notable changes to Faultora are documented in this file.
   renderers, with executable compatibility fixtures. A production codec and
   process isolation remain pending; existing policy refusals are unchanged.
 
+### Security
+
+- **Build inputs are pinned.** Every workflow action now runs from a full
+  commit SHA, checked against the publisher's release tag and GitHub's
+  signature verification, instead of a tag its owner could move. The QEMU
+  emulator and BuildKit builder that produce the runner image are pinned by
+  digest, like its base image already was. Dependabot proposes updates weekly,
+  and a test refuses an unpinned reference. A release built from its tag is
+  byte-identical to the published files; `docs/SECURITY.md` says how to check.
+
 ## 0.11.3 — 2026-10-28
 
 A download can be checked for who built it, and a dependency finding at CVSS
