@@ -5,6 +5,9 @@ For a local CLI installation with Windows and Linux launchers, see
 executable used by the runner; it does not include a Java runtime or container
 image.
 
+For local amd64/arm64 builds and the separate image publication workflow, see
+[Runner images](../docs/RUNNER_IMAGE.md).
+
 A Faultora runner sits inside the network it tests and dials out for work.
 Nothing connects to it: not the control plane, which it calls; not a health
 probe, which runs a command inside the container; not a metrics scrape. That
@@ -104,6 +107,7 @@ outlives the container.
 | `kubernetes/runner.yaml` | Deployment with every capability dropped, a read-only root, and exec probes |
 | `kubernetes/network-policy.yaml` | Deny-all first, then the two things a runner does |
 | `offline-bundle.sh` | Jar, saved image, examples and checksums in one file |
+| `runner-image.hcl` | Local multi-platform OCI archive and single-platform runtime builds |
 
 **"Without infrastructure fault permissions" is two statements that have to
 agree.** The pod drops every capability and is not privileged, *and* the runner

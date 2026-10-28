@@ -25,7 +25,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -54,7 +53,11 @@ class RunnerImageE2ETest {
     /** How a container reaches the host it runs on, on Docker Desktop and Linux. */
     private static final String HOST_FROM_CONTAINER = "host.docker.internal";
 
-    private static final String IMAGE = "faultora/runner:test";
+    private static String image;
+    private static String platform;
+
+    @TempDir
+    static Path commandLogs;
 
     private static final Path PROJECT_ROOT =
             Path.of(System.getProperty("user.dir")).getParent();
@@ -86,11 +89,25 @@ class RunnerImageE2ETest {
     @BeforeAll
     static void buildTheImage() throws Exception {
         Path jar = shadedJar();
-        int built = run(60, PROJECT_ROOT,
-                "docker", "build",
-                "--build-arg", jarBuildArgument(PROJECT_ROOT, jar),
-                "-t", IMAGE, ".").exitValue();
-        assertThat(built).as("the image builds").isZero();
+        platform = System.getProperty("faultora.runner.platform", "");
+        if (platform.isEmpty()) {
+            var info = run(30, PROJECT_ROOT, "docker", "info", "--format", "{{.Architecture}}");
+            assertThat(info.exitValue()).as(info.output()).isZero();
+            platform = switch (info.output().strip()) {
+                case "x86_64", "amd64" -> "linux/amd64";
+                case "aarch64", "arm64" -> "linux/arm64";
+                default -> throw new IllegalStateException("Unsupported image runtime architecture");
+            };
+        }
+        assertThat(platform).isIn("linux/amd64", "linux/arm64");
+        image = "faultora/runner:d02-test-" + platform.substring("linux/".length());
+        var built = run(300, PROJECT_ROOT,
+                "docker", "buildx", "bake", "-f", "deploy/runner-image.hcl", "load",
+                "--set", "load.args." + jarBuildArgument(PROJECT_ROOT, jar),
+                "--set", "load.args.VERSION=" + System.getProperty("faultora.version"),
+                "--set", "load.platform=" + platform,
+                "--set", "load.tags=" + image);
+        assertThat(built.exitValue()).as(built.output()).isZero();
     }
 
     static String jarBuildArgument(Path projectRoot, Path jar) {
@@ -134,8 +151,7 @@ class RunnerImageE2ETest {
                 "0.0.0.0")) {
             dispatcher.offer(dispatch("run-in-a-container", signing));
 
-            Process container = run(120, PROJECT_ROOT,
-                    "docker", "run", "--rm",
+            var container = container(180,
                     "--add-host", HOST_FROM_CONTAINER + ":host-gateway",
                     "--read-only",
                     "--cap-drop", "ALL",
@@ -143,7 +159,7 @@ class RunnerImageE2ETest {
                     "-e", "FAULTORA_SECRET_RUNNER_TLS=" + Certificates.PASSWORD,
                     "-v", directory.toAbsolutePath() + ":/etc/faultora:ro",
                     "--tmpfs", "/var/faultora:uid=65532,gid=65532",
-                    IMAGE,
+                    image,
                     "runner",
                     "--dispatcher",
                     "https://" + HOST_FROM_CONTAINER + ":" + dispatcher.port(),
@@ -158,7 +174,7 @@ class RunnerImageE2ETest {
                     "--once");
 
             assertThat(container.exitValue())
-                    .as(() -> "the container said: " + output(container))
+                    .as(container.output())
                     .isZero();
             assertThat(dispatcher.registrations()).singleElement().satisfies(registration ->
                     assertThat(registration.runnerId()).isEqualTo("runner-in-a-container"));
@@ -178,9 +194,9 @@ class RunnerImageE2ETest {
         Path status = directory.resolve("health.json");
         Files.writeString(status, statusWritten(System.currentTimeMillis()));
 
-        Process fresh = probe(status, "30s");
+        var fresh = probe(status, "30s");
         assertThat(fresh.exitValue())
-                .as(() -> "the probe said: " + output(fresh))
+                .as(fresh.output())
                 .isZero();
 
         Files.writeString(status, statusWritten(System.currentTimeMillis() - 600_000));
@@ -194,15 +210,34 @@ class RunnerImageE2ETest {
     void theImageRefusesToStartWithoutAKeyToVerifyPoliciesWith() throws Exception {
         // The configuration mistake that would otherwise start fine and take
         // its permissions from whoever reached it.
-        Process container = run(60, PROJECT_ROOT,
-                "docker", "run", "--rm", IMAGE,
+        var container = container(60, image,
                 "runner", "--dispatcher", "https://control.invalid:8443",
                 "--keystore", "/etc/faultora/runner.p12",
                 "--truststore", "/etc/faultora/trusted.p12",
                 "--tls-secret-id", "runner-tls");
 
         assertThat(container.exitValue()).isNotZero();
-        assertThat(output(container)).contains("--policy-key");
+        assertThat(container.output()).contains("--policy-key");
+    }
+
+    @Test
+    void eachRuntimeKeepsTheContainerBoundary() throws Exception {
+        var version = container(60, "--network", "none", "--read-only", "--cap-drop", "ALL",
+                "--security-opt", "no-new-privileges:true", image, "--version");
+        assertThat(version.exitValue()).as(version.output()).isZero();
+        assertThat(version.output()).contains("faultora " + System.getProperty("faultora.version"));
+        var inspected = run(30, PROJECT_ROOT, "docker", "image", "inspect", image);
+        assertThat(inspected.exitValue()).as(inspected.output()).isZero();
+        var metadata = MAPPER.readTree(inspected.output()).get(0);
+        assertThat(metadata.path("Os").asText()).isEqualTo("linux");
+        assertThat(metadata.path("Architecture").asText()).isEqualTo(platform.substring("linux/".length()));
+        assertThat(metadata.path("Config").path("User").asText()).isEqualTo("nonroot");
+        assertThat(metadata.path("Config").path("ExposedPorts").size()).isZero();
+        for (String shell : List.of("/bin/sh", "/bin/bash", "/busybox/sh")) {
+            var refused = container(30, "--network", "none", "--entrypoint", shell, image, "-c", "exit 0");
+            assertThat(refused.exitValue()).as("no shell at %s: %s", shell, refused.output()).isNotZero();
+            assertThat(refused.output()).contains("no such file or directory");
+        }
     }
 
     /**
@@ -234,12 +269,11 @@ class RunnerImageE2ETest {
         }
     }
 
-    private Process probe(Path status, String maxAge) throws Exception {
+    private ImageCommand.Result probe(Path status, String maxAge) throws Exception {
         readableInsideTheContainer(directory);
-        return run(60, PROJECT_ROOT,
-                "docker", "run", "--rm",
+        return container(60,
                 "-v", status.toAbsolutePath() + ":/var/faultora/health.json:ro",
-                IMAGE, "health", "--file", "/var/faultora/health.json",
+                image, "health", "--file", "/var/faultora/health.json",
                 "--max-age", maxAge);
     }
 
@@ -263,25 +297,22 @@ class RunnerImageE2ETest {
                 ContentDigest.sha256Uri(SCENARIO), Dispatch.digestOfDocuments(List.of()));
     }
 
-    /** Run a command, wait for it, and keep what it said. */
-    private static Process run(int seconds, Path directory, String... command)
-            throws Exception {
-        Process process = new ProcessBuilder(new ArrayList<>(List.of(command)))
-                .directory(directory.toFile())
-                .redirectErrorStream(true)
-                .start();
-        byte[] said = process.getInputStream().readAllBytes();
-        if (!process.waitFor(seconds, TimeUnit.SECONDS)) {
-            process.destroyForcibly();
-            throw new AssertionError("`" + String.join(" ", command) + "` never finished");
+    private static ImageCommand.Result container(int seconds, String... args) throws Exception {
+        String name = "faultora-image-test-" + java.util.UUID.randomUUID();
+        List<String> command = new ArrayList<>(List.of("docker", "run", "--rm",
+                "--name", name, "--platform", platform));
+        command.addAll(List.of(args));
+        try {
+            return run(seconds, PROJECT_ROOT, command.toArray(String[]::new));
+        } finally {
+            var removed = run(30, PROJECT_ROOT, "docker", "container", "rm", "--force", name);
+            assertThat(removed.exitValue() == 0 || removed.output().contains("No such container"))
+                    .as(removed.output()).isTrue();
         }
-        OUTPUT.put(process, new String(said));
-        return process;
     }
 
-    private static final Map<Process, String> OUTPUT = new java.util.concurrent.ConcurrentHashMap<>();
-
-    private static String output(Process process) {
-        return OUTPUT.getOrDefault(process, "");
+    private static ImageCommand.Result run(int seconds, Path directory, String... command)
+            throws Exception {
+        return ImageCommand.run(directory, commandLogs, seconds, command);
     }
 }

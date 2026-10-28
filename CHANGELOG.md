@@ -2,6 +2,16 @@
 
 All notable changes to Faultora are documented in this file.
 
+## Unreleased
+
+### Added
+
+- **Multi-platform runner images.** Bake exports a local OCI archive for
+  linux/amd64 and linux/arm64 or loads one platform for a runtime check. The
+  Distroless index is pinned, with the same nonroot user, absent shell and
+  outbound-only runner. A separate manually dispatched workflow verifies an
+  existing release JAR before publishing both platforms to GHCR.
+
 ## 0.11.2 — 2026-10-22
 
 A first run that works: `init` writes a scenario that runs as generated, the
