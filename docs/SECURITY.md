@@ -658,6 +658,19 @@ Development and release controls include:
 Offline bundles contain the runner, approved built-in extensions, schemas,
 licenses, SBOM, provenance, signatures, checksums, and verification tooling.
 
+**Dependency vulnerability gate.** OWASP Dependency-Check scans the aggregated
+dependencies daily, on every push to `main` and in the release workflow, and
+`scripts/vulnerability_gate.py` reads its JSON report. A finding with a CVSS
+base score of **7.0 or above** — the highest of v4, v3 and v2, or its severity
+when no score is given, and blocking when it has neither — fails CI and stops
+a release. A finding is waived only by an entry in
+`.github/vulnerability-exceptions.json` naming that vulnerability in that
+package, with an owner, a reason and an expiry date; once the date passes the
+finding blocks again, and a waiver nothing matches is reported for removal.
+Upgrading the dependency is the expected answer; a waiver is for a finding
+that does not apply or has no fixed release yet, and says which. The HTML and
+JSON reports are kept as a workflow artifact.
+
 ## 15. Logging, telemetry, and diagnostics
 
 - Usage telemetry is absent by default.

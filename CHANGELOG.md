@@ -2,6 +2,29 @@
 
 All notable changes to Faultora are documented in this file.
 
+## Unreleased
+
+### Security
+
+- **Dependency vulnerabilities now block a release.** The scan ran but nothing
+  acted on it. A finding at CVSS 7.0 or above now fails CI and stops the
+  release workflow before anything is published, unless
+  `.github/vulnerability-exceptions.json` waives it with an owner, a reason and
+  an expiry date. The scan's HTML and JSON reports are kept as an artifact.
+- Upgraded the dependencies the scan had flagged: kafka-clients 3.9.2
+  (CVE-2026-35554, producer messages could reach the wrong topic),
+  jackson-databind 2.21.5 (CVE-2026-54512, CVE-2026-54513 and five lower),
+  PostgreSQL JDBC 42.7.11 (CVE-2026-42198), httpclient5 5.6.4 (CVE-2026-71290,
+  which affects only the asynchronous client Faultora does not use, and
+  CVE-2026-64607) and assertj 3.27.7 in the test kit (CVE-2026-24400).
+  kafka-clients now brings LZ4 as `at.yawk.lz4:lz4-java`, the maintained fork.
+
+### Fixed
+
+- `THIRD-PARTY.txt` lists the PostgreSQL JDBC driver bundled in the
+  executable, with its BSD 2-Clause notice and those of the OnGres SCRAM and
+  stringprep libraries it includes; it was missing.
+
 ## 0.11.2 — 2026-10-22
 
 A first run that works: `init` writes a scenario that runs as generated, the

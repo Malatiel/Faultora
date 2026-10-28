@@ -423,7 +423,10 @@ copies people read — README, `docs/`, `Dockerfile`, `deploy/`. The
 `ReleaseVersionConsistencyTest` fails until every one of those names the new
 version. Then commit `release: X.Y.Z` on its own branch, merge it with
 `merge: release X.Y.Z`, tag the merge `vX.Y.Z`, and push the tag: the release
-workflow checks the tag against the POM, builds, scans and publishes.
+workflow checks the tag against the POM, builds, scans and publishes. A
+dependency finding at CVSS 7.0 or above stops it before anything is published;
+see the dependency vulnerability gate in [SECURITY.md](SECURITY.md), and check
+the daily CI scan before tagging.
 
 Installed POMs keep `${revision}` unresolved. Nothing consumes Faultora
 modules from a Maven repository today; publishing them would first need the

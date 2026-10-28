@@ -46,6 +46,9 @@ jobs:
       cancel-in-progress: false
     env:
       NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+      # The CVSS base score at and above which a finding blocks, the same here
+      # and in the release gate. Waivers live in .github/vulnerability-exceptions.json.
+      VULNERABILITY_THRESHOLD: '7.0'
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-java@v5
@@ -78,6 +81,7 @@ jobs:
             -DdataDirectory="${{ github.workspace }}/.odc-data" \
             -DnvdValidForHours=24 \
             -DnvdMaxRetryCount=5 \
+            -Dformats=HTML,JSON \
             -B
       - name: Save Dependency Check database
         if: success() && env.NVD_API_KEY != '' && steps.odc-cache.outputs.cache-hit != 'true'
@@ -85,6 +89,21 @@ jobs:
         with:
           path: .odc-data
           key: odc-${{ runner.os }}-12.2.2-${{ steps.date.outputs.value }}
+      # After the cache is saved: a finding must not stop the database from
+      # staying warm for the next run and for the release gate.
+      - name: Vulnerability gate
+        if: env.NVD_API_KEY != ''
+        run: >
+          python3 -B scripts/vulnerability_gate.py
+          --report target/dependency-check-report.json
+          --threshold "${VULNERABILITY_THRESHOLD}"
+          --exceptions .github/vulnerability-exceptions.json
+      - uses: actions/upload-artifact@v7
+        if: always() && env.NVD_API_KEY != ''
+        with:
+          name: dependency-check-report
+          path: target/dependency-check-report.*
+          if-no-files-found: warn
 
   secret-scan:
     if: github.event_name != 'schedule'
