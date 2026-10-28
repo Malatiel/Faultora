@@ -6,13 +6,15 @@ All notable changes to Faultora are documented in this file.
 
 ### Added
 
-- **An offline bundle is checked on arrival, not only summed.** It now
-  carries `verify-offline-bundle.sh`, which refuses a file that does not match
-  its `SHA256SUMS`, a missing or unlisted file, a link and a path leaving the
-  bundle, and then runs the bundled CLI on the bundled example with nothing
-  from the network. Given the release's attested `SHA256SUMS`, it also refuses
-  a replaced jar whose checksum line was rewritten to match. The bundle script
-  prints a fingerprint of `SHA256SUMS` to record apart from the medium.
+- **An offline bundle is checked on arrival, not only summed.** The bundle
+  script prints a fingerprint of `SHA256SUMS` to record apart from the medium,
+  and the bundle carries `verify-offline-bundle.sh --fingerprint`, which
+  compares it before running anything, then refuses a file that does not
+  match, a missing or unlisted file, a link and a path leaving the bundle, and
+  runs the bundled CLI on the bundled example with nothing from the network.
+  Given the release's attested `SHA256SUMS`, it also refuses a jar that is not
+  the released one. `deploy/README.md` shows the check to make with the
+  system's `sha256sum` before trusting the bundled verifier itself.
 
 ### Fixed
 
