@@ -830,6 +830,7 @@ required field that stopped being sent, a value that left its enum.
 - id: response-matches-its-contract
   assertionType: schema
   targetStep: create-payment
+  params: {status: 201}
 ```
 
 | Parameter | Meaning |

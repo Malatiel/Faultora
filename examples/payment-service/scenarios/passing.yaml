@@ -36,6 +36,7 @@ assertions:
   - id: response-matches-its-contract
     assertionType: schema
     targetStep: create-payment
+    params: {status: 201}
     message: The response has the shape the OpenAPI document declares for 201
 
 cleanup:

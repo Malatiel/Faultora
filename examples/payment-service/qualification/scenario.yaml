@@ -1,0 +1,71 @@
+apiVersion: faultora.dev/v1
+kind: Scenario
+
+metadata:
+  name: payment-replay-observation
+  description: Observe the result of repeating one payment request
+
+timeout: 30s
+
+execute:
+  - id: submit
+    type: operation
+    operationId: create-payment
+    outputAs: submitted
+    inputs:
+      headers:
+        Idempotency-Key: qualification-payment-42
+      body: {amount: 4200, currency: EUR}
+  - id: repeat
+    type: operation
+    operationId: create-payment
+    dependsOn: [submit]
+    inputs:
+      headers:
+        Idempotency-Key: qualification-payment-42
+      body: {amount: 4200, currency: EUR}
+  - id: observe
+    type: operation
+    operationId: list-payments
+    dependsOn: [repeat]
+
+assertions:
+  - id: submit-status
+    assertionType: status
+    targetStep: submit
+    params: {expected: 201}
+  - id: repeat-status
+    assertionType: status
+    targetStep: repeat
+    params: {expected: 200}
+  - id: observe-status
+    assertionType: status
+    targetStep: observe
+    params: {expected: 200}
+  - id: submit-schema
+    assertionType: schema
+    targetStep: submit
+    params: {status: 201}
+  - id: repeat-schema
+    assertionType: schema
+    targetStep: repeat
+    params: {status: 200}
+  - id: observe-schema
+    assertionType: schema
+    targetStep: observe
+  - id: same-payment
+    assertionType: jsonpath
+    targetStep: repeat
+    params: {path: id, equals: "{{steps.submitted.body.id}}"}
+  - id: one-payment
+    assertionType: jsonpath
+    targetStep: observe
+    params: {path: "@", count: 1}
+  - id: accepted-amount
+    assertionType: jsonpath
+    targetStep: observe
+    params: {path: "[0].amount", equals: 4200}
+  - id: accepted-currency
+    assertionType: jsonpath
+    targetStep: observe
+    params: {path: "[0].currency", equals: EUR}

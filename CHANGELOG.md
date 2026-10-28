@@ -6,6 +6,11 @@ All notable changes to Faultora are documented in this file.
 
 ### Added
 
+- **Paired payment qualification.** One frozen task, OpenAPI document and
+  scenario run against fresh service profiles without variant labels in the
+  preparation input. The packaged CLI detects response-schema drift, an extra
+  replay side effect and an incorrect amount through evaluated assertions.
+  The example documents the operator boundary for a blind preparation session.
 - **Multi-platform runner images.** Bake exports a local OCI archive for
   linux/amd64 and linux/arm64 or loads one platform for a runtime check. The
   Distroless index is pinned, with the same nonroot user, absent shell and

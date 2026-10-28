@@ -190,6 +190,56 @@ For external network faults see the [Toxiproxy limits](../docs/SCENARIO_REFERENC
 
 ## Automated coverage
 
+### Paired qualification with the same preparation input
+
+[Payment replay observation](payment-service/qualification/README.md) supplies
+one business task and a [reference scenario](payment-service/qualification/scenario.yaml).
+The operator supplies an unchanged copy of the existing payment OpenAPI
+document, one target and seed 42. Freeze this input and the prepared scenario
+before selecting a service profile. Both halves use the same target address,
+catalog, scenario name, request data and invocation options; only the fresh
+service's implementation changes. Run directories have opaque identifiers.
+
+`PairedQualificationE2ETest` exercises three pairs in both orders. Every HTTP
+operation succeeds in both halves; the engine must evaluate the assertions:
+
+| Operator-only change | Required failed assertions |
+|---|---|
+| A response field no longer has its declared type | `submit-schema`, `repeat-schema`, `observe-schema` |
+| Replaying a cached response also writes another payment | `one-payment` |
+| The stored amount differs from the requested amount | `accepted-amount` |
+
+The other half passes all ten assertions. The tests require identical file
+hashes and engine scenario/catalog digests, a fresh store for each execution,
+the same three successful HTTP statuses, exact failed assertion IDs, and
+agreement between exit code, terminal event, console verdict and JSON report.
+An additional negative control removes just the necessary assertions: the
+engine then passes even when the scenario is named `known-broken`. Names are
+not evidence. These weakened copies are test controls, not reference scenarios.
+
+For a blind preparation session, give the preparer only the neutral files
+`README.md`, `openapi.yaml`, `scenario.yaml` from this input and the target/seed.
+The fixture's profile selection, implementation and expected outcomes belong
+to the operator. Keep them outside the preparer's accessible workspace and
+do not label its endpoint, task, scenario or output directory with the chosen
+variant. The public task is identical for every profile. Outcomes and observed
+differences are available after execution, as evidence to explain.
+
+This suite checks the frozen-input protocol and the engine's verdicts with a
+reference scenario. It does not run a live assistant, measure preparation
+quality, or hide source files from a process running as the same OS user with
+shell access. A real blind session requires the operator to enforce that
+separation. The in-memory HTTP fixture proves these local payment observations;
+it does not qualify concurrency, real brokers, a database or durable recovery.
+
+The suite needs Java and the packaged CLI, with no Docker requirement:
+
+```sh
+./mvnw package -pl integration-tests -am -Dtest=PairedQualificationE2ETest -Dsurefire.failIfNoSpecifiedTests=false
+```
+
+### Family examples
+
 `ExampleFamiliesE2ETest` launches the packaged JAR for contract, retry,
 eventual and lifecycle examples, including schema/convergence/lifecycle
 negative controls. `CrossComponentE2ETest` covers the fifth family through
