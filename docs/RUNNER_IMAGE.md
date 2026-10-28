@@ -101,14 +101,35 @@ triggered by a branch push or an ordinary local build. Publication starts with
 the first release containing this packaging; the earlier CLI releases do not
 imply a published multi-platform runner image.
 
-The workflow checks out that exact tag, requires a published release, downloads
-its existing JAR and `SHA256SUMS`, checks the bytes and manifest version, and
-verifies the release attestation against this repository's `release.yml`, tag
-and commit. It requires that attestation; it does not fall back to rebuilding
+The workflow refuses to run unless dispatched from `main`. It checks out the
+exact tag, requires a published release and downloads its existing JAR and
+`SHA256SUMS`. Before any code from the tag runs, the workflow's own
+`gh attestation verify` requires the JAR to carry `release.yml`'s attestation
+for that tag and its commit; only then do the tag's own checks run —
+`deploy/verify-release.py`, the same check a user runs on a download, for the
+listed checksum and the manifest version. It does not fall back to rebuilding
 the application or skip the release's security gate. It then checks both
 platforms with QEMU available, logs in to GHCR using the job's package token,
 and publishes one index as `ghcr.io/OWNER/REPOSITORY-runner:VERSION`. No `latest`
-tag is moved. The job prints and checks the resulting platform index.
+tag is moved. The digest it attests is the one Buildx reports for the index it
+pushed, never what the tag points to afterwards, and the provenance is pushed
+to the registry beside the image.
+
+To check a pulled image was published by this workflow from `main`:
+
+```sh
+gh attestation verify oci://ghcr.io/malatiel/faultora-runner:VERSION \
+  --repo Malatiel/Faultora \
+  --signer-workflow Malatiel/Faultora/.github/workflows/runner-image.yml \
+  --source-ref refs/heads/main \
+  --deny-self-hosted-runners
+```
+
+`--source-ref` is the workflow's ref, `main`, not the release tag the workflow
+checks out: without it, the same workflow run from any other branch would also
+pass. Pull by the digest the verification reports, not by the tag, so what runs
+is what was checked. The JAR inside was verified against the release's own
+attestation before the image was built, as described above.
 
 The image workflow's CLI/health smoke checks are smaller than the mTLS runtime
 suite and the release qualification that produced the JAR. Registry publication

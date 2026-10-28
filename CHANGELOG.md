@@ -11,6 +11,16 @@ All notable changes to Faultora are documented in this file.
   Distroless index is pinned, with the same nonroot user, absent shell and
   outbound-only runner. A separate manually dispatched workflow verifies an
   existing release JAR before publishing both platforms to GHCR.
+- **A download can be checked for who built it, not only for damage.** The
+  installation guide's commands now verify the GitHub attestation as well as
+  the checksum, accepting only one made by this repository's `release.yml` for
+  that release's tag on a GitHub-hosted runner; a modified file, or one built
+  elsewhere, is refused, and each command block stops at the first refused
+  check instead of extracting and running the archive anyway.
+  `deploy/verify-release.py` runs both checks for any release file. Published
+  runner images now carry their own attestation, for the digest the publishing
+  run pushed; the image workflow publishes only when dispatched from `main` and
+  checks the JAR's release attestation before running any code from the tag.
 
 ### Fixed
 

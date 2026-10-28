@@ -28,19 +28,22 @@ the version of your downloaded release or local build.
 
 ## Linux
 
-For downloaded release assets, compare the archive against its SHA-256 entry
-before extracting it. Download both files from the same release. A checksum
-detects a damaged download; it does not authenticate the publisher by itself.
-Public release artifacts also have GitHub build attestations, which can be
-verified with `gh attestation verify ARCHIVE --repo Malatiel/Faultora`.
+For downloaded release assets, check the archive before extracting it — see
+[Verifying a download](#verifying-a-download) for what each step proves. Each
+step runs only if the one before it succeeded, so a refused checksum or
+attestation, or a missing `gh`, stops before anything is extracted or run; the
+chain does not close your shell when it stops.
 
 ```sh
 FAULTORA_VERSION=0.11.2
-grep " faultora-${FAULTORA_VERSION}.tar.gz$" SHA256SUMS \
-  | sha256sum --check --strict -
-tar -xzf "faultora-${FAULTORA_VERSION}.tar.gz"
-cd "faultora-${FAULTORA_VERSION}"
-./bin/faultora --version
+archive="faultora-${FAULTORA_VERSION}.tar.gz"
+grep " ${archive}\$" SHA256SUMS | sha256sum --check --strict - &&
+gh attestation verify "$archive" --repo Malatiel/Faultora \
+  --signer-workflow Malatiel/Faultora/.github/workflows/release.yml \
+  --source-ref "refs/tags/v${FAULTORA_VERSION}" --deny-self-hosted-runners &&
+tar -xzf "$archive" &&
+cd "faultora-${FAULTORA_VERSION}" &&
+./bin/faultora --version &&
 ./bin/faultora validate \
   --scenario examples/payment-service/scenarios/passing.yaml \
   --openapi examples/payment-service/openapi.yaml
@@ -65,29 +68,70 @@ launcher, and input paths still use the caller's current directory.
 
 This check requires exactly one matching archive entry and compares it to the
 downloaded file. It works without changing PowerShell execution policy; the
-launcher is a `.cmd` file.
+launcher is a `.cmd` file. The block runs as one script block: pasted into a
+console, a refused check stops it there instead of letting the following lines
+extract and run the archive.
 
 ```powershell
-$version = '0.11.2'
-$archive = "faultora-$version.zip"
-$entries = @(Get-Content -LiteralPath SHA256SUMS |
-    Where-Object { $_ -match ("^[0-9a-f]{64}  " + [regex]::Escape($archive) + '$') })
-if ($entries.Count -ne 1) { throw 'Missing or duplicate archive checksum' }
-$expected = $entries[0].Substring(0, 64)
-if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $expected) {
-    throw 'Archive checksum mismatch'
+& {
+    $ErrorActionPreference = 'Stop'
+    $version = '0.11.2'
+    $archive = "faultora-$version.zip"
+    $entries = @(Get-Content -LiteralPath SHA256SUMS |
+        Where-Object { $_ -match ("^[0-9a-f]{64}  " + [regex]::Escape($archive) + '$') })
+    if ($entries.Count -ne 1) { throw 'Missing or duplicate archive checksum' }
+    $expected = $entries[0].Substring(0, 64)
+    if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $expected) {
+        throw 'Archive checksum mismatch'
+    }
+    gh attestation verify $archive --repo Malatiel/Faultora `
+        --signer-workflow Malatiel/Faultora/.github/workflows/release.yml `
+        --source-ref "refs/tags/v$version" --deny-self-hosted-runners
+    if ($LASTEXITCODE -ne 0) { throw 'Archive attestation refused' }
+    Expand-Archive -LiteralPath $archive -DestinationPath .
+    Set-Location -LiteralPath "faultora-$version"
+    .\bin\faultora.cmd --version
+    .\bin\faultora.cmd validate `
+        --scenario examples/payment-service/scenarios/passing.yaml `
+        --openapi examples/payment-service/openapi.yaml
 }
-Expand-Archive -LiteralPath $archive -DestinationPath .
-Set-Location -LiteralPath "faultora-$version"
-.\bin\faultora.cmd --version
-.\bin\faultora.cmd validate `
-    --scenario examples/payment-service/scenarios/passing.yaml `
-    --openapi examples/payment-service/openapi.yaml
 ```
 
 For a local build, use the ZIP in `faultora-cli\target\` and omit the release
 checksum step. An invalid `JAVA_HOME` causes the launcher to fail rather than
 silently select a different runtime. Unset it to select Java from `PATH`.
+
+## Verifying a download
+
+Two checks, and they answer different questions.
+
+The **checksum** says the file is the one `SHA256SUMS` lists. It catches a
+damaged or truncated download. It does not say who made the file: anyone able
+to replace the archive can replace `SHA256SUMS` beside it.
+
+The **attestation** says this repository's release workflow built these exact
+bytes. GitHub records it when a release is published; `gh attestation verify`
+looks it up by the file's digest. The flags above narrow what counts:
+`--signer-workflow` accepts only `.github/workflows/release.yml`, so an
+attestation from another workflow or a fork does not pass; `--source-ref`
+requires the run to have been for this release's tag; and
+`--deny-self-hosted-runners` requires a GitHub-hosted runner. A modified file
+has a different digest and no attestation at all; a file built anywhere else
+has none from this workflow and tag. Both are refused. It needs the
+[GitHub CLI](https://cli.github.com/) and network access to GitHub.
+
+The same checks apply to the JAR, the ZIP, the tar.gz and the SBOM of a
+release. From a checkout, `deploy/verify-release.py` runs both for one file and
+also checks that a JAR names the release version:
+
+```sh
+python3 deploy/verify-release.py faultora-VERSION.tar.gz --sums SHA256SUMS --tag vVERSION
+```
+
+Its `--checksum-only` mode skips the attestation and says so; use it only
+where GitHub cannot be reached, knowing that it detects damage, not
+substitution. Runner images carry an attestation of their own; see
+[Runner image](RUNNER_IMAGE.md#publication).
 
 ## Layout and trust
 
