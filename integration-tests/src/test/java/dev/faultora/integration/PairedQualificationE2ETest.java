@@ -60,6 +60,38 @@ class PairedQualificationE2ETest {
         }
     }
 
+    @Test
+    void theSchemaReferenceExcerptRunsAgainstThePublishedCatalog() throws Exception {
+        String reference = Files.readString(ROOT.resolve("docs/SCENARIO_REFERENCE.md")).replace("\r\n", "\n");
+        String section = reference.substring(reference.indexOf("### `schema`"));
+        String snippet = section.substring(section.indexOf("```yaml\n") + "```yaml\n".length());
+        snippet = snippet.substring(0, snippet.indexOf("```"));
+        var yaml = new Yaml(new SafeConstructor(new LoaderOptions()));
+        Map<String, Object> scenario = yaml.load(Files.readString(ExampleFixtures.scenario("passing.yaml")));
+        scenario.put("assertions", yaml.load(snippet));
+        Path path = directory.resolve("scenario.yaml");
+        Files.writeString(path, yaml.dump(scenario));
+        Path output = directory.resolve("run");
+        PaymentApi api = new PaymentApi();
+        api.start();
+        try {
+            assertThat(PackagedExampleCli.run(output, path, List.of(
+                    "--openapi", ExampleFixtures.openApi().toString(), "--target", api.baseUrl()))).isZero();
+            List<JsonNode> evaluated = new ArrayList<>();
+            for (JsonNode event : JSON.readTree(Files.readString(output.resolve("report.json")))) {
+                if (event.path("eventType").asText().equals("ASSERTION_EVALUATED")) {
+                    evaluated.add(event);
+                }
+            }
+            assertThat(evaluated).singleElement().satisfies(event -> {
+                assertThat(event.path("assertionType").asText()).isEqualTo("schema");
+                assertThat(event.path("outcome").asText()).isEqualTo("PASS");
+            });
+        } finally {
+            api.stop();
+        }
+    }
+
     @ParameterizedTest
     @CsvSource({"RESPONSE_SCHEMA,false", "RESPONSE_SCHEMA,true",
             "REPLAY_SIDE_EFFECT,false", "REPLAY_SIDE_EFFECT,true",
