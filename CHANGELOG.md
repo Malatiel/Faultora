@@ -13,6 +13,11 @@ All notable changes to Faultora are documented in this file.
   arrays, label queries and nested attributes through the ordinary OpenAPI,
   operation and assertion APIs. Its scenario checks filtering and cleanup;
   packaged CLI qualification detects a deliberately incorrect filter.
+- **A measured capacity baseline.** `docs/CAPACITY.md` records time, heap and
+  disk for runs of 100 to 1000 requests with 1 to 256 KiB responses, and the
+  command that reproduces it. Heap follows requests times response size, about
+  2.6 bytes per byte received, because evidence is kept per node; disk follows
+  requests alone. The default limits allow more than a 1 GiB heap holds.
 
 - **Extension protocol specification.** Defines framing, negotiation, request
   correlation, deadlines and data-only payloads for assertions, importers and
