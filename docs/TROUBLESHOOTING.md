@@ -98,3 +98,22 @@ on running inside a private network for the options involved.
 runs `validate` and `test --preview` on pull requests, with no credentials and
 no request to the target, and the full run on the main branch. A refused plan
 therefore fails the pull request rather than the first deployment that runs it.
+
+## Reporting a problem
+
+Attach a diagnostic bundle rather than the run directory:
+
+```bash
+java -jar faultora.jar diagnose --run results/run --output faultora-diagnostics.zip
+```
+
+It holds the run's journal with each event reduced to identifiers, counts,
+durations, outcomes and digests, and a manifest naming what was read, its
+SHA-256 and which fields were withheld. Assertion messages, skip reasons,
+error messages, the resolved configuration, target scopes and channel names
+are left out, since they can quote values or name things inside your network;
+of an error only its category and code remain. Nothing else in the directory
+is read, so a key, an environment file or a report beside the journal never
+reaches the bundle. A journal that is a link or lies outside the directory,
+or one over 16 MiB, is refused. `--health <file>` adds a runner's status file,
+reduced to its state, identifier, registration and counters.

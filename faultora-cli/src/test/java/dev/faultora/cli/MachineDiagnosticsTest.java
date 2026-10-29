@@ -37,7 +37,7 @@ class MachineDiagnosticsTest {
     @TempDir Path directory;
 
     @ParameterizedTest
-    @ValueSource(strings = {"test", "validate", "discover", "init", "runner", "health", "migrate"})
+    @ValueSource(strings = {"test", "validate", "discover", "init", "runner", "health", "migrate", "diagnose"})
     void everyCommandReportsInvalidArgumentsWithoutHumanText(String command) throws Exception {
         var result = invoke(command, "--" + MARKER);
         assertEnvelope(result, 2);

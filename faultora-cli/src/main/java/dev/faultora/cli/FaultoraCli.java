@@ -21,6 +21,8 @@ import java.util.*;
  *       itself, for a probe that cannot connect to one</li>
  *   <li>{@code migrate <path>...} — move documents to the current API
  *       version</li>
+ *   <li>{@code diagnose --run <dir> --output <zip>} — a bundle for a bug
+ *       report, reduced to what the run did and nothing it saw</li>
  * </ul>
  * <p>
  * Exit codes: 0 = pass, 1 = test failure, 2 = invalid configuration, 3 = runner failure.
@@ -55,6 +57,7 @@ public class FaultoraCli {
         commands.put("runner", new RunnerCommand(output.out(), output.err()));
         commands.put("health", new HealthCommand(output.out(), output.err()));
         commands.put("migrate", new MigrateCommand(output.out(), output.err()));
+        commands.put("diagnose", new DiagnoseCommand(output.out(), output.err()));
         return commands;
     }
 
@@ -172,6 +175,7 @@ public class FaultoraCli {
         out.println("  runner     --dispatcher <url> [options]             Serve a control plane, dialling out");
         out.println("  health     --file <status file>                     Is the runner in this container all right?");
         out.println("  migrate    <file or directory>... [--write]        Move documents to the current API version");
+        out.println("  diagnose   --run <dir> --output <bundle.zip>        A bug-report bundle with no payloads");
         out.println();
         out.println("Options:");
         out.println("  -v, --version   Show version");

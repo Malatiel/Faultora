@@ -6,6 +6,13 @@ All notable changes to Faultora are documented in this file.
 
 ### Added
 
+- **A diagnostic bundle for bug reports.** `faultora diagnose --run <dir>
+  --output <zip>` writes the run's journal reduced to identifiers, counts,
+  durations, outcomes and digests, with a manifest of what was read and which
+  fields were withheld. Free text, resolved configuration and other names from
+  inside the network are left out, nothing else in the directory is read, and a
+  linked, outside or oversized journal is refused.
+
 - **Bounded extension codec.** A separate data-only module reads and writes
   length-prefixed JSON with byte limits, strict envelope checks and reply
   correlation. It does not start a plugin or change isolation policy refusals.
