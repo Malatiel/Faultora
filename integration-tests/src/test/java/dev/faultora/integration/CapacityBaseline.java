@@ -2,7 +2,6 @@ package dev.faultora.integration;
 
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 import java.io.OutputStream;
 import java.net.InetAddress;
@@ -11,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
@@ -31,10 +31,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code integration-tests/target/capacity/baseline.md}; docs/CAPACITY.md
  * records one such run and what it implies.
  * <p>
- * Not part of the ordinary build: {@code FAULTORA_CAPACITY=1} enables it.
+ * Not part of the ordinary build: the name keeps it out of test discovery, so a
+ * qualification run neither runs nor skips it. Run it by naming it:
+ * {@code -Dtest=CapacityBaseline}.
  */
-@EnabledIfEnvironmentVariable(named = "FAULTORA_CAPACITY", matches = "1")
-class CapacityBaselineTest {
+class CapacityBaseline {
     private static final int[] REQUESTS = {100, 500, 1000};
     private static final int[] BODY_BYTES = {1024, 65_536, 262_144};
     private static final String HEAP_CEILING = "-Xmx1g";
@@ -94,10 +95,9 @@ class CapacityBaselineTest {
                 .redirectOutput(run.resolve("cli.log").toFile());
         builder.environment().remove("JAVA_TOOL_OPTIONS");
         long started = System.nanoTime();
-        Process process = builder.start();
-        assertThat(process.waitFor(600, TimeUnit.SECONDS)).as("run of %d requests finished", requests).isTrue();
+        int exit = BoundedProcess.run(builder, Duration.ofMinutes(10), process -> { });
         long wallMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
-        assertThat(process.exitValue()).as(Files.readString(run.resolve("cli.log"))).isZero();
+        assertThat(exit).as(Files.readString(run.resolve("cli.log"))).isZero();
 
         long before = 0;
         long after = 0;

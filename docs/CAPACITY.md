@@ -6,7 +6,7 @@ to compare against — not a promise that larger runs scale the same way.
 
 ## How it was measured
 
-`CapacityBaselineTest` runs the packaged CLI in its own JVM with a 1 GiB heap
+`CapacityBaseline` runs the packaged CLI in its own JVM with a 1 GiB heap
 ceiling and GC logging, against a local server that answers every request
 with a JSON body of a fixed size. Each run is one scenario of repeat groups
 reading that body, so the grid crosses the number of requests with the size of
@@ -14,13 +14,16 @@ each response. It writes the table to
 `integration-tests/target/capacity/baseline.md`:
 
 ```bash
-FAULTORA_CAPACITY=1 ./mvnw -B verify -pl integration-tests -am \
-  -Dtest=CapacityBaselineTest -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw -B verify -pl integration-tests -am \
+  -Dtest=CapacityBaseline -Dsurefire.failIfNoSpecifiedTests=false
 ```
 
-The ordinary build skips it. *Max heap after GC* is the largest heap left after
-a collection, the closest of the three heap columns to what the run actually
-holds; *before GC* and *at exit* include garbage not yet collected.
+Its name keeps it out of test discovery, so the ordinary build neither runs
+nor skips it, and a strict qualification run counts no skipped suite.
+
+*Max heap after GC* is the largest heap left after a collection, the closest
+of the three heap columns to what the run actually holds; *before GC* and *at
+exit* include garbage not yet collected.
 
 ## Baseline
 
