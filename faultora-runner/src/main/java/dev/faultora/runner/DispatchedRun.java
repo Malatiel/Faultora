@@ -231,22 +231,32 @@ public final class DispatchedRun {
         var identity = new DurableRunSpool.Identity(DurableRunSpool.runnerIdentity(workingDirectory),
                 dispatch.runId(), java.util.UUID.randomUUID().toString(), dispatchFingerprint(dispatch, sealed.preparationDigest()),
                 dispatch.lease().deadlineFrom(receivedAt));
-        RunResult result;
-        boolean leaseExpired;
-        try (DurableRunSpool spool = spools.create(journalPath.resolveSibling("spool.bin"), identity);
-             LeaseWatch lease = new LeaseWatch(dispatch.lease(), receivedAt, cancellation);
-             RunJournal journal = new SpoolingRunJournal(journalPath, spool, cancellation)) {
-            lease.start();
-            whileRunning.started(lease, journalPath);
-            result = sealed.execute(request, settings, faultProviders, journal, cancellation);
-            result = JournalWriter.closeJournal(journal, result);
-            leaseExpired = lease.hasExpired();
-            boolean cleanupFailed = journal.events().stream().anyMatch(event ->
-                    event instanceof dev.faultora.model.events.RunEvent.CleanupCompleted cleanup && cleanup.failed() != 0);
-            spool.commitTerminal(result.status(), !cleanupFailed && result.status() != RunResult.Status.ERROR, leaseExpired);
+        Outcome outcome;
+        try (DurableRunSpool spool = spools.create(journalPath.resolveSibling("spool.bin"), identity)) {
+            boolean cleanupConfirmed = false;
+            try (LeaseWatch lease = new LeaseWatch(dispatch.lease(), receivedAt, cancellation);
+                 RunJournal journal = new SpoolingRunJournal(journalPath, spool, cancellation)) {
+                lease.start();
+                whileRunning.started(lease, journalPath);
+                RunResult result = sealed.execute(request, settings, faultProviders, journal, cancellation);
+                result = JournalWriter.closeJournal(journal, result);
+                boolean cleanupFailed = journal.events().stream().anyMatch(event ->
+                        event instanceof dev.faultora.model.events.RunEvent.CleanupCompleted cleanup && cleanup.failed() != 0);
+                cleanupConfirmed = !cleanupFailed && result.status() != RunResult.Status.ERROR;
+                outcome = Outcome.ran(result, journalPath, lease.hasExpired(), prepared.catalogWarnings());
+            } catch (Exception stopped) {
+                if (stopped instanceof InterruptedException) Thread.currentThread().interrupt();
+                cleanupConfirmed = false;
+                outcome = Outcome.broke(journalPath,
+                        "run stopped part-way; provider details withheld by export policy");
+            }
+            // A broken engine/mirror is still reportable when local storage can commit the failure.
+            // A failure of this commit escapes without calling terminalCommitted.
+            spool.commitTerminal(outcome.completed() ? outcome.result().status() : RunResult.Status.ERROR,
+                    cleanupConfirmed, outcome.leaseExpired());
         }
         whileRunning.terminalCommitted();
-        return Outcome.ran(result, journalPath, leaseExpired, prepared.catalogWarnings());
+        return outcome;
     }
 
     /** Binds the complete dispatch and the locally narrowed policy; only the digest is retained. */

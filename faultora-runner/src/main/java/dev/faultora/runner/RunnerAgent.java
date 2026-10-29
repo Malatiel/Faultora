@@ -180,9 +180,15 @@ public final class RunnerAgent {
             } else if (outcome.journalPath() != null) {
                 sendWhateverIsFinished(runId, new JournalTail(outcome.journalPath()));
             }
-            if (outcome.refusal() != null || terminalCommitted) {
-                client.sendOutcome(runId, describe(outcome));
-            }
+        } catch (InterruptedException stopping) {
+            Thread.currentThread().interrupt();
+            return;
+        } catch (Exception progressUnavailable) {
+            // A broken journal mirror must not suppress a committed failure diagnosis.
+        }
+        if (outcome.refusal() == null && !terminalCommitted) return;
+        try {
+            client.sendOutcome(runId, describe(outcome));
         } catch (InterruptedException stopping) {
             Thread.currentThread().interrupt();
         } catch (Exception stillUnreachable) {

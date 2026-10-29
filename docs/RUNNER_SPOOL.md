@@ -23,6 +23,12 @@ this leaves the dispatcher without a terminal; missing delivery is unknown,
 never evidence of PASS or confirmed cleanup. Admission refusals remain ordinary
 protocol control replies because no execution began.
 
+An exception from execution, journal startup or resource release still produces
+the existing `broke` diagnosis when the spool can commit an ERROR terminal with
+unconfirmed cleanup. Failure to read/send the NDJSON mirror does not suppress
+that committed diagnosis. If the spool itself cannot commit the terminal, no
+terminal notification is sent; local failure and retained evidence remain.
+
 ## Commit and verification
 
 The file begins with `FTSP001\n`. Records contain a 32-bit payload byte length,

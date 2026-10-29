@@ -153,6 +153,34 @@ class RemoteRunQualificationTest {
     }
 
     @Test
+    void aBrokenRunIsReportedWhenItsSpoolCanCommitTheInfrastructureTerminal() throws Exception {
+        Pair tls = trustingEachOther();
+        Path work = directory.resolve("PRIVATE_MIRROR_MARKER");
+        try (var dispatcher = new QualificationDispatcher(tls.dispatcher().sslContext())) {
+            var client = new RunnerClient(java.net.URI.create(dispatcher.address()), tls.runner(),
+                    "runner-broken", "0.11.3", Set.of("http"));
+            Session session = client.register();
+            String run = "run-broken-mirror";
+            dispatcher.offer(dispatch(run, scenarioLasting(1, "1ms"), 60_000));
+            var runs = new DispatchedRun(new DispatchVerifier(LIMITS, policy -> true), work,
+                    handle -> null, true, (path, identity) -> {
+                        Files.createDirectory(path.resolveSibling("events.ndjson"));
+                        return DurableRunSpool.create(path, identity);
+                    });
+            var outcome = new RunnerAgent(client, runs, Map.of(), EXTENSIONS)
+                    .takeOneDispatch(session.sessionId()).orElseThrow();
+            assertThat(outcome.completed()).isFalse();
+            assertThat(dispatcher.outcomeOf(run)).as("a broken mirror must not suppress its committed diagnosis")
+                    .isNotNull().contains("\"broke\":true", "provider details withheld")
+                    .doesNotContain("PRIVATE_MIRROR_MARKER", "PASSED");
+            var snapshot = DurableRunSpool.recover(outcome.journalPath().resolveSibling("spool.bin"));
+            assertThat(snapshot.terminal().status()).isEqualTo(dev.faultora.engine.run.RunResult.Status.ERROR);
+            assertThat(snapshot.terminal().cleanupConfirmed()).isFalse();
+            assertThat(snapshot.events()).isZero();
+        }
+    }
+
+    @Test
     void aRunLongerThanItsLeaseSurvivesOnlyBecauseSomethingKeepsAsking() throws Exception {
         // Three seconds of work under a lease worth one. It finishes, which it
         // can only do if the heartbeat is really renewing the permission.
