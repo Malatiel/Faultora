@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import dev.faultora.model.catalog.NormalizedError;
+import dev.faultora.spi.result.AssertionResult;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -58,25 +60,28 @@ final class DiagnoseCommand implements Command {
      * digests — each with the only shape it may have. A kept field of another
      * shape refuses the bundle: a name is no promise about what it holds.
      */
-    static final Map<String, Shape> EVENT_FIELDS = shapes(
-            Shape.TOKEN, List.of("eventType", "runId", "nodeId", "nodeType", "operationId", "assertionType",
-                    "outcome", "errorCode", "evidenceType", "digest", "scenarioDigest", "catalogDigest",
-                    "strategy", "faultType", "faultHandle", "rollbackStatus"),
-            Shape.NUMBER, List.of("timestamp", "statusCode", "durationMs", "elapsedMs", "responseBytes",
+    static final Map<String, Shape> EVENT_FIELDS = shapes(Map.of(
+            Shape.EVENT_TYPE, List.of("eventType"),
+            Shape.OUTCOME, List.of("outcome"),
+            Shape.DIGEST, List.of("digest", "scenarioDigest", "catalogDigest"),
+            Shape.IDENTIFIER, List.of("runId", "nodeId", "operationId", "faultHandle"),
+            Shape.NAME, List.of("nodeType", "assertionType", "errorCode", "evidenceType", "strategy", "faultType",
+                    "rollbackStatus"),
+            Shape.INTEGER, List.of("timestamp", "statusCode", "durationMs", "elapsedMs", "responseBytes",
                     "attempt", "attemptNumber", "maxAttempts", "failedAttempt", "nextDelayMs", "maxPolls",
                     "sizeBytes", "seed", "hardExpiryMs", "pendingObligations", "succeeded", "failed",
                     "passedAssertions", "failedAssertions", "totalNodes", "fetched", "rows", "observed",
                     "matched", "requestedWaitMs", "waitedMs", "partition", "offset"),
-            Shape.BOOLEAN, List.of("satisfied", "truncated"));
+            Shape.BOOLEAN, List.of("satisfied", "truncated")));
 
     /** Of a normalized error, what says which kind of failure it was. */
-    static final Map<String, Shape> ERROR_FIELDS = shapes(
-            Shape.TOKEN, List.of("category", "code"), Shape.NUMBER, List.of(), Shape.BOOLEAN, List.of("retryable"));
+    static final Map<String, Shape> ERROR_FIELDS = shapes(Map.of(
+            Shape.CATEGORY, List.of("category"), Shape.NAME, List.of("code"), Shape.BOOLEAN, List.of("retryable")));
 
     /** Of a runner status file, what says how the runner is. */
-    static final Map<String, Shape> HEALTH_FIELDS = shapes(
-            Shape.TOKEN, List.of("state", "runnerId", "currentRunId"),
-            Shape.NUMBER, List.of("runsServed", "updatedAtEpochMs"), Shape.BOOLEAN, List.of("registered"));
+    static final Map<String, Shape> HEALTH_FIELDS = shapes(Map.of(
+            Shape.NAME, List.of("state"), Shape.IDENTIFIER, List.of("runnerId", "currentRunId"),
+            Shape.INTEGER, List.of("runsServed", "updatedAtEpochMs"), Shape.BOOLEAN, List.of("registered")));
 
     /**
      * Fields the journal or a status file is known to carry and the bundle
@@ -88,7 +93,22 @@ final class DiagnoseCommand implements Command {
             "schemaId", "violation", "metadata");
 
     /** The identifier shape of {@code TypedId}; anything with a space or a quote is not one. */
-    private static final Pattern TOKEN = Pattern.compile("[a-zA-Z0-9._:/@-]{1,256}");
+    private static final Pattern IDENTIFIER = Pattern.compile("[a-zA-Z0-9._:/@-]{1,256}");
+
+    /** A short code-chosen name — a node type, provider type, error code — never a path or an address. */
+    private static final Pattern NAME = Pattern.compile("[A-Za-z][A-Za-z0-9._-]{0,127}");
+
+    /** How the engine writes every digest it records ({@code ContentDigest.sha256Uri}). */
+    private static final Pattern DIGEST = Pattern.compile("sha256:[0-9a-f]{64}");
+
+    private static final Set<String> EVENT_TYPES = Set.of(
+            "RUN_STARTED", "RUN_COMPLETED", "RUN_FAILED", "NODE_STARTED", "NODE_COMPLETED", "NODE_FAILED",
+            "NODE_SKIPPED", "OPERATION_RETRIED", "OPERATION_ATTEMPTED", "CONDITION_POLLED", "INPUTS_GENERATED",
+            "MESSAGE_PUBLISHED", "MESSAGES_OBSERVED", "ROWS_OBSERVED", "FAULT_INJECTED", "FAULT_ROLLED_BACK",
+            "ASSERTION_EVALUATED", "EVIDENCE_CAPTURED", "CLEANUP_STARTED", "CLEANUP_COMPLETED");
+
+    private static final Set<String> OUTCOMES = names(AssertionResult.Outcome.values());
+    private static final Set<String> CATEGORIES = names(NormalizedError.ErrorCategory.values());
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final FileTime EPOCH = FileTime.from(Instant.EPOCH);
@@ -294,19 +314,29 @@ final class DiagnoseCommand implements Command {
         return entry;
     }
 
-    private static Map<String, Shape> shapes(Shape first, List<String> firstNames, Shape second,
-            List<String> secondNames, Shape third, List<String> thirdNames) {
+    private static Map<String, Shape> shapes(Map<Shape, List<String>> byShape) {
         Map<String, Shape> shapes = new HashMap<>();
-        firstNames.forEach(name -> shapes.put(name, first));
-        secondNames.forEach(name -> shapes.put(name, second));
-        thirdNames.forEach(name -> shapes.put(name, third));
+        byShape.forEach((shape, names) -> names.forEach(name -> shapes.put(name, shape)));
         return Map.copyOf(shapes);
     }
 
-    /** What a kept field may hold. */
+    private static Set<String> names(Enum<?>[] values) {
+        Set<String> names = new java.util.HashSet<>();
+        for (Enum<?> value : values) {
+            names.add(value.name());
+        }
+        return Set.copyOf(names);
+    }
+
+    /** What a kept field may hold: where the set of values is closed, only a member of it. */
     enum Shape {
-        TOKEN("an identifier"),
-        NUMBER("a number"),
+        EVENT_TYPE("a journal event type"),
+        OUTCOME("an assertion outcome"),
+        CATEGORY("an error category"),
+        DIGEST("a sha256 digest"),
+        IDENTIFIER("an identifier"),
+        NAME("a name"),
+        INTEGER("an integer"),
         BOOLEAN("true or false");
 
         private final String description;
@@ -317,8 +347,13 @@ final class DiagnoseCommand implements Command {
 
         boolean admits(JsonNode value) {
             return switch (this) {
-                case TOKEN -> value.isTextual() && DiagnoseCommand.TOKEN.matcher(value.asText()).matches();
-                case NUMBER -> value.isNumber();
+                case EVENT_TYPE -> value.isTextual() && EVENT_TYPES.contains(value.asText());
+                case OUTCOME -> value.isTextual() && OUTCOMES.contains(value.asText());
+                case CATEGORY -> value.isTextual() && CATEGORIES.contains(value.asText());
+                case DIGEST -> value.isTextual() && DiagnoseCommand.DIGEST.matcher(value.asText()).matches();
+                case IDENTIFIER -> value.isTextual() && DiagnoseCommand.IDENTIFIER.matcher(value.asText()).matches();
+                case NAME -> value.isTextual() && DiagnoseCommand.NAME.matcher(value.asText()).matches();
+                case INTEGER -> value.isIntegralNumber() && value.canConvertToLong();
                 case BOOLEAN -> value.isBoolean();
             };
         }

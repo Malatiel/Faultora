@@ -25,6 +25,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class DiagnoseCommandTest {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final String SECRET = "fixture-secret-5d21";
+    private static final String DIGEST = "sha256:" + "ab".repeat(32);
 
     @TempDir
     Path directory;
@@ -128,7 +129,20 @@ class DiagnoseCommandTest {
                 "{\"eventType\":\"RUN_COMPLETED\",\"timestamp\":1,\"runId\":\"r\",\"durationMs\":\"" + SECRET + "\"}",
                 "{\"eventType\":\"RUN_COMPLETED\",\"timestamp\":1,\"runId\":\"expected " + SECRET + "\"}",
                 "{\"eventType\":\"RUN_COMPLETED\",\"timestamp\":1,\"runId\":\"r\",\"truncated\":\"" + SECRET + "\"}",
-                "{\"eventType\":\"RUN_FAILED\",\"timestamp\":1,\"runId\":\"r\",\"error\":{\"code\":{\"x\":1}}}")) {
+                "{\"eventType\":\"RUN_FAILED\",\"timestamp\":1,\"runId\":\"r\",\"error\":{\"code\":{\"x\":1}}}",
+                // An identifier-shaped value is still not a digest, an outcome or a category.
+                "{\"eventType\":\"EVIDENCE_CAPTURED\",\"timestamp\":1,\"runId\":\"r\",\"nodeId\":\"n\","
+                        + "\"evidenceType\":\"http-response\",\"digest\":\"https://synthetic.invalid/" + SECRET
+                        + "\",\"sizeBytes\":0}",
+                "{\"eventType\":\"ASSERTION_EVALUATED\",\"timestamp\":1,\"runId\":\"r\",\"nodeId\":\"n\","
+                        + "\"assertionType\":\"status\",\"outcome\":\"" + SECRET + "\"}",
+                "{\"eventType\":\"RUN_FAILED\",\"timestamp\":1,\"runId\":\"r\","
+                        + "\"error\":{\"category\":\"" + SECRET + "\",\"code\":\"X\"}}",
+                "{\"eventType\":\"RUN_COMPLETED\",\"timestamp\":1.5,\"runId\":\"r\"}",
+                "{\"eventType\":\"" + SECRET.toUpperCase(java.util.Locale.ROOT).replace('-', '_')
+                        + "\",\"timestamp\":1,\"runId\":\"r\"}",
+                "{\"eventType\":\"NODE_STARTED\",\"timestamp\":1,\"runId\":\"r\",\"nodeId\":\"n\","
+                        + "\"nodeType\":\"internal.example/" + SECRET + "\"}")) {
             Path run = Files.createDirectories(directory.resolve("run-" + event.hashCode()));
             Files.writeString(run.resolve("events.ndjson"), event + "\n");
             Path bundle = directory.resolve("bundle-" + event.hashCode() + ".zip");
@@ -188,8 +202,8 @@ class DiagnoseCommandTest {
 
     private static String journal() {
         return String.join("\n",
-                "{\"eventType\":\"RUN_STARTED\",\"timestamp\":1,\"runId\":\"r\",\"scenarioDigest\":\"d\","
-                        + "\"catalogDigest\":\"c\",\"seed\":7,\"resolvedConfig\":{\"baseUrl\":\"https://internal.example\"}}",
+                "{\"eventType\":\"RUN_STARTED\",\"timestamp\":1,\"runId\":\"r\",\"scenarioDigest\":\"" + DIGEST + "\","
+                        + "\"catalogDigest\":\"" + DIGEST + "\",\"seed\":7,\"resolvedConfig\":{\"baseUrl\":\"https://internal.example\"}}",
                 "{\"eventType\":\"NODE_SKIPPED\",\"timestamp\":2,\"runId\":\"r\",\"nodeId\":\"n\","
                         + "\"reason\":\"depends on " + SECRET + "\"}",
                 "{\"eventType\":\"ASSERTION_EVALUATED\",\"timestamp\":3,\"runId\":\"r\",\"nodeId\":\"a\","

@@ -63,6 +63,34 @@ class DiagnosticBundleE2ETest {
         assertThat(json(manifest).path("faultoraVersion").asText()).isEqualTo(System.getProperty("faultora.version"));
     }
 
+    @Test
+    void everyEventARealRunWritesHasAShapeTheBundleAccepts() throws Exception {
+        // The bundle refuses a field whose value is not the shape it should be;
+        // that must never be a journal the engine itself wrote.
+        for (String scenario : List.of("fault-lifecycle.yaml", "generated-payment.yaml", "eventually-settlement.yaml",
+                "fault-retry.yaml", "cleanup-after-partial-setup.yaml")) {
+            Path run = directory.resolve("run-" + scenario);
+            PaymentApi api = new PaymentApi();
+            api.start();
+            try {
+                assertThat(cli("test", "--scenario", ExampleFixtures.scenario(scenario).toString(),
+                        "--openapi", ExampleFixtures.openApi().toString(), "--target", api.baseUrl(),
+                        "--allow-private", "--allow-destructive", "--format", "json",
+                        "--output", run.toString())).as(scenario).isIn(0, 1);
+            } finally {
+                api.stop();
+            }
+            Path bundle = directory.resolve(scenario + ".zip");
+            assertThat(cli("diagnose", "--run", run.toString(), "--output", bundle.toString())).as(scenario).isZero();
+            try (ZipFile zip = new ZipFile(bundle.toFile())) {
+                assertThat(new String(zip.getInputStream(zip.getEntry("events.ndjson")).readAllBytes(),
+                        StandardCharsets.UTF_8).lines().count())
+                        .isEqualTo(Files.readAllLines(run.resolve("events.ndjson")).stream()
+                                .filter(line -> !line.isBlank()).count());
+            }
+        }
+    }
+
     private int cli(String... arguments) throws Exception {
         List<String> command = new ArrayList<>(List.of(
                 Path.of(System.getProperty("java.home"), "bin", "java").toString(), "-jar",
