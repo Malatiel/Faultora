@@ -96,7 +96,13 @@ and a test-only conformance probe. This completes the specification slice,
 not a production codec, child lifecycle, adapter or isolation control. No
 entry in `notYetEnforced` is removed by that specification. Only the three
 pure contracts above are admitted; process supervision and artifact staging
-still require their own implementation and tests.
+are now implemented in the separate extension-process library: a private copy
+is hashed, and a trusted bootstrap loads only the exact verified in-memory
+JAR bytes. Real child tests cover source/copy replacement, handshake, requests,
+crash, deadlines and stop. Typed provider adapters and resource/network/secret
+controls are still pending, so no `notYetEnforced` entry is removed. MCP uses
+the common deadline core while retaining current-process execution and its
+owned marker/halt policy; this does not add a second termination mechanism.
 
 - Nothing in this repository sets any of the four, so nothing changes for any
   run made today. That is the point: the refusal is for the operator who was

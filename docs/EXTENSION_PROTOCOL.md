@@ -5,10 +5,10 @@
 This is the normative data contract for the process-boundary slice of
 [ADR-023](adr/ADR-023-extension-isolation.md). The fixtures, a **test-only**
 conformance probe and the bounded `faultora-extension-protocol` codec exist.
-A child lifecycle and adapters remain unimplemented. Requesting process
-isolation still fails closed. This document does not claim a sandbox, a memory
-ceiling, network isolation or safe process shutdown.
-Those controls need their own implementation and negative tests.
+The child lifecycle is implemented as a separate library; provider adapters
+and policy enforcement remain pending. Requesting process isolation still
+fails closed. This document does not claim an OS sandbox, a heap ceiling,
+network enforcement or provider-side recovery merely because a child stops.
 
 Only `AssertionProvider`, `SourceImporter` and `ReportRenderer` cross this
 boundary. Connectors, fault providers and secret resolvers do not. There is no
@@ -216,7 +216,53 @@ by the caller, which must discard the channel after a refusal and enforce I/O
 deadlines. Handshake state, provider payloads, process start/stop and policy
 enforcement are not implemented by the codec.
 
-The next slices are a real supervised child,
-the three adapters, resource/network/secret enforcement and packaged plugin
+The next slices are the three adapters, resource/network/secret enforcement and packaged plugin
 qualification. Existing ADR-023 policy refusals remain until those controls
 are implemented. Do not infer isolation from passing these conformance tests.
+
+## Child lifecycle implementation
+
+`faultora-extension-process` starts an admitted protocol peer using an
+absolute Java launcher and an argument list, without a shell. The caller
+supplies an approved artifact digest and declaration and an operator-owned
+runtime classpath. Manifest/API/capability admission and typed provider
+adapters remain separate responsibilities; an arbitrary class on a classpath
+does not acquire provider authority through this API.
+
+`StagedArtifact.copy` creates an owner-only run directory, rejects link/reparse
+paths, bounds the copy at 128 MiB and computes its SHA-256 after writing and
+forcing it. The source path is never used by the child. The trusted bootstrap
+then reads that copy into bounded memory and checks the expected digest before
+loading any plugin class. Classes and resources are resolved from those same
+verified JAR bytes, not by reopening the file; manifest Class-Path references
+are not followed. Expanded entries are bounded at 8 MiB each, 128 MiB total and
+4096 entries. Replacing the source after staging has no effect; replacing the
+copy before launch refuses before plugin initialization.
+
+The parent validates ready identity, selector set, exact version, nonce and
+negotiated size. Requests are sequential and correlated; malformed/oversized,
+late or foreign replies poison the peer. Shutdown requires both `stopped` and
+actual process exit. Closing a busy peer cancels its channel and terminates
+the child. The caller owns and closes both the peer and staged artifact;
+cleanup removes only the two names staging created, without recursive deletion.
+
+`faultora-process` supplies the shared monotonic lifecycle supervisor. Request
+I/O consumes a bounded budget, and an independent process lifecycle prevents
+an abandoned peer from living forever. Stderr is drained, discarded and capped
+at 8192 bytes; it is never copied into a failure report. Deadline, crash,
+blocked writes, ignored shutdown and stderr overflow terminate the child and
+check its exit. `directProcessExitConfirmed` on this low-level peer confirms
+only the direct JVM represented by its `Process`, not a process tree or
+target-side effects, cleanup or rollback. Termination attempts include a
+best-effort snapshot of visible descendants, but a plugin can spawn a process
+and exit before that snapshot; an orphan can survive `stop` and `close`.
+This pure-JDK lifecycle provides no process-group, job-object or cgroup
+containment. A caller must not use direct-child exit as cleanup confirmation;
+the isolation policy refusals remain until the required controls exist.
+
+MCP uses that same deadline core through its ownership-marker/current-process
+halt adapter. MCP execution still runs in the MCP process; this slice does
+not introduce an MCP child transport or recompile an approved run elsewhere.
+No second independent shutdown timer was added. Process permission to write
+the trusted runtime or tamper with another operator's memory remains outside
+this boundary; there is still no complete OS isolation guarantee.

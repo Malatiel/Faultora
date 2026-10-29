@@ -6,6 +6,14 @@ All notable changes to Faultora are documented in this file.
 
 ### Added
 
+- **Supervised extension peers.** A lifecycle library stages an approved JAR
+  privately and loads only the bytes its trusted child bootstrap hashed.
+  Real child requests, malformed peers and ignored shutdown have bounded
+  process ownership. MCP shares the deadline core and retains its existing
+  current-process execution; provider adapters and isolation policy controls
+  remain pending.
+  Direct child exit is reported explicitly; it does not confirm descendant
+  containment or target-side cleanup.
 - **Bounded extension codec.** A separate data-only module reads and writes
   length-prefixed JSON with byte limits, strict envelope checks and reply
   correlation. It does not start a plugin or change isolation policy refusals.
