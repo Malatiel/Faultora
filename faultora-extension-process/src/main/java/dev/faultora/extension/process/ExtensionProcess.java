@@ -96,7 +96,8 @@ public final class ExtensionProcess implements AutoCloseable {
 
     public long pid() { return child.process().pid(); }
     public boolean isAlive() { return child.process().isAlive(); }
-    public boolean cleanupConfirmed() { return child.cleanupConfirmed(); }
+    /** Direct child exit only; not process-tree containment or target-side cleanup. */
+    public boolean directProcessExitConfirmed() { return child.directProcessExitConfirmed(); }
 
     private void handshake() throws IOException, InterruptedException {
         long started = System.nanoTime();

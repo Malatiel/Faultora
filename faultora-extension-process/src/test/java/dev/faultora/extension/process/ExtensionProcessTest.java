@@ -144,7 +144,7 @@ class ExtensionProcessTest {
                 assertThat(peer.request(PROVIDER, JSON.createObjectNode(), Duration.ofSeconds(2)).path("text").asText()).isEqualTo("ORIGINAL");
                 peer.stop(Duration.ofSeconds(2));
                 assertThat(peer.isAlive()).isFalse();
-                assertThat(peer.cleanupConfirmed()).isTrue();
+                assertThat(peer.directProcessExitConfirmed()).isTrue();
                 assertThat(marker).hasContent("loaded");
             }
         }
@@ -193,7 +193,7 @@ class ExtensionProcessTest {
                     Duration.ofMillis(mode.equals("hang") ? 150 : 3000)))
                     .isInstanceOf(IOException.class).hasMessage(code);
             assertThat(peer.isAlive()).isFalse();
-            assertThat(peer.cleanupConfirmed()).isTrue();
+            assertThat(peer.directProcessExitConfirmed()).isTrue();
         }
     }
 

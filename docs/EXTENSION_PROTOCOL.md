@@ -251,8 +251,14 @@ I/O consumes a bounded budget, and an independent process lifecycle prevents
 an abandoned peer from living forever. Stderr is drained, discarded and capped
 at 8192 bytes; it is never copied into a failure report. Deadline, crash,
 blocked writes, ignored shutdown and stderr overflow terminate the child and
-check its exit. `cleanupConfirmed` on this low-level peer means process
-termination, not confirmation of target-side effects, cleanup or rollback.
+check its exit. `directProcessExitConfirmed` on this low-level peer confirms
+only the direct JVM represented by its `Process`, not a process tree or
+target-side effects, cleanup or rollback. Termination attempts include a
+best-effort snapshot of visible descendants, but a plugin can spawn a process
+and exit before that snapshot; an orphan can survive `stop` and `close`.
+This pure-JDK lifecycle provides no process-group, job-object or cgroup
+containment. A caller must not use direct-child exit as cleanup confirmation;
+the isolation policy refusals remain until the required controls exist.
 
 MCP uses that same deadline core through its ownership-marker/current-process
 halt adapter. MCP execution still runs in the MCP process; this slice does

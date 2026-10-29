@@ -29,7 +29,7 @@ public final class SupervisedProcess implements AutoCloseable {
     private final long started;
     private final long runNanos;
     private volatile String failure;
-    private volatile boolean cleanupConfirmed;
+    private volatile boolean directProcessExitConfirmed;
 
     public SupervisedProcess(ProcessBuilder builder, long runMs, long cleanupMs, long graceMs,
                              int maxStderrBytes) throws IOException {
@@ -68,7 +68,8 @@ public final class SupervisedProcess implements AutoCloseable {
     }
 
     public Process process() { return process; }
-    public boolean cleanupConfirmed() { return cleanupConfirmed; }
+    /** Confirms this Process only. It makes no assertion about detached descendants or target cleanup. */
+    public boolean directProcessExitConfirmed() { return directProcessExitConfirmed; }
     public long remainingMillis() {
         return TimeUnit.NANOSECONDS.toMillis(Math.max(0, runNanos - (clock.getAsLong() - started)));
     }
@@ -118,7 +119,7 @@ public final class SupervisedProcess implements AutoCloseable {
             forceStop();
             throw interrupted;
         }
-        cleanupConfirmed = true;
+        directProcessExitConfirmed = true;
         lifecycle.complete();
         if (process.exitValue() != 0) throw new IOException("PROCESS_EXIT_FAILED");
     }
@@ -145,6 +146,7 @@ public final class SupervisedProcess implements AutoCloseable {
     private synchronized void forceStop() {
         boolean interrupted = Thread.interrupted();
         List<ProcessHandle> descendants = process.descendants().toList();
+        // Best effort only: descendants detached before this snapshot cannot be contained by this API.
         descendants.forEach(ProcessHandle::destroyForcibly);
         if (process.isAlive()) process.destroyForcibly();
         long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
@@ -153,8 +155,8 @@ public final class SupervisedProcess implements AutoCloseable {
                 try { process.waitFor(Math.max(1, end - System.nanoTime()), TimeUnit.NANOSECONDS); }
                 catch (InterruptedException stop) { interrupted = true; }
             }
-            cleanupConfirmed = !process.isAlive() && descendants.stream().noneMatch(ProcessHandle::isAlive);
-            if (cleanupConfirmed) lifecycle.complete();
+            directProcessExitConfirmed = !process.isAlive();
+            if (directProcessExitConfirmed) lifecycle.complete();
             io.shutdownNow();
         } finally {
             if (interrupted) Thread.currentThread().interrupt();
@@ -165,7 +167,7 @@ public final class SupervisedProcess implements AutoCloseable {
         if (!closed.compareAndSet(false, true)) return;
         forceStop();
         io.shutdownNow();
-        if (!cleanupConfirmed) throw new IOException("PROCESS_CLEANUP_UNCONFIRMED");
+        if (!directProcessExitConfirmed) throw new IOException("PROCESS_EXIT_UNCONFIRMED");
         process.getOutputStream().close();
         process.getInputStream().close();
         process.getErrorStream().close();

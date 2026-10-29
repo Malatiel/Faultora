@@ -30,7 +30,7 @@ class SupervisedProcessTest {
                     return owned.process().getInputStream().read();
                 }, Duration.ofMillis(150))).isInstanceOf(IOException.class).hasMessage("DEADLINE_EXCEEDED");
                 assertThat(owned.process().isAlive()).isFalse();
-                assertThat(owned.cleanupConfirmed()).isTrue();
+                assertThat(owned.directProcessExitConfirmed()).isTrue();
             }
         }
     }
@@ -66,7 +66,7 @@ class SupervisedProcessTest {
     void aNormalExitIsConfirmed() throws Exception {
         try (var owned = new SupervisedProcess(child("exit"), 10000, 100, 100, 1024)) {
             owned.awaitExit(Duration.ofSeconds(5));
-            assertThat(owned.cleanupConfirmed()).isTrue();
+            assertThat(owned.directProcessExitConfirmed()).isTrue();
         }
     }
 
@@ -82,9 +82,46 @@ class SupervisedProcessTest {
         }
     }
 
+    @Test
+    void aDirectChildExitDoesNotClaimContainmentOfAnOrphanedDescendant() throws Exception {
+        ProcessHandle descendant = null;
+        try {
+            try (var owned = new SupervisedProcess(child("spawn-exit"), 30000, 100, 100, 1024)) {
+                long pid = owned.call(() -> Long.parseLong(new java.io.BufferedReader(
+                        new java.io.InputStreamReader(owned.process().getInputStream(),
+                                java.nio.charset.StandardCharsets.UTF_8)).readLine()), Duration.ofSeconds(10));
+                descendant = ProcessHandle.of(pid).orElseThrow();
+                assertThat(descendant.isAlive()).isTrue();
+                owned.call(() -> {
+                    owned.process().getOutputStream().write(1);
+                    owned.process().getOutputStream().flush();
+                    return null;
+                }, Duration.ofSeconds(5));
+                owned.awaitExit(Duration.ofSeconds(5));
+                assertThat(owned.directProcessExitConfirmed()).isTrue();
+                assertThat(descendant.isAlive()).isTrue();
+            }
+            // Linux reparents the orphan; Windows may still expose it to the best-effort close snapshot.
+            if (System.getProperty("os.name").equals("Linux")) assertThat(descendant.isAlive()).isTrue();
+        } finally {
+            if (descendant != null) {
+                descendant.destroyForcibly();
+                descendant.onExit().get(5, TimeUnit.SECONDS);
+            }
+        }
+    }
+
     public static final class Peer {
         public static void main(String[] args) throws Exception {
             if (args[0].equals("exit")) return;
+            if (args[0].equals("spawn-exit")) {
+                Process orphan = child("sleep").redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                        .redirectError(ProcessBuilder.Redirect.DISCARD).start();
+                System.out.println(orphan.pid());
+                System.out.flush();
+                System.in.read();
+                return;
+            }
             if (args[0].equals("stderr")) System.err.write("SYNTHETIC_PRIVATE_STDERR".repeat(100).getBytes(java.nio.charset.StandardCharsets.UTF_8));
             Thread.sleep(600000);
         }
