@@ -6,8 +6,9 @@
     <logger name="org.apache.hc.client5.http.headers" level="OFF"/>
     <logger name="org.apache.hc" level="WARN"/>
 
-    <!-- Lines carry the message as written, never its arguments, exception
-         messages or context beyond the run and node: see StructuredLogEncoder.
+    <!-- Lines carry only approved Faultora events, never message arguments,
+         exception messages or context beyond the run and node: see
+         StructuredLogEncoder.
          FAULTORA_LOG_FORMAT is text (default) or json; FAULTORA_LOG_LEVEL is a
          level such as INFO (default) or DEBUG. -->
     <appender name="STDERR" class="ch.qos.logback.core.ConsoleAppender">

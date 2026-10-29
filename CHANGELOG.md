@@ -10,9 +10,10 @@ All notable changes to Faultora are documented in this file.
   each log line as one JSON object on standard error — time, level, logger,
   event, and the `runId` and `nodeId` it belongs to — apart from reports on
   standard output; `FAULTORA_LOG_LEVEL=DEBUG` adds a line per run and node.
-  Lines never carry message arguments, exception messages or other context, in
-  either format, so a request value or credential cannot reach a log; a
-  library's message keeps its `{}` placeholders instead.
+  Only Faultora's own approved fixed events are written as text; any other
+  message, a library's configuration dump included, reads `Message withheld`,
+  and no line carries message arguments, exception messages or other context,
+  in either format, so a request value or credential cannot reach a log.
 - **Extension protocol specification.** Defines framing, negotiation, request
   correlation, deadlines and data-only payloads for assertions, importers and
   renderers, with executable compatibility fixtures. A production codec and
@@ -29,9 +30,9 @@ All notable changes to Faultora are documented in this file.
 
 ### Changed
 
-- Text log lines on standard error stamp time as UTC ISO-8601 and no longer
-  substitute message arguments; a script that parsed the previous layout
-  should use `FAULTORA_LOG_FORMAT=json`.
+- Text log lines on standard error stamp time as UTC ISO-8601, and a library's
+  message text is withheld rather than printed; a script that parsed the
+  previous layout should use `FAULTORA_LOG_FORMAT=json`.
 
 ### Fixed
 

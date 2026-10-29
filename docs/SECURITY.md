@@ -712,12 +712,15 @@ the platform line separator.
 
 **What a log line holds today.** The CLI and the runner log to standard error,
 apart from command output and reports on standard output. A line carries the
-time, level, logger, the message as written at the call site, the `runId` and
-`nodeId` it belongs to when it has them, and a failure's exception class names.
-Message arguments are never rendered, so a library's message keeps its `{}`
-placeholders; exception messages are never written, because they quote what
-the failing code held; and of the logging context only the run and node
-identifiers leave the process. `FAULTORA_LOG_FORMAT=json` makes each line one
+time, level, logger, the event, the `runId` and `nodeId` it belongs to when it
+has them, and a failure's exception class names. The event is written only
+when it is one of Faultora's own approved fixed events; any other message, a
+library's included, reads `Message withheld`, because a message can be built
+from values before it reaches the logger, as a client's configuration dump
+is. Message arguments and exception messages are never written, and of the
+logging context only the run and node identifiers leave the process.
+`LogEventInventoryTest` requires every log call in Faultora's code to pass one
+approved literal. `FAULTORA_LOG_FORMAT=json` makes each line one
 JSON object with exactly those fields, for a collector; `text`, the default, is
 the same content for a person. `FAULTORA_LOG_LEVEL` sets the level (`INFO` by
 default; `DEBUG` adds a line as each run and node starts and finishes).

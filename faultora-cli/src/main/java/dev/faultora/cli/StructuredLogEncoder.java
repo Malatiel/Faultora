@@ -12,17 +12,20 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Log lines that say what happened and to which run, and never what was in it.
  * <p>
- * A line carries the message as written at the call site, not as formatted:
- * an argument is where a value from a request, a response or a credential
- * would arrive, so arguments are never rendered, and a library's message keeps
- * its {@code {}} placeholders. A failure carries the exception's class names,
- * not its messages, which quote whatever the failing code was holding. Of the
- * logging context only the run and node identifiers are kept; anything else
- * placed there stays out.
+ * A message is written only when it is one of Faultora's own approved events,
+ * fixed text with no arguments. Any other message, a library's included, is
+ * replaced by {@value #WITHHELD}: a message can be assembled from values
+ * before it reaches the logger — a configuration dump, a concatenated string
+ * — so neither its text nor its arguments can be trusted not to carry a
+ * request value or a credential. The level and logger name still say that
+ * something happened and where. A failure carries the exception's class
+ * names, not its messages, which quote whatever the failing code was holding.
+ * Of the logging context only the run and node identifiers are kept.
  * <p>
  * {@code text} is for a person at a terminal and is the default; {@code json}
  * is one object per line for a collector, selected with
@@ -33,6 +36,19 @@ public final class StructuredLogEncoder extends EncoderBase<ILoggingEvent> {
 
     /** The context keys that identify a log line's run and node; nothing else is exported. */
     static final List<String> CORRELATION_KEYS = List.of("runId", "nodeId");
+
+    /**
+     * Every message Faultora's own code logs. A call site with any other text,
+     * an argument or a concatenation fails LogEventInventoryTest.
+     */
+    public static final Set<String> APPROVED_EVENTS = Set.of(
+            "Run started", "Run finished", "Node started", "Node finished",
+            "Fault rollback failed", "Failed to close HTTP response",
+            "Failed to flush run journal", "Failed to append run journal event",
+            "Failed to close run journal");
+
+    /** What stands in for a message that is not an approved event. */
+    public static final String WITHHELD = "Message withheld";
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final byte[] NONE = new byte[0];
@@ -77,7 +93,7 @@ public final class StructuredLogEncoder extends EncoderBase<ILoggingEvent> {
         fields.put("time", Instant.ofEpochMilli(event.getTimeStamp()).toString());
         fields.put("level", event.getLevel().toString());
         fields.put("logger", event.getLoggerName());
-        fields.put("event", event.getMessage());
+        fields.put("event", message(event));
         correlation(event).forEach(fields::put);
         List<String> failure = failure(event.getThrowableProxy());
         if (!failure.isEmpty()) {
@@ -94,13 +110,19 @@ public final class StructuredLogEncoder extends EncoderBase<ILoggingEvent> {
         StringBuilder line = new StringBuilder()
                 .append(Instant.ofEpochMilli(event.getTimeStamp())).append(' ')
                 .append(String.format("%-5s", event.getLevel())).append(' ')
-                .append(event.getLoggerName()).append(" - ").append(event.getMessage());
+                .append(event.getLoggerName()).append(" - ").append(message(event));
         correlation(event).forEach((key, value) -> line.append(' ').append(key).append('=').append(value));
         List<String> failure = failure(event.getThrowableProxy());
         if (!failure.isEmpty()) {
             line.append(" (").append(String.join(" <- ", failure)).append(')');
         }
         return line.toString();
+    }
+
+    private static String message(ILoggingEvent event) {
+        Object[] arguments = event.getArgumentArray();
+        boolean literal = arguments == null || arguments.length == 0;
+        return literal && APPROVED_EVENTS.contains(event.getMessage()) ? event.getMessage() : WITHHELD;
     }
 
     private static Map<String, String> correlation(ILoggingEvent event) {

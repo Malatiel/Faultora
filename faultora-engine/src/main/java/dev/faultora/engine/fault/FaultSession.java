@@ -171,7 +171,7 @@ public final class FaultSession implements AutoCloseable {
             record.provider.rollback(record.fault, record.context);
         } catch (Exception e) {
             record.failed = true;
-            warnInRun("Fault rollback failed");
+            warnRollbackFailed();
             status = reason + "-rollback-failed";
         }
         try {
@@ -183,17 +183,18 @@ public final class FaultSession implements AutoCloseable {
     }
 
     /** The hard-expiry watchdog has a thread of its own, so it names the run itself. */
-    private void warnInRun(String message) {
+    private void warnRollbackFailed() {
         Object run = ownership.get(FaultContext.RUN_ID);
-        if (run == null || MDC.get("runId") != null) {
-            LOG.warn(message);
-            return;
+        boolean named = run == null || MDC.get("runId") != null;
+        if (!named) {
+            MDC.put("runId", run.toString());
         }
-        MDC.put("runId", run.toString());
         try {
-            LOG.warn(message);
+            LOG.warn("Fault rollback failed");
         } finally {
-            MDC.remove("runId");
+            if (!named) {
+                MDC.remove("runId");
+            }
         }
     }
 
