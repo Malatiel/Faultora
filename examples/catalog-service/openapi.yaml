@@ -1,0 +1,80 @@
+openapi: "3.0.3"
+info:
+  title: Synthetic Document Catalog
+  version: "1.0.0"
+servers:
+  - url: http://127.0.0.1:8081
+paths:
+  /collections/{collection}/documents:
+    parameters:
+      - name: collection
+        in: path
+        required: true
+        schema: {type: string, pattern: '^[A-Za-z0-9_-]{1,64}$'}
+    put:
+      operationId: replace-documents
+      summary: Atomically replace a collection with a complete batch
+      x-safety: MUTATING
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              maxItems: 32
+              items: {$ref: '#/components/schemas/Document'}
+      responses:
+        "200":
+          description: Batch stored
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [stored]
+                additionalProperties: false
+                properties:
+                  stored: {type: integer, minimum: 0, maximum: 32}
+    get:
+      operationId: query-documents
+      summary: Return documents in key order, optionally filtered by an exact label
+      parameters:
+        - name: label
+          in: query
+          required: false
+          schema: {type: string, minLength: 1, maxLength: 64}
+      responses:
+        "200":
+          description: Matching documents
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 32
+                items: {$ref: '#/components/schemas/Document'}
+        "404":
+          description: Collection does not exist
+    delete:
+      operationId: delete-collection
+      summary: Remove the collection, including every document
+      x-safety: DESTRUCTIVE
+      responses:
+        "204":
+          description: Collection is absent
+components:
+  schemas:
+    Document:
+      type: object
+      required: [key, labels, attributes]
+      additionalProperties: false
+      properties:
+        key: {type: string, pattern: '^[A-Za-z0-9_-]{1,64}$'}
+        labels:
+          type: array
+          maxItems: 16
+          items: {type: string, minLength: 1, maxLength: 64}
+        attributes:
+          type: object
+          required: [pages]
+          additionalProperties: false
+          properties:
+            pages: {type: integer, minimum: 1, maximum: 1000}

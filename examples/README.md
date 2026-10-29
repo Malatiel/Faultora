@@ -6,6 +6,11 @@ operation, assertion, retry and fault APIs; no family-specific engine or MCP
 tool is needed. See the [scenario reference](../docs/SCENARIO_REFERENCE.md)
 for syntax and the [recovery system](payment-recovery/README.md) for its model.
 
+The independent [document catalog](catalog-service/README.md) applies the same
+generic operations and assertions to bulk arrays, label queries and nested
+document attributes. It has its own OpenAPI contract and packaged CLI E2E;
+it requires no payment components or external services.
+
 | Family | Published scenario | Required observations | What PASS establishes |
 |---|---|---|---|
 | Contract | [passing.yaml](payment-service/scenarios/passing.yaml) | HTTP status and complete JSON response; OpenAPI response schema | This create response has status 201, an ID and the declared shape |

@@ -9,6 +9,10 @@ All notable changes to Faultora are documented in this file.
 - **Bounded extension codec.** A separate data-only module reads and writes
   length-prefixed JSON with byte limits, strict envelope checks and reply
   correlation. It does not start a plugin or change isolation policy refusals.
+- **A second reference system.** A local document catalog exercises bulk JSON
+  arrays, label queries and nested attributes through the ordinary OpenAPI,
+  operation and assertion APIs. Its scenario checks filtering and cleanup;
+  packaged CLI qualification detects a deliberately incorrect filter.
 
 - **Extension protocol specification.** Defines framing, negotiation, request
   correlation, deadlines and data-only payloads for assertions, importers and

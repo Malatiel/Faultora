@@ -1,0 +1,60 @@
+apiVersion: faultora.dev/v1
+kind: Scenario
+metadata:
+  name: catalog-label-query
+  description: Bulk-load documents and check an exact-label query using ordinary operations
+timeout: 30s
+setup:
+  - id: load-documents
+    type: operation
+    operationId: replace-documents
+    inputs:
+      collection: reference
+      body:
+        - key: reference
+          labels: ["public docs"]
+          attributes: {pages: 8}
+        - key: draft
+          labels: [private]
+          attributes: {pages: 1}
+        - key: guide
+          labels: ["public docs", english]
+          attributes: {pages: 4}
+execute:
+  - id: query-public
+    type: operation
+    operationId: query-documents
+    dependsOn: [load-documents]
+    inputs:
+      collection: reference
+      label: "public docs"
+assertions:
+  - id: query-status
+    assertionType: status
+    targetStep: query-public
+    params: {expected: 200}
+  - id: query-schema
+    assertionType: schema
+    targetStep: query-public
+    params: {status: 200}
+  - id: query-count
+    assertionType: jsonpath
+    targetStep: query-public
+    params: {path: "@", count: 2}
+  - id: query-keys
+    assertionType: jsonpath
+    targetStep: query-public
+    params: {path: "[].key", equals: [guide, reference]}
+  - id: query-pages
+    assertionType: jsonpath
+    targetStep: query-public
+    params: {path: "[].attributes.pages", equals: [4, 8]}
+  - id: unique-keys
+    assertionType: jsonpath
+    targetStep: query-public
+    params: {path: "[].key", unique: true}
+cleanup:
+  - id: remove-collection
+    type: operation
+    operationId: delete-collection
+    inputs: {collection: reference}
