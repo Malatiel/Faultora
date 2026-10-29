@@ -19,6 +19,14 @@ All notable changes to Faultora are documented in this file.
   2.6 bytes per byte received, because evidence is kept per node; disk follows
   requests alone. The default limits allow more than a 1 GiB heap holds.
 
+- **Structured logs a collector can read.** `FAULTORA_LOG_FORMAT=json` writes
+  each log line as one JSON object on standard error — time, level, logger,
+  event, and the `runId` and `nodeId` it belongs to — apart from reports on
+  standard output; `FAULTORA_LOG_LEVEL=DEBUG` adds a line per run and node.
+  Only Faultora's own approved fixed events are written as text; any other
+  message, a library's configuration dump included, reads `Message withheld`,
+  and no line carries message arguments, exception messages or other context,
+  in either format, so a request value or credential cannot reach a log.
 - **Extension protocol specification.** Defines framing, negotiation, request
   correlation, deadlines and data-only payloads for assertions, importers and
   renderers, with executable compatibility fixtures. Process isolation remains
@@ -32,6 +40,12 @@ All notable changes to Faultora are documented in this file.
   Given the release's attested `SHA256SUMS`, it also refuses a jar that is not
   the released one. `deploy/README.md` shows the check to make with the
   system's `sha256sum` before trusting the bundled verifier itself.
+
+### Changed
+
+- Text log lines on standard error stamp time as UTC ISO-8601, and a library's
+  message text is withheld rather than printed; a script that parsed the
+  previous layout should use `FAULTORA_LOG_FORMAT=json`.
 
 ### Fixed
 
