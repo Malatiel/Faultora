@@ -92,12 +92,14 @@ class SupervisedProcessTest {
                                 java.nio.charset.StandardCharsets.UTF_8)).readLine()), Duration.ofSeconds(10));
                 descendant = ProcessHandle.of(pid).orElseThrow();
                 assertThat(descendant.isAlive()).isTrue();
+                assertThat(owned.directProcessExitConfirmed()).isFalse();
                 owned.call(() -> {
                     owned.process().getOutputStream().write(1);
                     owned.process().getOutputStream().flush();
                     return null;
                 }, Duration.ofSeconds(5));
                 owned.awaitExit(Duration.ofSeconds(5));
+                assertThat(owned.process().isAlive()).isFalse();
                 assertThat(owned.directProcessExitConfirmed()).isTrue();
                 assertThat(descendant.isAlive()).isTrue();
             }
@@ -115,11 +117,15 @@ class SupervisedProcessTest {
         public static void main(String[] args) throws Exception {
             if (args[0].equals("exit")) return;
             if (args[0].equals("spawn-exit")) {
-                Process orphan = child("sleep").redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                Process orphan = child("orphan-fixture").redirectOutput(ProcessBuilder.Redirect.DISCARD)
                         .redirectError(ProcessBuilder.Redirect.DISCARD).start();
                 System.out.println(orphan.pid());
                 System.out.flush();
                 System.in.read();
+                return;
+            }
+            if (args[0].equals("orphan-fixture")) {
+                Thread.sleep(30000);
                 return;
             }
             if (args[0].equals("stderr")) System.err.write("SYNTHETIC_PRIVATE_STDERR".repeat(100).getBytes(java.nio.charset.StandardCharsets.UTF_8));
