@@ -14,6 +14,10 @@
     <dependencies>
         <dependency>
             <groupId>dev.faultora</groupId>
+            <artifactId>faultora-process</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.faultora</groupId>
             <artifactId>faultora-runtime</artifactId>
         </dependency>
         <dependency>

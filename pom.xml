@@ -68,7 +68,9 @@
     <modules>
         <module>faultora-model</module>
         <module>faultora-spi</module>
+        <module>faultora-process</module>
         <module>faultora-extension-protocol</module>
+        <module>faultora-extension-process</module>
         <module>faultora-spec</module>
         <module>faultora-schema</module>
         <module>faultora-net</module>
@@ -105,6 +107,16 @@
                 <version>${project.version}</version>
             </dependency>
             <!-- Internal modules -->
+            <dependency>
+                <groupId>dev.faultora</groupId>
+                <artifactId>faultora-process</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.faultora</groupId>
+                <artifactId>faultora-extension-protocol</artifactId>
+                <version>${project.version}</version>
+            </dependency>
             <dependency>
                 <groupId>dev.faultora</groupId>
                 <artifactId>faultora-model</artifactId>
