@@ -109,7 +109,10 @@ for that tag and its commit; only then do the tag's own checks run —
 `deploy/verify-release.py`, the same check a user runs on a download, for the
 listed checksum and the manifest version. It does not fall back to rebuilding
 the application or skip the release's security gate. It then checks both
-platforms with QEMU available, logs in to GHCR using the job's package token,
+platforms with QEMU available, scans each one's operating-system packages and
+stops on an unwaived CRITICAL finding (see `docs/SECURITY.md`, *Runner image
+vulnerability gate*; the reports are kept as the `runner-image-scans`
+artifact), logs in to GHCR using the job's package token,
 and publishes one index as `ghcr.io/OWNER/REPOSITORY-runner:VERSION`. No `latest`
 tag is moved. The digest it attests is the one Buildx reports for the index it
 pushed, never what the tag points to afterwards, and the provenance is pushed
