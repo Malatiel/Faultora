@@ -232,6 +232,7 @@ public final class DispatchedRun {
                 dispatch.runId(), java.util.UUID.randomUUID().toString(), dispatchFingerprint(dispatch, sealed.preparationDigest()),
                 dispatch.lease().deadlineFrom(receivedAt));
         Outcome outcome;
+        boolean restoreInterrupt = false;
         try (DurableRunSpool spool = spools.create(journalPath.resolveSibling("spool.bin"), identity)) {
             boolean cleanupConfirmed = false;
             try (LeaseWatch lease = new LeaseWatch(dispatch.lease(), receivedAt, cancellation);
@@ -245,15 +246,19 @@ public final class DispatchedRun {
                 cleanupConfirmed = !cleanupFailed && result.status() != RunResult.Status.ERROR;
                 outcome = Outcome.ran(result, journalPath, lease.hasExpired(), prepared.catalogWarnings());
             } catch (Exception stopped) {
-                if (stopped instanceof InterruptedException) Thread.currentThread().interrupt();
+                restoreInterrupt = stopped instanceof InterruptedException;
                 cleanupConfirmed = false;
                 outcome = Outcome.broke(journalPath,
                         "run stopped part-way; provider details withheld by export policy");
             }
             // A broken engine/mirror is still reportable when local storage can commit the failure.
             // A failure of this commit escapes without calling terminalCommitted.
+            // Defer an already observed interrupt through commit and close, then preserve cancellation.
+            restoreInterrupt |= Thread.interrupted();
             spool.commitTerminal(outcome.completed() ? outcome.result().status() : RunResult.Status.ERROR,
                     cleanupConfirmed, outcome.leaseExpired());
+        } finally {
+            if (restoreInterrupt) Thread.currentThread().interrupt();
         }
         whileRunning.terminalCommitted();
         return outcome;

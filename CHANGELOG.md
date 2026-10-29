@@ -14,6 +14,8 @@ All notable changes to Faultora are documented in this file.
   remain pending.
   A broken execution with a writable spool retains its failure notification,
   even when the ordinary journal mirror is unavailable.
+  Terminal finalization preserves an already observed interrupt without
+  treating it as a disk failure; new interruption during I/O stays unconfirmed.
 - **Bounded extension codec.** A separate data-only module reads and writes
   length-prefixed JSON with byte limits, strict envelope checks and reply
   correlation. It does not start a plugin or change isolation policy refusals.

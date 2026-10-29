@@ -28,6 +28,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * A run that arrived rather than being typed.
@@ -156,6 +157,79 @@ class DispatchedRunTest {
         assertThat(outcome.completed()).isFalse();
         assertThat(outcome.failure()).doesNotContain("SYNTHETIC_PRIVATE_DISK_VALUE");
         assertThat(outcome.journalPath()).doesNotExist();
+    }
+
+    @Test
+    void anInterruptedFailureCommitsItsTerminalAndPreservesCancellation() throws Exception {
+        var notified = new java.util.concurrent.atomic.AtomicBoolean();
+        DispatchedRun.Outcome outcome;
+        try {
+            outcome = runner().execute(dispatchOf("run-interrupted-finalization", scenarioOfWaits(1, "1ms"),
+                    new Lease(System.currentTimeMillis(), 60_000, 10_000)), Map.of(), EXTENSIONS,
+                    new DispatchedRun.WhileRunning() {
+                        @Override public void started(LeaseWatch lease, Path journal) {
+                            Thread.currentThread().interrupt();
+                            throw new IllegalStateException("SYNTHETIC_PRIVATE_INTERRUPTED_FAILURE");
+                        }
+                        @Override public void terminalCommitted() { notified.set(true); }
+                    });
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+            assertThat(notified).isTrue();
+        } finally { Thread.interrupted(); }
+        assertThat(outcome.completed()).isFalse();
+        assertThat(outcome.failure()).doesNotContain("SYNTHETIC_PRIVATE_INTERRUPTED_FAILURE");
+        var snapshot = DurableRunSpool.recover(outcome.journalPath().resolveSibling("spool.bin"));
+        assertThat(snapshot.terminal().status()).isEqualTo(dev.faultora.engine.run.RunResult.Status.ERROR);
+        assertThat(snapshot.terminal().cleanupConfirmed()).isFalse();
+    }
+
+    @Test
+    void aNewInterruptDuringTerminalIoLeavesRecoveryRequiredWithoutRetry() throws Exception {
+        var forces = new java.util.concurrent.atomic.AtomicInteger();
+        var notified = new java.util.concurrent.atomic.AtomicBoolean();
+        var interruptedStorage = new DispatchedRun(new DispatchVerifier(LIMITS, policy -> true), workingDirectory,
+                handle -> null, true, (path, identity) -> DurableRunSpool.create(path, identity,
+                DurableRunSpool.Limits.defaults(), channel -> {
+                    if (forces.incrementAndGet() == 3) Thread.currentThread().interrupt();
+                    channel.force(true);
+                }));
+        DispatchedRun.Outcome outcome;
+        try {
+            outcome = interruptedStorage.execute(dispatchOf("run-interrupted-storage", scenarioOfWaits(1, "1ms"),
+                    new Lease(System.currentTimeMillis(), 60_000, 10_000)), Map.of(), EXTENSIONS,
+                    new DispatchedRun.WhileRunning() {
+                        @Override public void started(LeaseWatch lease, Path journal) {
+                            throw new IllegalStateException("Synthetic execution failure");
+                        }
+                        @Override public void terminalCommitted() { notified.set(true); }
+                    });
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+            assertThat(notified).isFalse();
+        } finally { Thread.interrupted(); }
+        assertThat(forces).hasValue(3);
+        var snapshot = DurableRunSpool.recover(outcome.journalPath().resolveSibling("spool.bin"));
+        assertThat(snapshot.recoveryRequired()).isTrue();
+        assertThat(snapshot.uncommittedTail()).isTrue();
+    }
+
+    @Test
+    void aLinkageErrorEscapesWithoutInventingACompletedAttempt() throws Exception {
+        var dispatch = dispatchOf("run-linkage-error", scenarioOfWaits(1, "1ms"),
+                new Lease(System.currentTimeMillis(), 60_000, 10_000));
+        var notified = new java.util.concurrent.atomic.AtomicBoolean();
+        assertThatThrownBy(() -> runner().execute(dispatch, Map.of(), EXTENSIONS,
+                new DispatchedRun.WhileRunning() {
+                    @Override public void started(LeaseWatch lease, Path journal) {
+                        throw new NoClassDefFoundError("SyntheticFixtureClass");
+                    }
+                    @Override public void terminalCommitted() { notified.set(true); }
+                })).isExactlyInstanceOf(NoClassDefFoundError.class);
+        assertThat(notified).isFalse();
+        Path spool = dev.faultora.runtime.RunArtifacts.dispatchedDirectory(workingDirectory,
+                new dev.faultora.model.identifier.RunId(dispatch.runId())).resolve("spool.bin");
+        assertThat(DurableRunSpool.recover(spool).recoveryRequired()).isTrue();
+        assertThat(runner().execute(dispatch, Map.of(), EXTENSIONS).refusal().reason())
+                .isEqualTo(Refusal.Reason.REPLAYED_DISPATCH);
     }
 
     @Test

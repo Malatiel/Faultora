@@ -29,6 +29,23 @@ unconfirmed cleanup. Failure to read/send the NDJSON mirror does not suppress
 that committed diagnosis. If the spool itself cannot commit the terminal, no
 terminal notification is sent; local failure and retained evidence remain.
 
+An interrupt already observed on entry to terminal finalization is deferred
+through commit and spool close, then restored on the caller thread. This does
+not resume target work or discard cancellation. A new interrupt during channel
+I/O can still close the channel: that storage failure is not retried and cannot
+produce a confirmed terminal. This deferral also cannot repair a spool already
+broken by earlier interrupted journal I/O. Live network delivery can itself be cancelled.
+The runner's SIGTERM hook stops admission and waits for its shutdown grace;
+it does not interrupt the execution thread. Lease expiry uses the existing
+cancellation flag.
+
+Only ordinary `Exception` failures enter the ERROR-commit path. `Error`, such
+as a linkage or VM failure, propagates; resource release is best effort and no
+terminal commit or notification is promised. A retained nonterminal spool is
+`RECOVERY_REQUIRED`, with unconfirmed effects and cleanup. Inspection must not
+invent a verdict or resume execution, even when the process failed before its
+first target operation.
+
 ## Commit and verification
 
 The file begins with `FTSP001\n`. Records contain a 32-bit payload byte length,
