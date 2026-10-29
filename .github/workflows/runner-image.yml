@@ -143,7 +143,7 @@ jobs:
               image --input "/scan/runner-$arch.tar" --scanners vuln --pkg-types os \
               --skip-java-db-update --format json --output "/scan/report-$arch.json" --quiet
             echo "linux/$arch:"
-            python3 -B scripts/image_vulnerability_gate.py --report "$scans/report-$arch.json" \
+            python3 -B scripts/image_vulnerability_gate.py --report "$scans/report-$arch.json" --os-family debian \
               --exceptions .github/image-vulnerability-exceptions.json || status=1
             rm "$scans/runner-$arch.tar"
           done
