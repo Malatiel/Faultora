@@ -14,6 +14,16 @@ All notable changes to Faultora are documented in this file.
   remain pending.
   Direct child exit is reported explicitly; it does not confirm descendant
   containment or target-side cleanup.
+- **Committed local runner evidence.** Each dispatched attempt forces its
+  identity and journal to a bounded spool before live delivery, then commits
+  an immutable terminal before publication. Crash inspection verifies the
+  retained prefix without repeating target actions. Disk failure cannot
+  publish a successful terminal; durable remote ACK and restart delivery
+  remain pending.
+  A broken execution with a writable spool retains its failure notification,
+  even when the ordinary journal mirror is unavailable.
+  Terminal finalization preserves an already observed interrupt without
+  treating it as a disk failure; new interruption during I/O stays unconfirmed.
 - **Bounded extension codec.** A separate data-only module reads and writes
   length-prefixed JSON with byte limits, strict envelope checks and reply
   correlation. It does not start a plugin or change isolation policy refusals.

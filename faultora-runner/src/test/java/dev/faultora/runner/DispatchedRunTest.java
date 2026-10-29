@@ -28,6 +28,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * A run that arrived rather than being typed.
@@ -111,6 +112,180 @@ class DispatchedRunTest {
             }
         }
         return scenario.toString();
+    }
+
+    @Test
+    void terminalNotificationRequiresCommittedAndClosedEvidence() throws Exception {
+        var committed = new java.util.concurrent.atomic.AtomicBoolean();
+        var dispatch = dispatchOf("run-committed", scenarioOfWaits(1, "1ms"),
+                new Lease(System.currentTimeMillis(), 60_000, 10_000));
+        var outcome = runner().execute(dispatch, Map.of(), EXTENSIONS, new DispatchedRun.WhileRunning() {
+            private Path spool;
+            @Override public void started(LeaseWatch lease, Path journal) {
+                spool = journal.resolveSibling("spool.bin");
+            }
+            @Override public void terminalCommitted() {
+                try {
+                    var snapshot = DurableRunSpool.recover(spool);
+                    assertThat(snapshot.terminal().status()).isEqualTo(dev.faultora.engine.run.RunResult.Status.PASSED);
+                    assertThat(snapshot.terminal().cleanupConfirmed()).isTrue();
+                    committed.set(true);
+                } catch (Exception failed) { throw new AssertionError(failed); }
+            }
+        });
+        assertThat(outcome.completed()).isTrue();
+        assertThat(committed).isTrue();
+        var recovered = new ArrayList<dev.faultora.model.events.RunEvent>();
+        var snapshot = DurableRunSpool.recover(outcome.journalPath().resolveSibling("spool.bin"), recovered::add);
+        assertThat(snapshot.events()).isEqualTo(Files.readAllLines(outcome.journalPath()).size());
+        assertThat(recovered).hasSize((int) snapshot.events());
+        assertThat(new String(Files.readAllBytes(outcome.journalPath().resolveSibling("spool.bin")),
+                java.nio.charset.StandardCharsets.ISO_8859_1))
+                .doesNotContain("ledger-password", "faultora_readonly", "http://localhost");
+    }
+
+    @Test
+    void identityFailureStopsBeforeTheRunCanStartOrResolveSecrets() throws Exception {
+        var started = new java.util.concurrent.atomic.AtomicBoolean();
+        var failing = new DispatchedRun(new DispatchVerifier(LIMITS, policy -> true), workingDirectory,
+                handle -> { throw new AssertionError("No secret resolution allowed"); }, true,
+                (path, identity) -> { throw new java.io.IOException("SYNTHETIC_PRIVATE_DISK_VALUE"); });
+        var outcome = failing.execute(dispatchOf("run-disk-error", scenarioOfWaits(1, "1ms"),
+                        new Lease(System.currentTimeMillis(), 60_000, 10_000)), Map.of(), EXTENSIONS,
+                (lease, journal) -> started.set(true));
+        assertThat(started).isFalse();
+        assertThat(outcome.completed()).isFalse();
+        assertThat(outcome.failure()).doesNotContain("SYNTHETIC_PRIVATE_DISK_VALUE");
+        assertThat(outcome.journalPath()).doesNotExist();
+    }
+
+    @Test
+    void anInterruptedFailureCommitsItsTerminalAndPreservesCancellation() throws Exception {
+        var notified = new java.util.concurrent.atomic.AtomicBoolean();
+        DispatchedRun.Outcome outcome;
+        try {
+            outcome = runner().execute(dispatchOf("run-interrupted-finalization", scenarioOfWaits(1, "1ms"),
+                    new Lease(System.currentTimeMillis(), 60_000, 10_000)), Map.of(), EXTENSIONS,
+                    new DispatchedRun.WhileRunning() {
+                        @Override public void started(LeaseWatch lease, Path journal) {
+                            Thread.currentThread().interrupt();
+                            throw new IllegalStateException("SYNTHETIC_PRIVATE_INTERRUPTED_FAILURE");
+                        }
+                        @Override public void terminalCommitted() { notified.set(true); }
+                    });
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+            assertThat(notified).isTrue();
+        } finally { Thread.interrupted(); }
+        assertThat(outcome.completed()).isFalse();
+        assertThat(outcome.failure()).doesNotContain("SYNTHETIC_PRIVATE_INTERRUPTED_FAILURE");
+        var snapshot = DurableRunSpool.recover(outcome.journalPath().resolveSibling("spool.bin"));
+        assertThat(snapshot.terminal().status()).isEqualTo(dev.faultora.engine.run.RunResult.Status.ERROR);
+        assertThat(snapshot.terminal().cleanupConfirmed()).isFalse();
+    }
+
+    @Test
+    void aNewInterruptDuringTerminalIoLeavesRecoveryRequiredWithoutRetry() throws Exception {
+        var forces = new java.util.concurrent.atomic.AtomicInteger();
+        var notified = new java.util.concurrent.atomic.AtomicBoolean();
+        var interruptedStorage = new DispatchedRun(new DispatchVerifier(LIMITS, policy -> true), workingDirectory,
+                handle -> null, true, (path, identity) -> DurableRunSpool.create(path, identity,
+                DurableRunSpool.Limits.defaults(), channel -> {
+                    if (forces.incrementAndGet() == 3) Thread.currentThread().interrupt();
+                    channel.force(true);
+                }));
+        DispatchedRun.Outcome outcome;
+        try {
+            outcome = interruptedStorage.execute(dispatchOf("run-interrupted-storage", scenarioOfWaits(1, "1ms"),
+                    new Lease(System.currentTimeMillis(), 60_000, 10_000)), Map.of(), EXTENSIONS,
+                    new DispatchedRun.WhileRunning() {
+                        @Override public void started(LeaseWatch lease, Path journal) {
+                            throw new IllegalStateException("Synthetic execution failure");
+                        }
+                        @Override public void terminalCommitted() { notified.set(true); }
+                    });
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+            assertThat(notified).isFalse();
+        } finally { Thread.interrupted(); }
+        assertThat(forces).hasValue(3);
+        var snapshot = DurableRunSpool.recover(outcome.journalPath().resolveSibling("spool.bin"));
+        assertThat(snapshot.recoveryRequired()).isTrue();
+        assertThat(snapshot.uncommittedTail()).isTrue();
+    }
+
+    @Test
+    void aLinkageErrorEscapesWithoutInventingACompletedAttempt() throws Exception {
+        var dispatch = dispatchOf("run-linkage-error", scenarioOfWaits(1, "1ms"),
+                new Lease(System.currentTimeMillis(), 60_000, 10_000));
+        var notified = new java.util.concurrent.atomic.AtomicBoolean();
+        assertThatThrownBy(() -> runner().execute(dispatch, Map.of(), EXTENSIONS,
+                new DispatchedRun.WhileRunning() {
+                    @Override public void started(LeaseWatch lease, Path journal) {
+                        throw new NoClassDefFoundError("SyntheticFixtureClass");
+                    }
+                    @Override public void terminalCommitted() { notified.set(true); }
+                })).isExactlyInstanceOf(NoClassDefFoundError.class);
+        assertThat(notified).isFalse();
+        Path spool = dev.faultora.runtime.RunArtifacts.dispatchedDirectory(workingDirectory,
+                new dev.faultora.model.identifier.RunId(dispatch.runId())).resolve("spool.bin");
+        assertThat(DurableRunSpool.recover(spool).recoveryRequired()).isTrue();
+        assertThat(runner().execute(dispatch, Map.of(), EXTENSIONS).refusal().reason())
+                .isEqualTo(Refusal.Reason.REPLAYED_DISPATCH);
+    }
+
+    @Test
+    void spoolFingerprintBindsRuntimeInputsAndTheEffectivePreparation() throws Exception {
+        var first = dispatchOf("run-fingerprint", scenarioOfWaits(1, "1ms"),
+                new Lease(System.currentTimeMillis(), 60_000, 10_000));
+        var changed = new Dispatch(first.runId(), first.issuedAtEpochMs(), first.nonce(), first.scenario(),
+                first.documents(), Map.of("pause", "99ms"), first.targetRedirects(), first.credentials(),
+                first.seed(), first.policy(), first.lease(), first.scenarioDigest(), first.catalogDigest());
+        assertThat(DispatchedRun.dispatchFingerprint(first, "prepared-a"))
+                .isNotEqualTo(DispatchedRun.dispatchFingerprint(changed, "prepared-a"))
+                .isNotEqualTo(DispatchedRun.dispatchFingerprint(first, "prepared-b"));
+    }
+
+    @Test
+    void spoolQuotaCancelsBusinessWithoutRemovingCleanupObligations() throws Exception {
+        var calls = new java.util.concurrent.atomic.AtomicInteger();
+        var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/cleanup", exchange -> {
+            calls.incrementAndGet(); exchange.sendResponseHeaders(200, -1); exchange.close();
+        });
+        server.start();
+        try {
+            String scenario = scenarioOfWaits(1, "1ms") + """
+                    cleanup:
+                      - id: clean
+                        type: operation
+                        operationId: confirm-cleanup
+                    """;
+            String api = """
+                    openapi: 3.0.3
+                    info: {title: Synthetic, version: '1'}
+                    paths:
+                      /cleanup:
+                        get:
+                          operationId: confirm-cleanup
+                          responses:
+                            '200': {description: Cleanup confirmed}
+                    """;
+            var documents = List.of(new DispatchedDocument("openapi", api));
+            var dispatch = new Dispatch("run-quota-cleanup", System.currentTimeMillis(), "nonce", scenario, documents,
+                    Map.of(), Map.of("", "http://127.0.0.1:" + server.getAddress().getPort()),
+                    Dispatch.Credentials.none(), 42, signedPolicy(), new Lease(System.currentTimeMillis(), 60_000, 10_000),
+                    ContentDigest.sha256Uri(scenario), Dispatch.digestOfDocuments(documents));
+            var bounded = new DispatchedRun(new DispatchVerifier(LIMITS, policy -> true), workingDirectory,
+                    handle -> null, true, (path, identity) -> DurableRunSpool.create(path, identity,
+                    new DurableRunSpool.Limits(16384, 1, 1024), channel -> channel.force(true)));
+            var outcome = bounded.execute(dispatch, Map.of(), EXTENSIONS);
+            assertThat(outcome.completed()).as(() -> String.valueOf(outcome.refusal()) + outcome.failure()).isTrue();
+            assertThat(outcome.result().status()).isEqualTo(dev.faultora.engine.run.RunResult.Status.ERROR);
+            assertThat(outcome.result().error().code()).isEqualTo("JOURNAL_WRITE_FAILED");
+            assertThat(calls).hasValue(1);
+            var snapshot = DurableRunSpool.recover(outcome.journalPath().resolveSibling("spool.bin"));
+            assertThat(snapshot.terminal().status()).isEqualTo(dev.faultora.engine.run.RunResult.Status.ERROR);
+            assertThat(snapshot.terminal().cleanupConfirmed()).isFalse();
+        } finally { server.stop(0); }
     }
 
     @Test

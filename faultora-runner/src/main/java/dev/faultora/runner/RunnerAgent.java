@@ -29,8 +29,9 @@ import java.util.function.Consumer;
  * design rather than a gap in it. Nothing renews the lease, so it runs out, and
  * the run stops on the runner's own clock — which is the release gate:
  * <em>disconnection cannot extend a run or an active fault beyond policy</em>.
- * The findings are not lost, because the journal is a file, and they are
- * delivered when somebody can be reached again.
+ * Committed findings remain in the local spool. Live reconnection can send
+ * them while this process owns the run; automatic restart delivery requires
+ * a future durable-ACK protocol.
  */
 public final class RunnerAgent {
 
@@ -95,22 +96,26 @@ public final class RunnerAgent {
 
         JournalTail[] tail = new JournalTail[1];
         Thread[] keepingAlive = new Thread[1];
+        var terminalCommitted = new java.util.concurrent.atomic.AtomicBoolean();
         DispatchedRun.Outcome outcome = runs.execute(
                 dispatch, faultProviders, extensions,
-                (lease, journalPath) -> {
+                new DispatchedRun.WhileRunning() {
+                  @Override public void started(LeaseWatch lease, java.nio.file.Path journalPath) {
                     tail[0] = new JournalTail(journalPath);
                     keepingAlive[0] = new Thread(
                             () -> keepAlive(dispatch.runId(), lease, tail[0]),
                             "runner-heartbeat-" + dispatch.runId());
                     keepingAlive[0].setDaemon(true);
                     keepingAlive[0].start();
+                  }
+                  @Override public void terminalCommitted() { terminalCommitted.set(true); }
                 });
         if (keepingAlive[0] != null) {
             keepingAlive[0].interrupt();
             keepingAlive[0].join(2_000);
         }
 
-        deliverWhatIsLeft(dispatch.runId(), outcome, tail[0]);
+        deliverWhatIsLeft(dispatch.runId(), outcome, tail[0], terminalCommitted.get());
         return Optional.of(outcome);
     }
 
@@ -168,19 +173,27 @@ public final class RunnerAgent {
      * arrived has failed the gate from the other side.
      */
     private void deliverWhatIsLeft(
-            String runId, DispatchedRun.Outcome outcome, JournalTail tail) {
+            String runId, DispatchedRun.Outcome outcome, JournalTail tail, boolean terminalCommitted) {
         try {
             if (tail != null) {
                 sendWhateverIsFinished(runId, tail);
             } else if (outcome.journalPath() != null) {
                 sendWhateverIsFinished(runId, new JournalTail(outcome.journalPath()));
             }
+        } catch (InterruptedException stopping) {
+            Thread.currentThread().interrupt();
+            return;
+        } catch (Exception progressUnavailable) {
+            // A broken journal mirror must not suppress a committed failure diagnosis.
+        }
+        if (outcome.refusal() == null && !terminalCommitted) return;
+        try {
             client.sendOutcome(runId, describe(outcome));
         } catch (InterruptedException stopping) {
             Thread.currentThread().interrupt();
         } catch (Exception stillUnreachable) {
-            // The journal is on disk and the position is known; the next
-            // attempt resumes from where this one stopped.
+            // Committed facts remain on disk. Protocol v1 supplies no durable
+            // ACK or automatic restart delivery; neither implies execution replay.
         }
     }
 
