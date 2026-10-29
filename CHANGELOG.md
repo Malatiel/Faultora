@@ -18,7 +18,6 @@ All notable changes to Faultora are documented in this file.
   command that reproduces it. Heap follows requests times response size, about
   2.6 bytes per byte received, because evidence is kept per node; disk follows
   requests alone. The default limits allow more than a 1 GiB heap holds.
-
 - **Structured logs a collector can read.** `FAULTORA_LOG_FORMAT=json` writes
   each log line as one JSON object on standard error — time, level, logger,
   event, and the `runId` and `nodeId` it belongs to — apart from reports on
