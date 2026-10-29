@@ -53,6 +53,12 @@ public final class DispatchedRun {
     private final Path workingDirectory;
     private final Function<String, dev.faultora.model.security.SecretHandle> secrets;
     private final boolean allowPrivate;
+    private final SpoolFactory spools;
+
+    @FunctionalInterface
+    interface SpoolFactory {
+        DurableRunSpool create(Path path, DurableRunSpool.Identity identity) throws java.io.IOException;
+    }
 
     /**
      * @param verifier         decides whether a dispatch may run at all
@@ -69,10 +75,17 @@ public final class DispatchedRun {
             Function<String, dev.faultora.model.security.SecretHandle> secrets,
             boolean allowPrivate
     ) {
+        this(verifier, workingDirectory, secrets, allowPrivate, DurableRunSpool::create);
+    }
+
+    DispatchedRun(DispatchVerifier verifier, Path workingDirectory,
+                  Function<String, dev.faultora.model.security.SecretHandle> secrets,
+                  boolean allowPrivate, SpoolFactory spools) {
         this.verifier = verifier;
         this.workingDirectory = workingDirectory;
         this.secrets = secrets;
         this.allowPrivate = allowPrivate;
+        this.spools = spools;
     }
 
     /**
@@ -91,6 +104,9 @@ public final class DispatchedRun {
          * @param journalPath the file the run is writing as it goes
          */
         void started(LeaseWatch lease, Path journalPath);
+
+        /** Called only after the immutable terminal and all owned writers have closed successfully. */
+        default void terminalCommitted() { }
     }
 
     /** Execute a dispatch with nothing watching it. */
@@ -140,6 +156,11 @@ public final class DispatchedRun {
             return Outcome.refused(Refusal.of(Refusal.Reason.MISSING_CAPABILITY,
                     "run '" + dispatch.runId() + "' could not be started here: "
                             + notStarted.getMessage()));
+        } catch (DurableRunSpool.Failure unavailable) {
+            return Outcome.broke(
+                    RunArtifacts.dispatchedDirectory(workingDirectory, new RunId(dispatch.runId()))
+                            .resolve("events.ndjson"),
+                    "mandatory local spool unavailable; execution and cleanup are unconfirmed");
         } catch (Exception broke) {
             // The run had begun, so there is a journal, and whoever is waiting
             // for this run needs to be told where it is. Reporting this as a
@@ -207,14 +228,33 @@ public final class DispatchedRun {
         PreparedRun.Settings settings = new PreparedRun.Settings(expressionContext(dispatch),
                 connectorContext(dispatch, policy), allowPrivate, policy.targets().allowedFaultTypes());
         PreparedRun sealed = PreparedRun.prepare(request, settings, java.time.Duration.ofMinutes(5));
-        try (LeaseWatch lease = new LeaseWatch(dispatch.lease(), receivedAt, cancellation);
-             RunJournal journal = new RunJournal(journalPath, true)) {
+        var identity = new DurableRunSpool.Identity(DurableRunSpool.runnerIdentity(workingDirectory),
+                dispatch.runId(), java.util.UUID.randomUUID().toString(), dispatchFingerprint(dispatch, sealed.preparationDigest()),
+                dispatch.lease().deadlineFrom(receivedAt));
+        RunResult result;
+        boolean leaseExpired;
+        try (DurableRunSpool spool = spools.create(journalPath.resolveSibling("spool.bin"), identity);
+             LeaseWatch lease = new LeaseWatch(dispatch.lease(), receivedAt, cancellation);
+             RunJournal journal = new SpoolingRunJournal(journalPath, spool, cancellation)) {
             lease.start();
             whileRunning.started(lease, journalPath);
-            RunResult result = sealed.execute(request, settings, faultProviders, journal, cancellation);
-            return Outcome.ran(JournalWriter.closeJournal(journal, result),
-                    journalPath, lease.hasExpired(), prepared.catalogWarnings());
+            result = sealed.execute(request, settings, faultProviders, journal, cancellation);
+            result = JournalWriter.closeJournal(journal, result);
+            leaseExpired = lease.hasExpired();
+            boolean cleanupFailed = journal.events().stream().anyMatch(event ->
+                    event instanceof dev.faultora.model.events.RunEvent.CleanupCompleted cleanup && cleanup.failed() != 0);
+            spool.commitTerminal(result.status(), !cleanupFailed && result.status() != RunResult.Status.ERROR, leaseExpired);
         }
+        whileRunning.terminalCommitted();
+        return Outcome.ran(result, journalPath, leaseExpired, prepared.catalogWarnings());
+    }
+
+    /** Binds the complete dispatch and the locally narrowed policy; only the digest is retained. */
+    static String dispatchFingerprint(Dispatch dispatch, String preparationDigest) throws java.io.IOException {
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper()
+                .enable(com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
+        return dev.faultora.model.security.ContentDigest.sha256Uri(mapper.writeValueAsBytes(
+                Map.of("dispatch", dispatch, "preparationDigest", preparationDigest)));
     }
 
     /**

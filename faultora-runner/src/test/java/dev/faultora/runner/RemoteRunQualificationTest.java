@@ -116,6 +116,43 @@ class RemoteRunQualificationTest {
     }
 
     @Test
+    void diskFailureCannotSendAnUncommittedEventOrSuccessfulTerminal() throws Exception {
+        Pair tls = trustingEachOther();
+        for (int failedKind : List.of(2, 3)) {
+            String run = "run-storage-" + failedKind;
+            Path work = directory.resolve("disk-" + failedKind);
+            var calls = new java.util.concurrent.atomic.AtomicInteger();
+            var start = new java.util.concurrent.atomic.AtomicLong(8);
+            try (var dispatcher = new QualificationDispatcher(tls.dispatcher().sslContext())) {
+                var client = new RunnerClient(java.net.URI.create(dispatcher.address()), tls.runner(),
+                        "runner-storage", "0.11.3", Set.of("http"));
+                Session session = client.register();
+                dispatcher.offer(dispatch(run, scenarioLasting(1, "1ms"), 60_000));
+                var runs = new DispatchedRun(new DispatchVerifier(LIMITS, policy -> true), work,
+                        handle -> null, true, (path, identity) -> DurableRunSpool.create(path, identity,
+                        DurableRunSpool.Limits.defaults(), channel -> {
+                            if (calls.incrementAndGet() % 2 == 1) {
+                                var kind = java.nio.ByteBuffer.allocate(1);
+                                channel.read(kind, start.get() + 4);
+                                if (kind.array()[0] == failedKind) throw new java.io.IOException("PRIVATE_DISK_MARKER");
+                            } else { start.set(channel.position()); }
+                            channel.force(true);
+                        }));
+                var outcome = new RunnerAgent(client, runs, Map.of(), EXTENSIONS)
+                        .takeOneDispatch(session.sessionId()).orElseThrow();
+                assertThat(outcome.completed()).isFalse();
+                assertThat(outcome.failure()).doesNotContain("PRIVATE_DISK_MARKER");
+                assertThat(dispatcher.outcomeOf(run)).isNull();
+                var snapshot = DurableRunSpool.recover(outcome.journalPath().resolveSibling("spool.bin"));
+                assertThat(snapshot.recoveryRequired()).isTrue();
+                assertThat(dispatcher.journalOf(run)).hasSize((int) snapshot.events());
+                if (failedKind == 2) assertThat(snapshot.events()).isZero();
+                else assertThat(snapshot.events()).isPositive();
+            }
+        }
+    }
+
+    @Test
     void aRunLongerThanItsLeaseSurvivesOnlyBecauseSomethingKeepsAsking() throws Exception {
         // Three seconds of work under a lease worth one. It finishes, which it
         // can only do if the heartbeat is really renewing the permission.

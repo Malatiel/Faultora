@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted design; durable spool and recovery are not implemented.
+Accepted design. Local append-before-send spool and read-only process-crash
+inspection are implemented; durable delivery and automatic recovery remain
+pending. See [the current spool boundary](../RUNNER_SPOOL.md).
 
 ## Context: the current boundary
 
@@ -23,8 +25,9 @@ delivery after a process restart. The following call sites explain why:
 
 There is no startup scanner, persisted delivery cursor or recovered execution
 ownership. A local journal file alone supplies none of those guarantees. The
-decision below constrains future spool and recovery work; it changes neither current code nor the
-frozen runner protocol.
+table describes the boundary when this decision was accepted; the local spool
+now changes append/publication ordering, without changing the frozen runner
+protocol. The remaining decision constrains future delivery and recovery work.
 
 ## Decision
 

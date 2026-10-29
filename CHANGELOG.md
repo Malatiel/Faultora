@@ -6,6 +6,12 @@ All notable changes to Faultora are documented in this file.
 
 ### Added
 
+- **Committed local runner evidence.** Each dispatched attempt forces its
+  identity and journal to a bounded spool before live delivery, then commits
+  an immutable terminal before publication. Crash inspection verifies the
+  retained prefix without repeating target actions. Disk failure cannot
+  publish a successful terminal; durable remote ACK and restart delivery
+  remain pending.
 - **Bounded extension codec.** A separate data-only module reads and writes
   length-prefixed JSON with byte limits, strict envelope checks and reply
   correlation. It does not start a plugin or change isolation policy refusals.
