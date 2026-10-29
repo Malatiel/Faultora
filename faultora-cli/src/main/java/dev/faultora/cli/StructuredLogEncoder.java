@@ -122,7 +122,8 @@ public final class StructuredLogEncoder extends EncoderBase<ILoggingEvent> {
     private static String message(ILoggingEvent event) {
         Object[] arguments = event.getArgumentArray();
         boolean literal = arguments == null || arguments.length == 0;
-        return literal && APPROVED_EVENTS.contains(event.getMessage()) ? event.getMessage() : WITHHELD;
+        String message = event.getMessage();
+        return literal && message != null && APPROVED_EVENTS.contains(message) ? message : WITHHELD;
     }
 
     private static Map<String, String> correlation(ILoggingEvent event) {

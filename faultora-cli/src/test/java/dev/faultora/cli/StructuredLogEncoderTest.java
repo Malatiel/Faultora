@@ -63,6 +63,13 @@ class StructuredLogEncoderTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"json", "text"})
+    void anEventWithNoMessageIsWrittenAsWithheldRatherThanLost(String format) {
+        String line = encode(format, event(null, null, Map.of("runId", "run-1")));
+        assertThat(line).contains(StructuredLogEncoder.WITHHELD, "run-1");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"json", "text"})
     void aLibrarysConfigurationDumpDoesNotReachTheLog(String format) {
         LoggerContext context = (LoggerContext) LoggerFactory.getILoggerFactory();
         Logger root = context.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
