@@ -26,7 +26,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * several delete what they create, each time against a fresh
  * example API, once on the previous JAR and once on the next; the exit code,
  * every assertion's outcome and every node's terminal event must match, so a
- * rollback gives the same verdicts as the upgrade it undoes. Each journal
+ * rollback gives the same verdicts as the upgrade it undoes. Every run must
+ * have been executed — exit 0 or 1, a journal from RUN_STARTED to a terminal
+ * event with at least one node outcome — so two releases that refuse every
+ * scenario alike do not count as agreeing. Each journal
  * either version wrote must be readable by the current reader, and both
  * versions must read the same runner status file the same way.
  * <p>
@@ -37,6 +40,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class UpgradeRollbackCheck {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Path ROOT = Path.of(System.getProperty("faultora.projectRoot"));
+    private static final int EXIT_PASS = 0;
+    private static final int EXIT_ASSERTION_FAILED = 1;
 
     @Test
     void bothReleasesGiveTheSameVerdictsAndReadEachOthersFiles() throws Exception {
@@ -102,30 +107,39 @@ class UpgradeRollbackCheck {
         } finally {
             api.stop();
         }
+        // Two releases refusing a scenario the same way would match too: only
+        // a run the engine executed counts, so both must pass or fail it on
+        // its assertions and leave a journal from start to terminal event.
+        assertThat(exit).as("exit of %s on %s, see its log", scenario.getFileName(), jar.getFileName())
+                .isIn(EXIT_PASS, EXIT_ASSERTION_FAILED);
+        Path journal = output.resolve("events.ndjson");
+        assertThat(journal).as("journal of %s on %s", scenario.getFileName(), jar.getFileName()).isRegularFile();
         Map<String, String> assertions = new TreeMap<>();
         Map<String, String> nodes = new TreeMap<>();
+        List<String> types = new ArrayList<>();
         boolean readable = true;
-        Path journal = output.resolve("events.ndjson");
-        if (Files.exists(journal)) {
-            for (String line : Files.readAllLines(journal, StandardCharsets.UTF_8)) {
-                if (line.isBlank()) {
-                    continue;
-                }
-                try {
-                    RunEventReader.readLine(line);
-                } catch (Exception unreadable) {
-                    readable = false;
-                }
-                JsonNode event = JSON.readTree(line);
-                String type = event.path("eventType").asText();
-                String node = event.path("nodeId").asText();
-                if (type.equals("ASSERTION_EVALUATED")) {
-                    assertions.put(node, event.path("outcome").asText());
-                } else if (type.equals("NODE_COMPLETED") || type.equals("NODE_FAILED") || type.equals("NODE_SKIPPED")) {
-                    nodes.put(node, type);
-                }
+        for (String line : Files.readAllLines(journal, StandardCharsets.UTF_8)) {
+            if (line.isBlank()) {
+                continue;
+            }
+            try {
+                RunEventReader.readLine(line);
+            } catch (Exception unreadable) {
+                readable = false;
+            }
+            JsonNode event = JSON.readTree(line);
+            String type = event.path("eventType").asText();
+            types.add(type);
+            String node = event.path("nodeId").asText();
+            if (type.equals("ASSERTION_EVALUATED")) {
+                assertions.put(node, event.path("outcome").asText());
+            } else if (type.equals("NODE_COMPLETED") || type.equals("NODE_FAILED") || type.equals("NODE_SKIPPED")) {
+                nodes.put(node, type);
             }
         }
+        assertThat(types).as("events of %s on %s", scenario.getFileName(), jar.getFileName())
+                .startsWith("RUN_STARTED").containsAnyOf("NODE_COMPLETED", "NODE_FAILED");
+        assertThat(types.get(types.size() - 1)).isIn("RUN_COMPLETED", "RUN_FAILED");
         return new Run(exit, assertions, nodes, readable);
     }
 

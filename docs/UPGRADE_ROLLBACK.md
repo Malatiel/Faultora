@@ -64,10 +64,12 @@ Rolling back is the same four steps with the previous release.
 
 `UpgradeRollbackCheck` runs every published payment-service scenario against
 a fresh example API on two release JARs a person has already verified, and
-requires the same exit code, assertion outcomes and node outcomes from both;
-each journal either release wrote must be readable by the current reader, and
-both must read the same runner status file. It is not part of the ordinary
-build:
+requires the same exit code, assertion outcomes and node outcomes from both.
+Every run must have been executed — exit 0 or 1 and a journal from
+`RUN_STARTED` to a terminal event — so two releases that refuse every scenario
+alike do not pass as agreeing. Each journal either release wrote must be
+readable by the current reader, and both must read the same runner status
+file. It is not part of the ordinary build:
 
 ```bash
 FAULTORA_PREVIOUS_JAR=/path/to/faultora-0.11.2.jar \
