@@ -6,6 +6,13 @@ All notable changes to Faultora are documented in this file.
 
 ### Added
 
+- **An upgrade and rollback runbook** for the CLI and a runner,
+  `docs/UPGRADE_ROLLBACK.md`: verify and keep both releases, validate
+  scenarios first, drain a runner before replacing it, and what does not
+  survive a move. `UpgradeRollbackCheck` runs every payment-service scenario on
+  two verified release JARs and requires the same verdicts; on 0.11.2 and
+  0.11.3 all 12 matched and each read the other's runner status file.
+
 - **Bounded extension codec.** A separate data-only module reads and writes
   length-prefixed JSON with byte limits, strict envelope checks and reply
   correlation. It does not start a plugin or change isolation policy refusals.
