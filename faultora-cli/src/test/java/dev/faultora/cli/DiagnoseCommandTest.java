@@ -12,6 +12,8 @@ import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -55,9 +57,11 @@ class DiagnoseCommandTest {
 
         JsonNode manifest = json(entries.get("manifest.json"));
         assertThat(manifest.path("sources").get(0).path("records").asInt()).isEqualTo(4);
-        assertThat(manifest.path("sources").get(0).path("sha256").asText()).matches("[0-9a-f]{64}");
+        assertThat(manifest.path("sources").get(0).path("sha256").asText()).isEqualTo(HexFormat.of().formatHex(
+                MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(run.resolve("events.ndjson")))));
         assertThat(manifest.path("fieldsWithheld")).extracting(JsonNode::asText)
                 .contains("message", "reason", "resolvedConfig");
+        assertThat(manifest.path("unnamedFieldsWithheld").asInt()).isZero();
         assertThat(result.out()).contains("4 events", "withheld message");
     }
 
@@ -116,6 +120,56 @@ class DiagnoseCommandTest {
         Path empty = Files.createDirectory(directory.resolve("empty"));
         assertThatThrownBy(() -> diagnose("--run", empty.toString(), "--output", directory.resolve("x.zip").toString()))
                 .isInstanceOf(CliException.class).hasMessageContaining("No events.ndjson");
+    }
+
+    @Test
+    void textUnderAKeptNameRefusesTheBundleRatherThanCarryingTheTextOut() throws Exception {
+        for (String event : List.of(
+                "{\"eventType\":\"RUN_COMPLETED\",\"timestamp\":1,\"runId\":\"r\",\"durationMs\":\"" + SECRET + "\"}",
+                "{\"eventType\":\"RUN_COMPLETED\",\"timestamp\":1,\"runId\":\"expected " + SECRET + "\"}",
+                "{\"eventType\":\"RUN_COMPLETED\",\"timestamp\":1,\"runId\":\"r\",\"truncated\":\"" + SECRET + "\"}",
+                "{\"eventType\":\"RUN_FAILED\",\"timestamp\":1,\"runId\":\"r\",\"error\":{\"code\":{\"x\":1}}}")) {
+            Path run = Files.createDirectories(directory.resolve("run-" + event.hashCode()));
+            Files.writeString(run.resolve("events.ndjson"), event + "\n");
+            Path bundle = directory.resolve("bundle-" + event.hashCode() + ".zip");
+
+            assertThatThrownBy(() -> diagnose("--run", run.toString(), "--output", bundle.toString()))
+                    .as(event).isInstanceOf(CliException.class).hasMessageContaining("line 1")
+                    .message().doesNotContain(SECRET);
+            assertThat(bundle).doesNotExist();
+        }
+    }
+
+    @Test
+    void aFieldOfNoKnownNameIsCountedButNeverNamed() throws Exception {
+        String privateName = "SYNTHETIC_PRIVATE_FIELD_NAME";
+        Path run = Files.createDirectory(directory.resolve("run"));
+        Files.writeString(run.resolve("events.ndjson"), "{\"eventType\":\"RUN_COMPLETED\",\"timestamp\":1,"
+                + "\"runId\":\"r\",\"durationMs\":3,\"" + privateName + "\":1,\"message\":\"m\"}\n");
+        Path bundle = directory.resolve("bundle.zip");
+
+        Result result = diagnose("--run", run.toString(), "--output", bundle.toString());
+
+        assertThat(result.code()).as(result.err()).isZero();
+        Map<String, String> entries = entries(bundle);
+        entries.values().forEach(content -> assertThat(content).doesNotContain(privateName));
+        assertThat(result.out()).doesNotContain(privateName).contains("message and 1 field of no known name");
+        JsonNode manifest = json(entries.get("manifest.json"));
+        assertThat(manifest.path("unnamedFieldsWithheld").asInt()).isEqualTo(1);
+        assertThat(manifest.path("fieldsWithheld")).extracting(JsonNode::asText).containsExactly("message");
+        assertThat(json(entries.get("events.ndjson").strip()).path("durationMs").asInt()).isEqualTo(3);
+    }
+
+    @Test
+    void aStatusFileLargerThanTheBundleAllowsIsRefused() throws Exception {
+        Path run = runDirectory();
+        Path health = directory.resolve("health.json");
+        try (var file = Files.newOutputStream(health)) {
+            file.write(new byte[(int) DiagnoseCommand.MAX_JOURNAL_BYTES + 1]);
+        }
+        assertThatThrownBy(() -> diagnose("--run", run.toString(), "--output", directory.resolve("b.zip").toString(),
+                "--health", health.toString()))
+                .isInstanceOf(CliException.class).hasMessageContaining("larger than");
     }
 
     @Test

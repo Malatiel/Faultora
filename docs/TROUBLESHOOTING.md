@@ -115,5 +115,8 @@ are left out, since they can quote values or name things inside your network;
 of an error only its category and code remain. Nothing else in the directory
 is read, so a key, an environment file or a report beside the journal never
 reaches the bundle. A journal that is a link or lies outside the directory,
-or one over 16 MiB, is refused. `--health <file>` adds a runner's status file,
-reduced to its state, identifier, registration and counters.
+or one over 16 MiB, is refused, and so is a kept field whose value is not the
+shape it should be, such as text where a duration belongs. A field the journal
+is not known to carry is withheld and only counted, since its name could be
+private too. `--health <file>` adds a runner's status file, reduced to its
+state, identifier, registration and counters.

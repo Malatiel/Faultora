@@ -5,8 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
@@ -18,11 +18,14 @@ import java.nio.file.attribute.FileTime;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -40,30 +43,52 @@ import java.util.zip.ZipOutputStream;
  * environment file left beside it included, is never opened.
  * <p>
  * A journal that is a link, or resolves outside the run directory, is refused
- * rather than followed, and so is one larger than the bundle allows.
+ * rather than followed, and so is one larger than the bundle allows. A kept
+ * field whose value is not the shape that field has — text where a number
+ * belongs — refuses the bundle instead of carrying that text out under a safe
+ * name, and a field the journal is not known to carry is counted, not named.
  */
 final class DiagnoseCommand implements Command {
 
     /** The most journal this reads; a larger one is refused, not truncated. */
     static final long MAX_JOURNAL_BYTES = 16L * 1024 * 1024;
 
-    /** Fields an event keeps: identifiers, counts, durations, outcomes and digests. */
-    static final Set<String> EVENT_FIELDS = Set.of(
-            "eventType", "timestamp", "runId", "nodeId", "nodeType", "operationId",
-            "assertionType", "outcome", "statusCode", "durationMs", "elapsedMs", "responseBytes",
-            "attempt", "attemptNumber", "maxAttempts", "failedAttempt", "nextDelayMs", "errorCode",
-            "maxPolls", "satisfied", "evidenceType", "sizeBytes", "digest", "scenarioDigest",
-            "catalogDigest", "seed", "strategy", "faultType", "faultHandle", "hardExpiryMs",
-            "rollbackStatus", "pendingObligations", "succeeded", "failed", "passedAssertions",
-            "failedAssertions", "totalNodes", "fetched", "rows", "truncated", "observed", "matched",
-            "requestedWaitMs", "waitedMs", "partition", "offset");
+    /**
+     * Fields an event keeps — identifiers, counts, durations, outcomes and
+     * digests — each with the only shape it may have. A kept field of another
+     * shape refuses the bundle: a name is no promise about what it holds.
+     */
+    static final Map<String, Shape> EVENT_FIELDS = shapes(
+            Shape.TOKEN, List.of("eventType", "runId", "nodeId", "nodeType", "operationId", "assertionType",
+                    "outcome", "errorCode", "evidenceType", "digest", "scenarioDigest", "catalogDigest",
+                    "strategy", "faultType", "faultHandle", "rollbackStatus"),
+            Shape.NUMBER, List.of("timestamp", "statusCode", "durationMs", "elapsedMs", "responseBytes",
+                    "attempt", "attemptNumber", "maxAttempts", "failedAttempt", "nextDelayMs", "maxPolls",
+                    "sizeBytes", "seed", "hardExpiryMs", "pendingObligations", "succeeded", "failed",
+                    "passedAssertions", "failedAssertions", "totalNodes", "fetched", "rows", "observed",
+                    "matched", "requestedWaitMs", "waitedMs", "partition", "offset"),
+            Shape.BOOLEAN, List.of("satisfied", "truncated"));
 
     /** Of a normalized error, what says which kind of failure it was. */
-    static final Set<String> ERROR_FIELDS = Set.of("category", "code", "retryable");
+    static final Map<String, Shape> ERROR_FIELDS = shapes(
+            Shape.TOKEN, List.of("category", "code"), Shape.NUMBER, List.of(), Shape.BOOLEAN, List.of("retryable"));
 
     /** Of a runner status file, what says how the runner is. */
-    static final Set<String> HEALTH_FIELDS = Set.of(
-            "state", "runnerId", "registered", "currentRunId", "runsServed", "updatedAtEpochMs");
+    static final Map<String, Shape> HEALTH_FIELDS = shapes(
+            Shape.TOKEN, List.of("state", "runnerId", "currentRunId"),
+            Shape.NUMBER, List.of("runsServed", "updatedAtEpochMs"), Shape.BOOLEAN, List.of("registered"));
+
+    /**
+     * Fields the journal or a status file is known to carry and the bundle
+     * withholds; the manifest names these. A field of any other name is
+     * withheld and counted, never named, since its name may be private too.
+     */
+    static final Set<String> KNOWN_WITHHELD = Set.of(
+            "message", "detail", "reason", "resolvedConfig", "targetScope", "channel", "key", "field",
+            "schemaId", "violation", "metadata");
+
+    /** The identifier shape of {@code TypedId}; anything with a space or a quote is not one. */
+    private static final Pattern TOKEN = Pattern.compile("[a-zA-Z0-9._:/@-]{1,256}");
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final FileTime EPOCH = FileTime.from(Instant.EPOCH);
@@ -106,7 +131,7 @@ final class DiagnoseCommand implements Command {
 
         Path journal = contained(run, "events.ndjson");
         Path status = health == null ? null : checkedFile(health, health.getFileName().toString());
-        Set<String> withheld = new TreeSet<>();
+        Withheld withheld = new Withheld();
         ArrayNode files = JSON.createArrayNode();
         byte[] events = projectJournal(journal, withheld, files);
         byte[] healthBytes = status == null ? null : projectHealth(status, withheld, files);
@@ -118,7 +143,8 @@ final class DiagnoseCommand implements Command {
         manifest.put("os", System.getProperty("os.name") + " " + System.getProperty("os.arch"));
         manifest.set("sources", files);
         ArrayNode dropped = manifest.putArray("fieldsWithheld");
-        withheld.forEach(dropped::add);
+        withheld.named.forEach(dropped::add);
+        manifest.put("unnamedFieldsWithheld", withheld.unnamed);
 
         try (OutputStream file = Files.newOutputStream(output, StandardOpenOption.CREATE_NEW);
                 ZipOutputStream zip = new ZipOutputStream(file)) {
@@ -132,8 +158,7 @@ final class DiagnoseCommand implements Command {
             return FaultoraCli.EXIT_RUNNER_FAILURE;
         }
         out.println("Wrote " + output + ": " + files.get(0).path("records").asInt() + " events"
-                + (healthBytes == null ? "" : " and the runner status") + "; withheld "
-                + (withheld.isEmpty() ? "nothing" : String.join(", ", withheld)));
+                + (healthBytes == null ? "" : " and the runner status") + "; withheld " + withheld);
         return FaultoraCli.EXIT_PASS;
     }
 
@@ -163,88 +188,159 @@ final class DiagnoseCommand implements Command {
         if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
             throw new CliException("No " + name + " at " + file, FaultoraCli.EXIT_INVALID_CONFIG);
         }
-        try {
-            if (Files.size(file) > MAX_JOURNAL_BYTES) {
-                throw new CliException(name + " is larger than the " + MAX_JOURNAL_BYTES
-                        + " bytes a bundle takes", FaultoraCli.EXIT_INVALID_CONFIG);
-            }
-        } catch (IOException unreadable) {
-            throw new CliException(name + " cannot be read", FaultoraCli.EXIT_INVALID_CONFIG);
-        }
         return file;
     }
 
-    private static byte[] projectJournal(Path journal, Set<String> withheld, ArrayNode files) {
+    /**
+     * The file's bytes, read once and at most {@link #MAX_JOURNAL_BYTES} of
+     * them: a journal still growing is refused once it passes the limit, and
+     * what is projected and what the manifest hashes are the same bytes.
+     */
+    static byte[] snapshot(Path file, String name) {
+        byte[] bytes;
+        try (InputStream in = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) {
+            bytes = in.readNBytes((int) MAX_JOURNAL_BYTES + 1);
+        } catch (IOException unreadable) {
+            throw new CliException(name + " cannot be read", FaultoraCli.EXIT_INVALID_CONFIG);
+        }
+        if (bytes.length > MAX_JOURNAL_BYTES) {
+            throw new CliException(name + " is larger than the " + MAX_JOURNAL_BYTES
+                    + " bytes a bundle takes", FaultoraCli.EXIT_INVALID_CONFIG);
+        }
+        return bytes;
+    }
+
+    private static byte[] projectJournal(Path journal, Withheld withheld, ArrayNode files) {
+        byte[] bytes = snapshot(journal, "events.ndjson");
         StringBuilder projected = new StringBuilder();
         int records = 0;
-        try (BufferedReader lines = Files.newBufferedReader(journal, StandardCharsets.UTF_8)) {
-            String line;
-            while ((line = lines.readLine()) != null) {
-                if (line.isBlank()) {
-                    continue;
-                }
-                JsonNode event = JSON.readTree(line);
-                if (event == null || !event.isObject() || !event.path("eventType").isTextual()) {
-                    throw new CliException("events.ndjson line " + (records + 1) + " is not a journal event",
-                            FaultoraCli.EXIT_INVALID_CONFIG);
-                }
-                projected.append(JSON.writeValueAsString(project(event, EVENT_FIELDS, withheld))).append('\n');
-                records++;
+        for (String line : new String(bytes, StandardCharsets.UTF_8).split("\n", -1)) {
+            if (line.isBlank()) {
+                continue;
             }
-        } catch (CliException refused) {
-            throw refused;
-        } catch (IOException unreadable) {
-            throw new CliException("events.ndjson is not a readable journal", FaultoraCli.EXIT_INVALID_CONFIG);
+            JsonNode event;
+            try {
+                event = JSON.readTree(line);
+            } catch (IOException unreadable) {
+                throw new CliException("events.ndjson is not a readable journal", FaultoraCli.EXIT_INVALID_CONFIG);
+            }
+            String where = "events.ndjson line " + (records + 1);
+            if (event == null || !event.isObject() || !event.path("eventType").isTextual()) {
+                throw new CliException(where + " is not a journal event", FaultoraCli.EXIT_INVALID_CONFIG);
+            }
+            try {
+                projected.append(JSON.writeValueAsString(project(event, EVENT_FIELDS, withheld, where))).append('\n');
+            } catch (IOException impossible) {
+                throw new IllegalStateException(impossible);
+            }
+            records++;
         }
-        files.add(source("events.ndjson", journal, records));
+        files.add(source("events.ndjson", bytes, records));
         return projected.toString().getBytes(StandardCharsets.UTF_8);
     }
 
-    private static byte[] projectHealth(Path status, Set<String> withheld, ArrayNode files) {
+    private static byte[] projectHealth(Path status, Withheld withheld, ArrayNode files) {
+        byte[] bytes = snapshot(status, "The status file");
+        JsonNode tree;
         try {
-            JsonNode tree = JSON.readTree(Files.readAllBytes(status));
-            if (tree == null || !tree.isObject()) {
-                throw new CliException("The status file is not a runner status", FaultoraCli.EXIT_INVALID_CONFIG);
-            }
-            files.add(source("health.json", status, 1));
-            return JSON.writerWithDefaultPrettyPrinter().writeValueAsBytes(project(tree, HEALTH_FIELDS, withheld));
-        } catch (CliException refused) {
-            throw refused;
+            tree = JSON.readTree(bytes);
         } catch (IOException unreadable) {
+            tree = null;
+        }
+        if (tree == null || !tree.isObject()) {
             throw new CliException("The status file is not a runner status", FaultoraCli.EXIT_INVALID_CONFIG);
+        }
+        ObjectNode kept = project(tree, HEALTH_FIELDS, withheld, "The status file");
+        files.add(source("health.json", bytes, 1));
+        try {
+            return JSON.writerWithDefaultPrettyPrinter().writeValueAsBytes(kept);
+        } catch (IOException impossible) {
+            throw new IllegalStateException(impossible);
         }
     }
 
-    private static ObjectNode project(JsonNode source, Set<String> allowed, Set<String> withheld) {
+    private static ObjectNode project(JsonNode source, Map<String, Shape> allowed, Withheld withheld, String where) {
         ObjectNode kept = JSON.createObjectNode();
         source.fields().forEachRemaining(field -> {
             String name = field.getKey();
             JsonNode value = field.getValue();
-            if (name.equals("error") && value.isObject()) {
-                kept.set(name, project(value, ERROR_FIELDS, withheld));
-            } else if (name.equals("error") && value.isNull()) {
+            if (allowed == EVENT_FIELDS && name.equals("error") && (value.isObject() || value.isNull())) {
+                kept.set(name, value.isNull() ? value : project(value, ERROR_FIELDS, withheld, where + " error"));
+            } else if (allowed.containsKey(name)) {
+                if (!value.isNull() && !allowed.get(name).admits(value)) {
+                    throw new CliException(where + ": " + name + " is not " + allowed.get(name).description,
+                            FaultoraCli.EXIT_INVALID_CONFIG);
+                }
                 kept.set(name, value);
-            } else if (allowed.contains(name) && (value.isValueNode() || value.isNull())) {
-                kept.set(name, value);
+            } else if (KNOWN_WITHHELD.contains(name)) {
+                withheld.named.add(name);
             } else {
-                withheld.add(name);
+                withheld.unnamed++;
             }
         });
         return kept;
     }
 
-    private static ObjectNode source(String name, Path file, int records) {
+    private static ObjectNode source(String name, byte[] bytes, int records) {
         ObjectNode entry = JSON.createObjectNode();
         entry.put("path", name);
         entry.put("records", records);
+        entry.put("bytes", bytes.length);
         try {
-            entry.put("bytes", Files.size(file));
-            entry.put("sha256", HexFormat.of().formatHex(
-                    MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(file))));
-        } catch (IOException | NoSuchAlgorithmException unreadable) {
-            throw new CliException(name + " cannot be read", FaultoraCli.EXIT_INVALID_CONFIG);
+            entry.put("sha256", HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)));
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(impossible);
         }
         return entry;
+    }
+
+    private static Map<String, Shape> shapes(Shape first, List<String> firstNames, Shape second,
+            List<String> secondNames, Shape third, List<String> thirdNames) {
+        Map<String, Shape> shapes = new HashMap<>();
+        firstNames.forEach(name -> shapes.put(name, first));
+        secondNames.forEach(name -> shapes.put(name, second));
+        thirdNames.forEach(name -> shapes.put(name, third));
+        return Map.copyOf(shapes);
+    }
+
+    /** What a kept field may hold. */
+    enum Shape {
+        TOKEN("an identifier"),
+        NUMBER("a number"),
+        BOOLEAN("true or false");
+
+        private final String description;
+
+        Shape(String description) {
+            this.description = description;
+        }
+
+        boolean admits(JsonNode value) {
+            return switch (this) {
+                case TOKEN -> value.isTextual() && DiagnoseCommand.TOKEN.matcher(value.asText()).matches();
+                case NUMBER -> value.isNumber();
+                case BOOLEAN -> value.isBoolean();
+            };
+        }
+    }
+
+    /** Which fields were left out: known ones by name, any others only counted. */
+    private static final class Withheld {
+        private final Set<String> named = new TreeSet<>();
+        private int unnamed;
+
+        @Override
+        public String toString() {
+            if (named.isEmpty() && unnamed == 0) {
+                return "nothing";
+            }
+            String names = String.join(", ", named);
+            if (unnamed == 0) {
+                return names;
+            }
+            String count = unnamed + " field" + (unnamed == 1 ? "" : "s") + " of no known name";
+            return named.isEmpty() ? count : names + " and " + count;
+        }
     }
 
     private static void entry(ZipOutputStream zip, String name, byte[] content) throws IOException {
