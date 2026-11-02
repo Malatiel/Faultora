@@ -2,9 +2,9 @@
 
 This page says what problem Faultora is meant to solve, for whom, what it
 deliberately does not do, and what is not yet proven. Each capability named
-here exists in the current release and links to where it is documented or
-tested. A statement about who needs it is marked as a hypothesis until users
-outside the project have confirmed it.
+here is in the 0.11.3 release, unless it is marked as only on the main branch,
+and links to where it is documented or tested. A statement about who needs it
+is marked as a hypothesis until users outside the project have confirmed it.
 
 ## The problem
 
@@ -39,8 +39,12 @@ codes.
   `eventually` polling for asynchronous state, retries and deadlines, and
   **bounded faults**: latency, errors and lost responses on Faultora's own
   requests, or network faults through a [Toxiproxy](https://github.com/Shopify/toxiproxy)
-  you operate. Every fault has a hard expiry and a rollback, and a rollback
-  that fails or cannot be confirmed makes the run an error, never a pass.
+  you operate. While the Faultora process lives, every fault has a hard expiry
+  and a rollback, and a rollback that fails or cannot be confirmed makes the
+  run an error, never a pass. Faults on Faultora's own requests end with its
+  process; a network fault is a toxic on a Toxiproxy proxy, so if the process
+  is killed the operator removes leftover toxics, as the
+  [scenario reference](SCENARIO_REFERENCE.md) describes.
 - **Check what the business cares about, across components.** Assertions read
   HTTP responses, Kafka events and database rows, and their parameters are
   expressions over earlier steps, so "the ledger entries booked for this
@@ -58,7 +62,10 @@ codes.
 - **Stay inside your boundary.** Nothing is sent to a hosted service: no
   telemetry, no update check, no license server. Inside a network nothing can
   reach into, a [runner](RUNNER_PROTOCOL.md) dials out for work over mutually
-  authenticated TLS, and losing contact stops the run and rolls back its faults.
+  authenticated TLS. Losing contact stops the run on the runner's own clock
+  and starts the rollback of its faults; a rollback attempt is not reported as
+  confirmed recovery, and a forced termination can cut it short
+  ([ADR-024](adr/ADR-024-bounded-cleanup.md)).
 - **Let an assistant help without handing it the keys.** Over
   [MCP](MCP.md), an AI assistant can inspect the catalogs an operator declared
   and prepare scenarios; executing one needs the operator's separate signature on
@@ -92,7 +99,7 @@ proven").*
 |---|---|
 | Black box, from an API description | No change to the service under test; the description is usually already there. |
 | Invariants, not just contracts | Contract checks say a response has the right shape; the damage above has the right shape. |
-| Faults only on Faultora's own requests, or a proxy you run | No privileges on the target or its infrastructure; nothing outside the run is touched. |
+| Faults only on Faultora's own requests, or a proxy you run | No privileges on the target or its infrastructure. A network fault acts on every connection through the named Toxiproxy proxy, not only the run's, so that proxy should carry test traffic alone. |
 | Private and destructive targets refused by default | A wrong URL or a careless scenario should fail closed, not hit something real. `--allow-private` and `--allow-destructive` say so explicitly. |
 | A frozen scenario format, `faultora.dev/v1` | A suite written today keeps working; the rule is enforced by a committed snapshot. |
 | Evidence minimization | Reports, journals and diagnostics carry structural facts and fixed error text, not the values the evidence policy withholds. |
@@ -106,9 +113,10 @@ proven").*
 - **Infrastructure chaos.** It does not kill pods, partition nodes or fill
   disks. Its faults act on its own requests or through a Toxiproxy on the
   traffic path.
-- **Experiments in production.** Runs are bounded and roll back, but the
-  product is designed for test and staging environments, and the defaults
-  refuse what looks unsafe.
+- **Experiments in production.** Runs are bounded and attempt to roll back
+  their faults, but nothing restores the target after an arbitrary
+  interruption; the product is designed for test and staging environments,
+  and the defaults refuse what looks unsafe.
 - **Exhaustive input fuzzing for crashes or security flaws.** Request values
   can be generated from schemas, deterministically, but the goal is a
   repeatable scenario, not covering the input space.
@@ -118,17 +126,28 @@ proven").*
 ## Neighbouring kinds of tool
 
 Faultora overlaps with several kinds of tool and replaces none of them
-outright:
+outright. Each of them goes further than Faultora in its own specialty, and
+several cover part of what Faultora does:
 
 - **API test runners** send requests and check responses; Faultora does that
-  too, and adds concurrency, faults and invariants over several components.
-- **Schema-driven property testing and fuzzing** explores many inputs to one
-  operation; Faultora runs a chosen sequence and checks what it did.
-- **Chaos engineering platforms** break infrastructure and watch dashboards;
-  Faultora breaks individual interactions and asserts business outcomes.
-- **Load testing tools** measure capacity; Faultora checks correctness while
-  requests overlap.
-- **Network fault proxies** such as Toxiproxy are a building block; Faultora
+  too, with concurrency, faults and invariants over several components as its
+  focus.
+- **Schema-driven property testing** generates many inputs, and some tools
+  also explore sequences of operations
+  ([Schemathesis stateful testing](https://schemathesis.readthedocs.io/en/stable/explanations/stateful/),
+  for example). Faultora runs a sequence its author chose, repeatably, and
+  checks a stated invariant.
+- **Chaos engineering tools** describe experiments as a steady-state
+  hypothesis, method and probes, usually against infrastructure
+  ([Chaos Toolkit experiments](https://chaostoolkit.org/reference/api/experiment/),
+  for example). Faultora's faults are on its own requests or a test proxy,
+  and its checks are business assertions across components.
+- **Load testing tools** measure capacity and can assert on responses and
+  thresholds ([k6 checks](https://grafana.com/docs/k6/latest/using-k6/checks/),
+  for example). Faultora uses overlap to expose correctness defects, not to
+  find capacity.
+- **Network fault proxies** such as Toxiproxy are a building block
+  ([toxic fields](https://github.com/Shopify/toxiproxy#toxic-fields)); Faultora
   drives one when it is there.
 
 What is particular to Faultora is the combination — invariants across HTTP,
@@ -139,18 +158,21 @@ reviewable evidence, self-hosted — rather than any one part.
 
 Faultora is a technical preview (0.11.3). Before 1.0:
 
-- **Whether a newcomer can get to a first useful result unaided** has not been
-  measured. A person and an AI assistant will each try, with nothing but the
-  published release and these documents, against a service the project has
-  never seen.
+- **Whether a person new to Faultora gets to a first useful result unaided**
+  has not been measured. In a first trial an AI assistant with no prior
+  context, given only the MCP server and these documents, found a defect
+  planted in a service the project had never seen, and showed where the tool
+  got in its way; that is one trial, not a measure.
 - **Whether the people described above need this** has not been confirmed by
   anyone outside the project.
 - **Third-party extensions do not yet run isolated** from the Faultora process;
   a policy that requires isolation is refused rather than pretended
   ([ADR-023](adr/ADR-023-extension-isolation.md)).
 - **A runner does not yet deliver after a restart** what it had not sent
-  before; committed evidence stays on its disk
-  ([runner spool](RUNNER_SPOOL.md)).
+  before. In 0.11.3 the journal stays in its working directory; the main
+  branch adds a committed local spool as the first step towards that
+  delivery ([ADR-031](adr/ADR-031-runner-recovery-ownership.md),
+  [runner spool](RUNNER_SPOOL.md)), but nothing is replayed after a restart.
 - **Distributed workers** belong to 2.0 ([release plan](RELEASE_PLAN.md)).
 
 If you try Faultora on your own service, what got in your way is the most
