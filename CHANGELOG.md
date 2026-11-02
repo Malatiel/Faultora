@@ -6,6 +6,10 @@ All notable changes to Faultora are documented in this file.
 
 ### Added
 
+- **Guidance for contributors and support requests.** Source-build and
+  focused-test instructions, community conduct and version/support policies,
+  and issue and pull request templates explain how to contribute and share
+  reviewed diagnostic evidence without uploading a run directory.
 - **Supervised extension peers.** A lifecycle library stages an approved JAR
   privately and loads only the bytes its trusted child bootstrap hashed.
   Real child requests, malformed peers and ignored shutdown have bounded
