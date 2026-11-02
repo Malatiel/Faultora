@@ -20,7 +20,10 @@ update is costly, including teams in closed environments that cannot send
 descriptions or traffic to a hosted product. It is not a load-testing,
 infrastructure-chaos, or production-experiment tool.
 [Why Faultora exists](docs/WHY.md) explains the problem, the design decisions,
-when to use something else, and what is not yet proven.
+when to use something else, and what is not yet proven. To ask a question,
+report a problem or contribute, see
+[support](https://github.com/Malatiel/Faultora/blob/main/SUPPORT.md) and
+[contributing](https://github.com/Malatiel/Faultora/blob/main/CONTRIBUTING.md).
 
 The scenario format is frozen at `faultora.dev/v1`; the application version
 below moves independently of it.
