@@ -36,6 +36,10 @@ All notable changes to Faultora are documented in this file.
   survive a move. `UpgradeRollbackCheck` runs every payment-service scenario on
   two verified release JARs and requires the same verdicts; on 0.11.2 and
   0.11.3 all 12 matched and each read the other's runner status file.
+- **Why Faultora exists**, `docs/WHY.md`, and a README opening that starts from
+  the problem: the business promises it checks, who it is meant for, the
+  decisions that follow, when another kind of tool fits better, and what has
+  not yet been proven with users outside the project.
 - **Bounded extension codec.** A separate data-only module reads and writes
   length-prefixed JSON with byte limits, strict envelope checks and reply
   correlation. It does not start a plugin or change isolation policy refusals.
