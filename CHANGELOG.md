@@ -2,6 +2,18 @@
 
 All notable changes to Faultora are documented in this file.
 
+## Unreleased
+
+### Changed
+
+- **The README starts with the first ten minutes.** Right after what Faultora
+  is for, it installs the release archive, generates a starter scenario from
+  your own OpenAPI document, validates and previews it, runs it, and shows
+  the shape of a first business check. Its commands use the archive's
+  `bin/faultora` launcher instead of a source build's path, and the full list
+  of capabilities moved to `docs/FEATURES.md`. The path is exercised end to
+  end from the packaged archive against the example payment service.
+
 ## 0.12.0 — 2026-11-09
 
 Results an operator, a bug report and an AI assistant can act on: MCP names

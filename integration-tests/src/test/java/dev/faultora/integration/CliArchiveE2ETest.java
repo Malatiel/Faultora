@@ -1,5 +1,7 @@
 package dev.faultora.integration;
 
+import dev.faultora.examples.payment.PaymentApi;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
@@ -43,6 +45,48 @@ class CliArchiveE2ETest {
     @ValueSource(strings = {"zip", "tar.gz"})
     void launcherAlsoFindsJavaOnPath(String format) throws Exception {
         checkCommands(unpack(format), false);
+    }
+
+    /**
+     * The README's first ten minutes, step by step, from the archive alone:
+     * the starter scenario {@code init} writes validates, previews and runs
+     * against a live service with the flags the README names.
+     */
+    @Test
+    void theReadmesFirstTenMinutesWorkFromTheArchive() throws Exception {
+        Path home = unpack(windows() ? "zip" : "tar.gz");
+        List<String> launcher = windows()
+                ? List.of("cmd.exe", "/d", "/c", "call", home.resolve("bin/faultora.cmd").toString())
+                : List.of(home.resolve("bin/faultora").toString());
+        String openapi = home.resolve("examples/payment-service/openapi.yaml").toString();
+
+        Result init = launch(launcher, home, true, "init", "--from-openapi", openapi, "--output", "my-checks");
+        assertThat(init.code()).as(init.output()).isZero();
+        assertThat(init.output()).contains("Generated scenario:", "Next:");
+        String scenario = home.resolve("my-checks/scenario.yaml").toString();
+
+        Result validated = launch(launcher, home, true, "validate", "--scenario", scenario, "--openapi", openapi);
+        assertThat(validated.code()).as(validated.output()).isZero();
+        Result preview = launch(launcher, home, true, "test", "--preview", "--scenario", scenario,
+                "--openapi", openapi, "--target", "https://staging.example.com");
+        assertThat(preview.code()).as(preview.output()).isZero();
+        assertThat(preview.output()).contains("\"compiled\"");
+
+        PaymentApi api = new PaymentApi();
+        api.start();
+        Result run;
+        try {
+            run = launch(launcher, home, true, "test", "--scenario", scenario, "--openapi", openapi,
+                    "--target", api.baseUrl(), "--allow-private", "--format", "console,html", "--output", "results");
+        } finally {
+            api.stop();
+        }
+        assertThat(run.code()).as(run.output()).isZero();
+        try (Stream<Path> results = Files.walk(home.resolve("results"))) {
+            assertThat(results.map(path -> path.getFileName().toString()))
+                    .as("the README says results/ holds the HTML report and the journal")
+                    .anyMatch(name -> name.endsWith(".html")).contains("events.ndjson");
+        }
     }
 
     @ParameterizedTest
