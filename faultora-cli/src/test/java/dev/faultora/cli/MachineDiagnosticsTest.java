@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.params.provider.EnumSource;
 import dev.faultora.engine.run.RunResult;
@@ -93,6 +94,30 @@ class MachineDiagnosticsTest {
         assertThat(diagnostic.path("path").asText()).isEqualTo("timeout");
         assertThat(diagnostic.path("node").isNull()).isTrue();
         assertThat(diagnostic.path("hint").asText()).isNotBlank();
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "%s: true, SCENARIO_UNKNOWN_FIELD, execute[0]",
+            "retry: {maxAttempts: %s}, SCENARIO_TYPE_MISMATCH, execute[0].retry.maxAttempts"
+    })
+    void parserDetailsKeepTheBroadCodeAndIdentifyTheStructuralPath(
+            String field, String detailCode, String path) throws Exception {
+        Path scenario = directory.resolve("scenario.yaml");
+        Files.writeString(scenario, SCENARIO + "    " + field.formatted(MARKER) + "\n");
+
+        var result = invoke("validate", "--scenario", scenario.toString());
+
+        assertEnvelope(result, 2);
+        assertThat(result.json().path("diagnostics")).singleElement().satisfies(diagnostic -> {
+            assertThat(diagnostic.properties()).extracting(Map.Entry::getKey)
+                    .containsExactlyInAnyOrder("code", "severity", "node", "path", "hint", "detailCode");
+            assertThat(diagnostic.path("code").asText()).isEqualTo("SCENARIO_INVALID");
+            assertThat(diagnostic.path("detailCode").asText()).isEqualTo(detailCode);
+            assertThat(diagnostic.path("path").asText()).isEqualTo(path);
+            assertThat(diagnostic.path("severity").asText()).isEqualTo("ERROR");
+            assertThat(diagnostic.path("node").isNull()).isTrue();
+        });
     }
 
     @Test

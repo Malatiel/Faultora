@@ -7,13 +7,17 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.ser.std.StdSerializer;
 import dev.faultora.engine.journal.RunJournal;
+import dev.faultora.engine.plan.PlanNode;
 import dev.faultora.engine.run.RunResult;
+import dev.faultora.model.identifier.NodeId;
 import dev.faultora.model.security.ContentDigest;
 import dev.faultora.spec.expression.ExpressionContext;
 import dev.faultora.spi.context.ConnectorContext;
 import dev.faultora.spi.contract.FaultProvider;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -97,6 +101,23 @@ public final class PreparedRun {
         return PlanPreview.describe(result,
                 RuntimeCapabilities.describe(request.extensions(), request.targets(), settings.faultTypes()),
                 request.targets());
+    }
+
+    public record AssertionCheck(NodeId nodeId, String assertionType) { }
+
+    /** Planned checks in execution-plan order. Types are declarations, not proof of provider support. */
+    public List<AssertionCheck> assertionChecks() {
+        var checks = new ArrayList<AssertionCheck>();
+        for (PlanNode node : result.compilation().plan().nodes()) {
+            if (node instanceof PlanNode.AssertionNode assertion) {
+                checks.add(new AssertionCheck(assertion.nodeId(), assertion.assertionType()));
+            } else if (node instanceof PlanNode.EventuallyNode group) {
+                for (PlanNode.Condition condition : group.conditions()) {
+                    checks.add(new AssertionCheck(group.nodeId(), condition.assertionType()));
+                }
+            }
+        }
+        return List.copyOf(checks);
     }
 
     public String catalogDigest() {

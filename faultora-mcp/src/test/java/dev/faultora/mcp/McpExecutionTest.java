@@ -180,6 +180,10 @@ class McpExecutionTest {
             JsonNode terminal = session.finished(prepared);
             assertThat(terminal.path("status").asText()).isEqualTo("PASSED");
             assertThat(terminal.path("assertionOutcomes").path("PASS").asInt()).isEqualTo(1);
+            assertThat(terminal.path("assertions")).isEqualTo(McpJson.MAPPER.readTree("""
+                    [{"nodeId":"check","assertionType":"jsonpath","outcome":"PASS"}]
+                    """));
+            assertThat(terminal.path("omittedAssertionCount").asInt(-1)).isZero();
             assertThat(terminal.path("cleanupConfirmed").asBoolean()).isTrue();
             assertThat(session.requests).hasValue(1);
             var report = session.artifact(prepared, "report");
@@ -189,6 +193,184 @@ class McpExecutionTest {
             assertThat(session.start(prepared).path("structuredContent").path("code").asText())
                     .isEqualTo("UNKNOWN_PREPARATION");
             assertThat(session.requests).hasValue(1);
+        }
+    }
+
+    @Test
+    void largeAssertionInventoryKeepsVerdictAndReportsOmissionsInBothViews() throws Exception {
+        int count = 180;
+        var scenario = new StringBuilder(McpFixtures.SCENARIO).append("assertions:\n");
+        for (int index = 0; index < count; index++) {
+            scenario.append("""
+                      - id: check-%d-%s
+                        assertionType: status
+                        targetStep: read
+                        params: {expected: 200}
+                    """.formatted(index, "x".repeat(230)));
+        }
+        try (var session = new Session()) {
+            JsonNode prepared = session.prepare(scenario.toString());
+            assertThat(session.start(prepared).path("isError").asBoolean()).isFalse();
+            JsonNode terminal = session.finished(prepared);
+            assertThat(terminal.path("status").asText()).isEqualTo("PASSED");
+            assertThat(terminal.path("assertionOutcomes").path("PASS").asInt()).isEqualTo(count);
+            JsonNode entries = terminal.path("assertions");
+            int omitted = terminal.path("omittedAssertionCount").asInt();
+            assertThat(omitted).isPositive();
+            assertThat(entries.size() + omitted).isEqualTo(count);
+            assertThat(McpJson.MAPPER.writeValueAsBytes(entries).length).isLessThanOrEqualTo(40 * 1024);
+            var journalIds = new java.util.ArrayList<String>();
+            for (String line : Files.readAllLines(session.artifacts(prepared).resolve("events.ndjson"))) {
+                JsonNode event = McpJson.MAPPER.readTree(line);
+                if (event.path("eventType").asText().equals("ASSERTION_EVALUATED")) {
+                    journalIds.add(event.path("nodeId").asText());
+                }
+            }
+            assertThat(journalIds).hasSize(count);
+            assertThat(entries).extracting(entry -> entry.path("nodeId").asText())
+                    .containsExactlyElementsOf(journalIds.subList(0, entries.size()));
+            var report = session.artifact(prepared, "report");
+            assertThat(report.path("isError").asBoolean()).isFalse();
+            assertThat(report.path("structuredContent").path("bytes").asInt()).isLessThanOrEqualTo(65_536);
+            assertThat(McpJson.MAPPER.readTree(report.path("structuredContent").path("text").asText()))
+                    .isEqualTo(terminal);
+        }
+    }
+
+    @Test
+    void failedSetupShowsEveryBlockedAssertionAndPollingCondition() throws Exception {
+        try (var session = new Session()) {
+            JsonNode prepared = session.prepare("""
+                    apiVersion: faultora.dev/v1
+                    kind: Scenario
+                    metadata: {name: synthetic}
+                    setup:
+                      - id: bootstrap
+                        type: operation
+                        operationId: read
+                        expectError: true
+                    execute:
+                      - id: read
+                        type: operation
+                        operationId: read
+                        dependsOn: [bootstrap]
+                      - id: readiness
+                        type: eventually
+                        dependsOn: [bootstrap]
+                        timeout: 1s
+                        steps:
+                          - id: poll
+                            type: operation
+                            operationId: read
+                        until:
+                          - assertionType: status
+                            params: {expected: 200}
+                    assertions:
+                      - id: check
+                        assertionType: status
+                        targetStep: read
+                        params: {expected: 200}
+                    """);
+            assertThat(session.start(prepared).path("isError").asBoolean()).isFalse();
+            JsonNode terminal = session.finished(prepared);
+            assertThat(terminal.path("status").asText()).isEqualTo("FAILED");
+            assertThat(terminal.path("failedAssertions").asInt()).isZero();
+            assertThat(terminal.path("assertions")).isEqualTo(McpJson.MAPPER.readTree("""
+                    [
+                      {"nodeId":"readiness","assertionType":"status","outcome":"SKIPPED",
+                       "reasonCode":"DEPENDENCY_NOT_PASSED"},
+                      {"nodeId":"check","assertionType":"status","outcome":"SKIPPED",
+                       "reasonCode":"DEPENDENCY_NOT_PASSED"}
+                    ]
+                    """));
+            assertThat(session.requests).hasValue(1);
+            var artifact = session.artifact(prepared, "report").path("structuredContent");
+            assertThat(McpJson.MAPPER.readTree(artifact.path("text").asText())).isEqualTo(terminal);
+        }
+    }
+
+    @Test
+    void checksRefusedBeforeEvaluationHaveFixedReasonsAndOnlyKnownTypes() throws Exception {
+        try (var session = new Session()) {
+            JsonNode prepared = session.prepare("""
+                    apiVersion: faultora.dev/v1
+                    kind: Scenario
+                    metadata: {name: synthetic}
+                    execute:
+                      - id: read
+                        type: operation
+                        operationId: read
+                      - id: readiness
+                        type: eventually
+                        timeout: 1s
+                        steps:
+                          - id: poll
+                            type: operation
+                            operationId: read
+                        until:
+                          - assertionType: status
+                            params: {expected: '{{inputs.SYNTHETIC_PRIVATE_VALUE}}'}
+                    assertions:
+                      - id: bad-params
+                        assertionType: status
+                        targetStep: read
+                        params: {expected: '{{inputs.SYNTHETIC_PRIVATE_VALUE}}'}
+                      - id: unknown-type
+                        assertionType: SYNTHETIC_PRIVATE_VALUE
+                        targetStep: read
+                    """);
+            assertThat(session.start(prepared).path("isError").asBoolean()).isFalse();
+            JsonNode terminal = session.finished(prepared);
+            assertThat(terminal.path("status").asText()).isEqualTo("FAILED");
+            assertThat(terminal.path("assertions")).isEqualTo(McpJson.MAPPER.readTree("""
+                    [
+                      {"nodeId":"readiness","assertionType":"status","outcome":"NOT_EVALUATED",
+                       "reasonCode":"INPUTS_UNRESOLVABLE"},
+                      {"nodeId":"bad-params","assertionType":"status","outcome":"NOT_EVALUATED",
+                       "reasonCode":"ASSERTION_REFUSED"},
+                      {"nodeId":"unknown-type","outcome":"NOT_EVALUATED","reasonCode":"ASSERTION_REFUSED"}
+                    ]
+                    """));
+            assertThat(terminal.toString()).doesNotContain(McpFixtures.MARKER);
+            assertThat(session.requests).hasValue(1);
+        }
+    }
+
+    @Test
+    void eventuallyKeepsEachConditionEvenWhenItsNodeIdAndTypeRepeat() throws Exception {
+        try (var session = new Session()) {
+            JsonNode prepared = session.prepare("""
+                    apiVersion: faultora.dev/v1
+                    kind: Scenario
+                    metadata: {name: synthetic}
+                    execute:
+                      - id: readiness
+                        type: eventually
+                        timeout: 2s
+                        interval: 100ms
+                        steps:
+                          - id: read
+                            type: operation
+                            operationId: read
+                        until:
+                          - assertionType: status
+                            params: {expected: 200}
+                          - assertionType: jsonpath
+                            params: {path: value, equals: SYNTHETIC_PRIVATE_VALUE}
+                          - assertionType: status
+                            params: {expected: 200}
+                    """);
+            assertThat(session.start(prepared).path("isError").asBoolean()).isFalse();
+            JsonNode terminal = session.finished(prepared);
+            assertThat(terminal.path("status").asText()).isEqualTo("PASSED");
+            assertThat(terminal.path("assertions")).isEqualTo(McpJson.MAPPER.readTree("""
+                    [
+                      {"nodeId":"readiness","assertionType":"status","outcome":"PASS"},
+                      {"nodeId":"readiness","assertionType":"jsonpath","outcome":"PASS"},
+                      {"nodeId":"readiness","assertionType":"status","outcome":"PASS"}
+                    ]
+                    """));
+            assertThat(terminal.toString()).doesNotContain(McpFixtures.MARKER);
         }
     }
 
@@ -235,13 +417,23 @@ class McpExecutionTest {
     @Test
     void cancellationPublishesTerminalOnlyAfterCleanupAndFaultRollback() throws Exception {
         try (var session = new Session()) {
-            JsonNode prepared = session.prepare(WAIT);
+            JsonNode prepared = session.prepare(WAIT + """
+                    assertions:
+                      - id: after-wait
+                        assertionType: status
+                        targetStep: pause
+                        params: {expected: 200}
+                    """);
             session.start(prepared);
             session.started(prepared);
             session.status(prepared, true);
             session.status(prepared, true);
             var terminal = session.finished(prepared);
             assertThat(terminal.path("status").asText()).isEqualTo("CANCELLED");
+            assertThat(terminal.path("assertions")).isEqualTo(McpJson.MAPPER.readTree("""
+                    [{"nodeId":"after-wait","assertionType":"status","outcome":"NOT_EVALUATED",
+                      "reasonCode":"RUN_STOPPED"}]
+                    """));
             assertThat(terminal.path("cleanupConfirmed").asBoolean()).isTrue();
             assertThat(session.requests).hasValue(1);
             String journal = Files.readString(session.artifacts(prepared).resolve("events.ndjson"));

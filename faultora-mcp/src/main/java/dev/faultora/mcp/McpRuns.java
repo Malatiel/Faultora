@@ -1,12 +1,15 @@
 package dev.faultora.mcp;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.faultora.engine.LocalEngine;
 import dev.faultora.engine.exec.JournalWriter;
 import dev.faultora.engine.journal.RunJournal;
 import dev.faultora.engine.run.RunResult;
 import dev.faultora.faults.local.LocalFaultProvider;
 import dev.faultora.model.events.RunEvent;
+import dev.faultora.model.identifier.NodeId;
 import dev.faultora.model.security.ContentDigest;
 import dev.faultora.runtime.PreparedRun;
 import dev.faultora.runtime.RunArtifacts;
@@ -18,13 +21,19 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Session ownership lasts until execution, connector close and artifact flush have finished. */
 final class McpRuns implements AutoCloseable {
+    // Leave room for the summary and for quoting the report in both MCP result representations.
+    private static final int MAX_ASSERTION_BYTES = 40 * 1024;
+    private static final int MAX_REPORT_BYTES = 64 * 1024;
     private final McpConfiguration.Execution configuration;
     private final Map<String, OwnedRun> runs = new LinkedHashMap<>();
     private final RunExecutor executor;
@@ -120,9 +129,11 @@ final class McpRuns implements AutoCloseable {
             // Admission is already validated. Forget only the oldest completed record, never its files.
             runs.remove(runs.keySet().iterator().next());
         }
-        OwnedRun owned = new OwnedRun(id, () -> execute(id, prepared, request, settings),
+        var preview = prepared.preview();
+        var knownTypes = Set.copyOf(preview.capabilities().assertionTypes());
+        OwnedRun owned = new OwnedRun(id, () -> execute(id, prepared, request, settings, knownTypes),
                 RunArtifacts.dispatchedDirectory(configuration.workingDirectory(), request.runId()),
-                effectiveRunMs(prepared.preview().budgets()), cleanupMs, graceMs);
+                effectiveRunMs(preview.budgets()), cleanupMs, graceMs);
         runs.put(id, owned);
         try {
             owned.shutdown.start();
@@ -135,7 +146,8 @@ final class McpRuns implements AutoCloseable {
         return owned.status();
     }
 
-    private void execute(String id, PreparedRun prepared, RunPreparation.Request request, PreparedRun.Settings settings) {
+    private void execute(String id, PreparedRun prepared, RunPreparation.Request request,
+                         PreparedRun.Settings settings, Set<String> knownTypes) {
         OwnedRun owned;
         synchronized (this) {
             owned = runs.get(id);
@@ -152,7 +164,7 @@ final class McpRuns implements AutoCloseable {
             try (RunJournal journal = new RunJournal(artifacts.journalPath(), true)) {
                 RunResult result = executor.execute(prepared, request, settings, journal, owned.cancellation);
                 result = JournalWriter.closeJournal(journal, result);
-                terminal = summary(result, journal);
+                terminal = summary(result, journal, prepared.assertionChecks(), knownTypes);
             }
             // Engine cancellation preserves interrupt; publishing a report is part of completion.
             Thread.interrupted();
@@ -175,7 +187,9 @@ final class McpRuns implements AutoCloseable {
         }
     }
 
-    private static JsonNode summary(RunResult result, RunJournal journal) {
+    private static JsonNode summary(RunResult result, RunJournal journal,
+                                    List<PreparedRun.AssertionCheck> planned, Set<String> knownTypes)
+            throws IOException {
         var response = McpJson.MAPPER.createObjectNode().put("runId", result.runId().value())
                 .put("terminal", true).put("status", result.status().name()).put("totalNodes", result.totalNodes())
                 .put("passedAssertions", result.passedAssertions()).put("failedAssertions", result.failedAssertions());
@@ -184,13 +198,81 @@ final class McpRuns implements AutoCloseable {
             String outcome = assertion.outcome().name();
             outcomes.put(outcome, outcomes.path(outcome).asInt() + 1);
         }));
-        boolean cleanupFailed = journal.events().stream().anyMatch(event ->
+        var events = journal.events();
+        addAssertionDetails(response, result, events, planned, knownTypes);
+        boolean cleanupFailed = events.stream().anyMatch(event ->
                 event instanceof RunEvent.CleanupCompleted cleanup && cleanup.failed() != 0);
         // An ERROR may mean rollback, journal or connector close was not confirmed.
         response.put("cleanupConfirmed", !cleanupFailed && result.status() != RunResult.Status.ERROR);
         response.put("reportStatus", "AVAILABLE");
         response.putArray("artifactIds").add("report");
         return response;
+    }
+
+    private static void addAssertionDetails(ObjectNode response, RunResult result, List<RunEvent> events,
+                                            List<PreparedRun.AssertionCheck> planned, Set<String> knownTypes)
+            throws IOException {
+        var entries = new AssertionEntries(response.putArray("assertions"));
+        Map<NodeId, Integer> evaluated = new HashMap<>();
+        for (RunEvent event : events) {
+            if (event instanceof RunEvent.AssertionEvaluated assertion) {
+                evaluated.merge(assertion.nodeId(), 1, Integer::sum);
+                entries.add(McpJson.MAPPER.createObjectNode().put("nodeId", assertion.nodeId().value())
+                        .put("assertionType", assertion.assertionType()).put("outcome", assertion.outcome()));
+            }
+        }
+        // Conditions of one eventually node are emitted together in declaration order.
+        for (var check : planned) {
+            Integer remaining = evaluated.computeIfPresent(check.nodeId(), (id, count) -> count - 1);
+            if (remaining != null && remaining >= 0) {
+                continue;
+            }
+            RunResult.NodeResult node = result.nodeResults().get(check.nodeId());
+            boolean skipped = node != null && node.status() == RunResult.Status.SKIPPED;
+            var detail = McpJson.MAPPER.createObjectNode().put("nodeId", check.nodeId().value())
+                    .put("outcome", skipped ? "SKIPPED" : "NOT_EVALUATED")
+                    .put("reasonCode", skipped ? "DEPENDENCY_NOT_PASSED" : notEvaluatedReason(node));
+            if (check.assertionType() != null && knownTypes.contains(check.assertionType())) {
+                detail.put("assertionType", check.assertionType());
+            }
+            entries.add(detail);
+        }
+        response.put("omittedAssertionCount", entries.omitted);
+    }
+
+    private static String notEvaluatedReason(RunResult.NodeResult node) {
+        if (node == null) {
+            return "RUN_STOPPED";
+        }
+        String code = node.error() == null ? null : node.error().code();
+        return switch (code) {
+            case "VALIDATION" -> "ASSERTION_REFUSED";
+            case "INPUTS_UNRESOLVABLE", "REQUEST_BUDGET_EXCEEDED", "EVENTUALLY_TIMEOUT",
+                    "DEADLINE_EXCEEDED", "CANCELLED" -> code;
+            case null, default -> "EVALUATION_UNAVAILABLE";
+        };
+    }
+
+    private static final class AssertionEntries {
+        private final ArrayNode array;
+        private int remaining = MAX_ASSERTION_BYTES - 2; // Array brackets.
+        private int omitted;
+
+        private AssertionEntries(ArrayNode array) {
+            this.array = array;
+        }
+
+        private void add(ObjectNode entry) throws IOException {
+            if (omitted == 0) {
+                int size = McpJson.MAPPER.writeValueAsBytes(entry).length + (array.isEmpty() ? 0 : 1);
+                if (size <= remaining) {
+                    array.add(entry);
+                    remaining -= size;
+                    return;
+                }
+            }
+            omitted++;
+        }
     }
 
     private static JsonNode failure(String id, String code) {
@@ -229,7 +311,7 @@ final class McpRuns implements AutoCloseable {
             if (!owner.equals(id)) {
                 throw new IOException("Artifact owner changed");
             }
-            byte[] bytes = McpConfiguration.readFile(run.directory.resolve("report.json"), 65_536);
+            byte[] bytes = McpConfiguration.readFile(run.directory.resolve("report.json"), MAX_REPORT_BYTES);
             String text = McpJson.utf8(bytes);
             if (!run.reportDigest.equals(ContentDigest.sha256Uri(text))) {
                 throw new IOException("Artifact changed");

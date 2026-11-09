@@ -35,6 +35,7 @@ class McpExecutionE2ETest {
     @TempDir Path directory;
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final String MARKER = "SYNTHETIC_PRIVATE_EXECUTION";
+    private static final String AUTHOR_MESSAGE = "SYNTHETIC_AUTHOR_ASSERTION_MESSAGE";
     private static final String SCENARIO = """
             apiVersion: faultora.dev/v1
             kind: Scenario
@@ -48,6 +49,7 @@ class McpExecutionE2ETest {
                 assertionType: status
                 targetStep: read
                 params: {expected: 200}
+                message: SYNTHETIC_AUTHOR_ASSERTION_MESSAGE
             """;
     private static final String WAIT = """
             apiVersion: faultora.dev/v1
@@ -268,6 +270,11 @@ class McpExecutionE2ETest {
             assertThat(terminal.path("status").asText()).isEqualTo(mode.equals("pass") ? "PASSED" : "FAILED");
             String outcome = mode.equals("pass") ? "PASS" : mode.equals("fail") ? "FAIL" : "INDETERMINATE";
             assertThat(terminal.path("assertionOutcomes").path(outcome).asInt()).isEqualTo(1);
+            String type = mode.equals("indeterminate") ? "header" : "status";
+            assertThat(terminal.path("assertions")).isEqualTo(MAPPER.readTree("""
+                    [{"nodeId":"check","assertionType":"%s","outcome":"%s"}]
+                    """.formatted(type, outcome)));
+            assertThat(terminal.path("omittedAssertionCount").asInt(-1)).isZero();
             Path saved = directory.resolve("saved.yaml");
             Files.writeString(saved, scenario);
             Path output = directory.resolve("cli-replay");
@@ -283,15 +290,18 @@ class McpExecutionE2ETest {
                     cli.waitFor(5, TimeUnit.SECONDS);
                 }
             }
-            assertThat(Files.readString(stdout)).contains("Result: " + terminal.path("status").asText());
+            assertThat(Files.readString(stdout)).contains("Result: " + terminal.path("status").asText())
+                    .doesNotContain(AUTHOR_MESSAGE);
             JsonNode events = MAPPER.readTree(Files.readString(output.resolve("report.json")));
+            assertThat(events.toString()).doesNotContain(AUTHOR_MESSAGE, MARKER);
             var assertion = java.util.stream.StreamSupport.stream(events.spliterator(), false)
                     .filter(event -> event.path("eventType").asText().equals("ASSERTION_EVALUATED")).findFirst().orElseThrow();
             assertThat(assertion.path("outcome").asText()).isEqualTo(outcome);
             var artifact = client.tool("get_artifact", MAPPER.createObjectNode().put("runId", prepared.path("runId").asText())
                     .put("artifactId", "report"));
             assertThat(artifact.path("isError").asBoolean()).isFalse();
-            assertThat(artifact.toString()).doesNotContain(MARKER, "127.0.0.1", directory.toString());
+            assertThat(artifact.toString()).doesNotContain(AUTHOR_MESSAGE, MARKER, "127.0.0.1", directory.toString());
+            assertThat(MAPPER.readTree(artifact.path("structuredContent").path("text").asText())).isEqualTo(terminal);
             assertThat(fixture.requests).hasValue(2);
             assertThat(client.prepare(scenario.replace("operationId: read", "operationId: destroy"))
                     .path("structuredContent").path("code").asText()).isEqualTo("PLAN_REFUSED");
@@ -306,6 +316,9 @@ class McpExecutionE2ETest {
             String scenario = SCENARIO.replace("operationId: read", "operationId: destroy");
             var result = client.prepare(scenario);
             assertThat(result.path("structuredContent").path("code").asText()).isEqualTo("PLAN_REFUSED");
+            var diagnostic = result.path("structuredContent").path("preview").path("diagnostics").get(0);
+            assertThat(diagnostic.path("code").asText()).isEqualTo("PLAN_COMPILATION_REFUSED");
+            assertThat(diagnostic.path("path").asText()).isEqualTo("execute[0]");
             assertThat(result.path("structuredContent").has("preparedId")).isFalse();
             Path saved = directory.resolve("refused.yaml");
             Files.writeString(saved, scenario);

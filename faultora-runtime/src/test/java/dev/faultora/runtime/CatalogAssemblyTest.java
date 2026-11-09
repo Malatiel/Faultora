@@ -97,7 +97,7 @@ class CatalogAssemblyTest {
         var preview = PlanPreview.describe(prepared, RuntimeCapabilities.describe(EXTENSIONS, POLICY, Set.of()), POLICY);
         assertThat(preview.compiled()).isTrue();
         assertThat(preview.diagnostics()).contains(new PlanPreview.Diagnostic(
-                "WARNING", "catalog", null, "asyncapi", "Catalog import warning"));
+                "WARNING", "catalog", null, "asyncapi", "Catalog import warning", "CATALOG_IMPORT_WARNING"));
         // The preview leaves the document's own names out, as it does for
         // scenario diagnostics: an assistant reading it was not given the document.
         assertThat(new ObjectMapper().writeValueAsString(preview)).doesNotContain("legacy");

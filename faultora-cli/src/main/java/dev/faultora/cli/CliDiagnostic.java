@@ -1,7 +1,11 @@
 package dev.faultora.cli;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import dev.faultora.spec.parser.Diagnostic;
+
 /** Stable machine diagnostics. Hints never interpolate document values or exception text. */
-record CliDiagnostic(Code code, String severity, String node, String path, String hint) {
+record CliDiagnostic(Code code, String severity, String node, String path, String hint,
+                     @JsonInclude(JsonInclude.Include.NON_NULL) Diagnostic.Code detailCode) {
     enum Code {
         COMMAND_REQUIRED("Choose a command; use --help to list commands."),
         UNKNOWN_COMMAND("Choose one of the commands listed by --help."),
@@ -39,7 +43,16 @@ record CliDiagnostic(Code code, String severity, String node, String path, Strin
     }
 
     static CliDiagnostic of(Code code, String severity, String node, String path) {
-        return new CliDiagnostic(code, severity, location(node), location(path), code.hint);
+        return new CliDiagnostic(code, severity, location(node), location(path), code.hint, null);
+    }
+
+    static CliDiagnostic fromScenario(Diagnostic diagnostic) {
+        Code code = diagnostic.isError() ? Code.SCENARIO_INVALID : Code.SCENARIO_WARNING;
+        Diagnostic.Code detail = switch (diagnostic.code()) {
+            case SCENARIO_UNKNOWN_FIELD, SCENARIO_TYPE_MISMATCH -> diagnostic.code();
+            default -> null;
+        };
+        return new CliDiagnostic(code, diagnostic.severity().name(), null, location(diagnostic.path()), code.hint, detail);
     }
 
     /** Locations identify public topology, never filesystem paths or arbitrary provider prose. */

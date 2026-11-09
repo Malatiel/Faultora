@@ -1,8 +1,11 @@
 package dev.faultora.mcp;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.faultora.connector.http.HttpConnector;
 import dev.faultora.connector.kafka.KafkaConnector;
+import dev.faultora.faults.local.LocalFaultProvider;
+import dev.faultora.model.catalog.SafetyClassification;
 import dev.faultora.model.security.ExtensionPolicy;
 import dev.faultora.runtime.CatalogAssembly;
 import dev.faultora.runtime.CatalogDescription;
@@ -75,7 +78,7 @@ final class McpTools implements AutoCloseable {
         for (String name : names()) {
             var tool = tools.addObject().put("name", name);
             tool.put("description", switch (name) {
-                case "list_capabilities" -> "Describe installed capabilities and declared catalog IDs";
+                case "list_capabilities" -> "Describe runtime capabilities, operator policy and declared catalog IDs";
                 case "describe_catalog" -> "Describe one declared catalog without source content or endpoints";
                 case "prepare_run" -> "Prepare ordinary scenario YAML without executing targets or faults";
                 case "start_run" -> "Start one prepared run with a separate operator-signed approval";
@@ -145,7 +148,11 @@ final class McpTools implements AutoCloseable {
         } catch (IllegalArgumentException invalid) {
             return wrap(McpJson.MAPPER.createObjectNode().put("code", "INVALID_ARGUMENT"), true);
         } catch (CatalogAssembly.AssemblyException invalid) {
-            return wrap(McpJson.MAPPER.createObjectNode().put("code", "CATALOG_REFUSED"), true);
+            var result = McpJson.MAPPER.createObjectNode().put("code", "CATALOG_REFUSED");
+            if (name.equals("prepare_run")) {
+                result.put("path", "catalogIds");
+            }
+            return wrap(result, true);
         } catch (PreparedRun.Refused refused) {
             return wrap(McpJson.MAPPER.createObjectNode().put("code", "PREPARATION_REFUSED"), true);
         }
@@ -153,14 +160,24 @@ final class McpTools implements AutoCloseable {
 
     private RuntimeCapabilities runtime() {
         return RuntimeCapabilities.describe(BUILT_INS, configuration.targets(),
-                configuration.targets().allowedFaultTypes());
+                LocalFaultProvider.supportedFaultTypes());
+    }
+
+    private JsonNode operatorPolicy() {
+        var targets = configuration.targets();
+        var classes = targets.allowedOperationClasses().isEmpty()
+                ? Set.of(SafetyClassification.values()) : targets.allowedOperationClasses();
+        return McpJson.MAPPER.valueToTree(Map.of(
+                "allowedOperationClasses", classes.stream().map(SafetyClassification::name).sorted().toList(),
+                "allowedFaultTypes", targets.allowedFaultTypes().stream().sorted().toList()));
     }
 
     private JsonNode capabilities(JsonNode arguments) {
         McpConfiguration.fields(arguments, Set.of());
         return McpJson.MAPPER.valueToTree(Map.of("runtime", runtime(), "tools", names(),
                 "catalogIds", configuration.catalogs().keySet().stream().sorted().toList(),
-                "executionAvailable", runs != null));
+                "executionAvailable", runs != null, "operatorPolicy", operatorPolicy(),
+                "installedFaultTypes", LocalFaultProvider.supportedFaultTypes().stream().sorted().toList()));
     }
 
     private CatalogAssembly.Document catalog(String id) {
@@ -175,7 +192,9 @@ final class McpTools implements AutoCloseable {
         McpConfiguration.fields(arguments, Set.of("catalogId"));
         var catalog = CatalogAssembly.assemble(List.of(catalog(McpConfiguration.text(arguments, "catalogId"))),
                 BUILT_INS).catalog();
-        return McpJson.MAPPER.valueToTree(CatalogDescription.describe(catalog, configuration.targets()));
+        var response = McpJson.MAPPER.<ObjectNode>valueToTree(
+                CatalogDescription.describe(catalog, configuration.targets()));
+        return response.set("operatorPolicy", operatorPolicy());
     }
 
     private JsonNode prepare(JsonNode arguments) throws IOException {
@@ -212,14 +231,21 @@ final class McpTools implements AutoCloseable {
                 RunArtifacts.newRunId(), seed.isMissingNode() ? 0 : seed.longValue(), null);
         var validation = RunPreparation.prepare(request);
         if (!validation.isSuccess()) {
-            var refused = McpJson.MAPPER.createObjectNode().put("code", "PLAN_REFUSED");
-            refused.set("preview", McpJson.MAPPER.valueToTree(
-                    PlanPreview.describe(validation, runtime(), configuration.targets())));
-            return refused;
+            var preview = McpJson.MAPPER.<ObjectNode>valueToTree(
+                    PlanPreview.describe(validation, runtime(), configuration.targets()));
+            // Refusals need positions, not the scenario's IDs or catalog topology.
+            preview.putNull("catalog");
+            preview.path("diagnostics").forEach(diagnostic -> ((ObjectNode) diagnostic).putNull("nodeId"));
+            return McpJson.MAPPER.createObjectNode().put("code", "PLAN_REFUSED").set("preview", preview);
         }
         Map<String, Object> bindings = McpJson.MAPPER.convertValue(inputs,
                 new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() { });
-        bindings = RunInputs.resolve(validation.scenario(), bindings);
+        try {
+            bindings = RunInputs.resolve(validation.scenario(), bindings);
+        } catch (RunInputs.InvalidInput invalid) {
+            return McpJson.MAPPER.createObjectNode().put("code", "INVALID_ARGUMENT").put("path", "inputs")
+                    .put("detailCode", invalid.missing() ? "INPUT_REQUIRED" : "UNKNOWN_INPUT");
+        }
         var settings = new PreparedRun.Settings(ExpressionContext.builder().inputs(bindings)
                 .runMetadata(Map.of("seed", request.seed())).build(),
                 new ConnectorContext(RunEvidence.defaultPolicy(), ignored -> {

@@ -1,7 +1,5 @@
 package dev.faultora.spec.parser;
 
-import java.util.List;
-
 /**
  * Diagnostic message from parsing or validation.
  * Contains source position information for actionable error messages.
@@ -11,14 +9,23 @@ import java.util.List;
  * @param path       path in the document (e.g. "metadata.name")
  * @param line       source line number (-1 if unknown)
  * @param column     source column number (-1 if unknown)
+ * @param code       stable category for structural diagnostics
  */
 public record Diagnostic(
         Severity severity,
         String message,
         String path,
         int line,
-        int column
+        int column,
+        Code code
 ) {
+    public enum Code {
+        SCENARIO_INVALID,
+        SCENARIO_UNKNOWN_FIELD,
+        SCENARIO_TYPE_MISMATCH,
+        SCENARIO_WARNING
+    }
+
     public enum Severity {
         ERROR,
         WARNING,
@@ -29,12 +36,21 @@ public record Diagnostic(
         return severity == Severity.ERROR;
     }
 
+    public Diagnostic(Severity severity, String message, String path, int line, int column) {
+        this(severity, message, path, line, column,
+                severity == Severity.ERROR ? Code.SCENARIO_INVALID : Code.SCENARIO_WARNING);
+    }
+
     public static Diagnostic error(String path, String message) {
         return new Diagnostic(Severity.ERROR, message, path, -1, -1);
     }
 
     public static Diagnostic error(String path, String message, int line, int column) {
         return new Diagnostic(Severity.ERROR, message, path, line, column);
+    }
+
+    static Diagnostic error(Code code, String path, String message) {
+        return new Diagnostic(Severity.ERROR, message, path, -1, -1, code);
     }
 
     public static Diagnostic warning(String path, String message) {

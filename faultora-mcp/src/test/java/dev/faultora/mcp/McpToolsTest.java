@@ -28,9 +28,20 @@ class McpToolsTest {
             assertThat(result.path("isError").asBoolean()).isFalse();
             assertThat(result.path("structuredContent").path("catalogIds").get(0).asText()).isEqualTo("demo");
             assertThat(result.path("structuredContent").path("executionAvailable").asBoolean()).isFalse();
+            var policy = result.path("structuredContent").path("operatorPolicy");
+            assertThat(policy).isEqualTo(McpJson.MAPPER.readTree("""
+                    {"allowedOperationClasses":["READ_ONLY"],"allowedFaultTypes":["http-latency"]}
+                    """));
+            assertThat(result.path("structuredContent").path("installedFaultTypes"))
+                    .isEqualTo(McpJson.MAPPER.readTree("""
+                            ["http-error","http-latency","http-response-loss"]
+                            """));
+            assertThat(result.path("structuredContent").path("runtime").path("faultTypes"))
+                    .isEqualTo(policy.path("allowedFaultTypes"));
             var catalog = tools.call("describe_catalog", McpJson.MAPPER.createObjectNode().put("catalogId", "demo"));
             assertThat(catalog.path("isError").asBoolean()).isFalse();
             assertThat(catalog.path("structuredContent").path("operations").get(0).path("id").asText()).isEqualTo("read");
+            assertThat(catalog.path("structuredContent").path("operatorPolicy")).isEqualTo(policy);
             assertThat(catalog.toString()).doesNotContain(McpFixtures.MARKER, "api.example.com", "source.yaml");
             assertThat(McpJson.MAPPER.readTree(catalog.path("content").get(0).path("text").asText()))
                     .isEqualTo(catalog.path("structuredContent"));
@@ -124,12 +135,15 @@ class McpToolsTest {
     @Test
     void parserCompilerAndImporterRefusalsHaveStructuredSanitizedResults() throws Exception {
         try (var tools = new McpTools(McpFixtures.configuration())) {
-            for (String scenario : java.util.List.of("[invalid", McpFixtures.SCENARIO.replace("operationId: read",
-                    "operationId: absent"))) {
+            for (String scenario : java.util.List.of("[invalid", McpFixtures.SCENARIO
+                    .replace("id: read", "id: " + McpFixtures.MARKER)
+                    .replace("operationId: read", "operationId: absent"))) {
                 var result = tools.call("prepare_run", arguments(scenario));
                 assertThat(result.path("isError").asBoolean()).isTrue();
                 assertThat(result.path("structuredContent").path("code").asText()).isEqualTo("PLAN_REFUSED");
                 assertThat(result.path("structuredContent").has("preparedId")).isFalse();
+                assertThat(result.path("structuredContent").path("preview").path("catalog").isNull()).isTrue();
+                assertThat(result.toString()).doesNotContain(McpFixtures.MARKER);
             }
         }
         var invalid = new McpConfiguration(Map.of("demo", new CatalogAssembly.Document("openapi",
@@ -137,6 +151,22 @@ class McpToolsTest {
         try (var tools = new McpTools(invalid)) {
             var result = tools.call("prepare_run", arguments(McpFixtures.SCENARIO));
             assertThat(result.path("structuredContent").path("code").asText()).isEqualTo("CATALOG_REFUSED");
+            assertThat(result.path("structuredContent").path("path").asText()).isEqualTo("catalogIds");
+            assertThat(result.toString()).doesNotContain(McpFixtures.MARKER);
+        }
+    }
+
+    @Test
+    void invalidNestedFieldHasAStablePathWithoutItsValue() throws Exception {
+        try (var tools = new McpTools(McpFixtures.configuration())) {
+            var result = tools.call("prepare_run", arguments(McpFixtures.SCENARIO.replace("operationId: read",
+                    "operationId: read\n    retry:\n      maxAttempts: " + McpFixtures.MARKER)));
+            var data = result.path("structuredContent");
+            var diagnostic = data.path("preview").path("diagnostics").get(0);
+            assertThat(result.path("isError").asBoolean()).isTrue();
+            assertThat(data.path("code").asText()).isEqualTo("PLAN_REFUSED");
+            assertThat(diagnostic.path("code").asText()).isEqualTo("SCENARIO_TYPE_MISMATCH");
+            assertThat(diagnostic.path("path").asText()).isEqualTo("execute[0].retry.maxAttempts");
             assertThat(result.toString()).doesNotContain(McpFixtures.MARKER);
         }
     }
@@ -152,9 +182,15 @@ class McpToolsTest {
             var required = tools.call("prepare_run", arguments(scenario.replace(
                     ", defaultValue: SYNTHETIC_PRIVATE_VALUE", "")));
             assertThat(required.path("structuredContent").path("code").asText()).isEqualTo("INVALID_ARGUMENT");
+            assertThat(required.path("structuredContent").path("detailCode").asText()).isEqualTo("INPUT_REQUIRED");
+            assertThat(required.path("structuredContent").path("path").asText()).isEqualTo("inputs");
             var unknown = (com.fasterxml.jackson.databind.node.ObjectNode) arguments(scenario);
-            unknown.putObject("inputs").put("unknown", McpFixtures.MARKER);
-            assertThat(tools.call("prepare_run", unknown).path("isError").asBoolean()).isTrue();
+            unknown.putObject("inputs").put(McpFixtures.MARKER, McpFixtures.MARKER);
+            var unknownResult = tools.call("prepare_run", unknown);
+            assertThat(unknownResult.path("isError").asBoolean()).isTrue();
+            assertThat(unknownResult.path("structuredContent").path("detailCode").asText()).isEqualTo("UNKNOWN_INPUT");
+            assertThat(unknownResult.path("structuredContent").path("path").asText()).isEqualTo("inputs");
+            assertThat(unknownResult.toString()).doesNotContain(McpFixtures.MARKER);
             var invalidSeed = (com.fasterxml.jackson.databind.node.ObjectNode) arguments(scenario);
             invalidSeed.put("seed", "42");
             assertThat(tools.call("prepare_run", invalidSeed).path("isError").asBoolean()).isTrue();
@@ -168,6 +204,9 @@ class McpToolsTest {
         try (var tools = new McpTools(new McpConfiguration(McpFixtures.configuration().catalogs(), policy))) {
             var catalog = tools.call("describe_catalog", McpJson.MAPPER.createObjectNode().put("catalogId", "demo"));
             assertThat(catalog.path("structuredContent").path("operations").get(0).path("permitted").asBoolean()).isFalse();
+            assertThat(catalog.path("structuredContent").path("operatorPolicy")).isEqualTo(McpJson.MAPPER.readTree("""
+                    {"allowedOperationClasses":["DESTRUCTIVE"],"allowedFaultTypes":[]}
+                    """));
             var prepared = tools.call("prepare_run", arguments(McpFixtures.SCENARIO));
             assertThat(prepared.path("structuredContent").path("code").asText()).isEqualTo("PLAN_REFUSED");
         }

@@ -146,6 +146,78 @@ class ScenarioParserTest {
     }
 
     @Test
+    void unknownFieldPointsToTheContainingStepWithoutExportingTheUnknownKey() {
+        var result = parser.parse(SMOKE_SCENARIO.formatted(ApiVersions.CURRENT)
+                + "    synthetic-private-key: true\n");
+
+        assertThat(result.errors()).singleElement().satisfies(diagnostic -> {
+            assertThat(diagnostic.code()).isEqualTo(Diagnostic.Code.SCENARIO_UNKNOWN_FIELD);
+            assertThat(diagnostic.path()).isEqualTo("execute[0]");
+            assertThat(diagnostic.message()).contains("synthetic-private-key");
+        });
+    }
+
+    @Test
+    void invalidKnownFieldTypePointsToThatField() {
+        var result = parser.parse(SMOKE_SCENARIO.formatted(ApiVersions.CURRENT)
+                + "    retry: {maxAttempts: synthetic-private-value}\n");
+
+        assertThat(result.errors()).singleElement().satisfies(diagnostic -> {
+            assertThat(diagnostic.code()).isEqualTo(Diagnostic.Code.SCENARIO_TYPE_MISMATCH);
+            assertThat(diagnostic.path()).isEqualTo("execute[0].retry.maxAttempts");
+        });
+    }
+
+    @Test
+    void invalidInputDeclarationStopsAtTheMapBoundary() {
+        var result = parser.parse(SMOKE_SCENARIO.formatted(ApiVersions.CURRENT)
+                + "inputs: {synthetic-private-key: invalid}\n");
+
+        assertThat(result.errors()).singleElement().satisfies(diagnostic -> {
+            assertThat(diagnostic.code()).isEqualTo(Diagnostic.Code.SCENARIO_TYPE_MISMATCH);
+            assertThat(diagnostic.path()).isEqualTo("inputs");
+        });
+    }
+
+    @Test
+    void validatorLocatesNestedFieldsWithoutUsingStepIds() {
+        var parsed = parser.parse("""
+                apiVersion: faultora.dev/v1
+                kind: Scenario
+                metadata: {name: nested}
+                execute:
+                  - id: synthetic-private-group
+                    type: parallel
+                    steps:
+                      - id: synthetic-private-child
+                        operationId: read
+                        retry: {maxAttempts: 0}
+                """);
+        assertThat(parsed.isSuccess()).isTrue();
+
+        var result = validator.validate(parsed.document());
+
+        assertThat(result.errors()).singleElement().satisfies(diagnostic -> {
+            assertThat(diagnostic.code()).isEqualTo(Diagnostic.Code.SCENARIO_INVALID);
+            assertThat(diagnostic.path()).isEqualTo("execute[0].steps[0].retry");
+        });
+    }
+
+    @Test
+    void nullStepIsRefusedAtItsStructuralPosition() {
+        var parsed = parser.parse("""
+                apiVersion: faultora.dev/v1
+                kind: Scenario
+                metadata: {name: absent-step}
+                execute: [null]
+                """);
+        assertThat(parsed.isSuccess()).isTrue();
+
+        assertThat(validator.validate(parsed.document()).errors()).singleElement()
+                .satisfies(diagnostic -> assertThat(diagnostic.path()).isEqualTo("execute[0]"));
+    }
+
+    @Test
     void validatorRejectsUnknownAssertionAndFaultReferences() {
         ScenarioDocument document = new ScenarioDocument(
                 "faultora.dev/v1alpha1", "Scenario",
@@ -170,6 +242,8 @@ class ScenarioParserTest {
                         "References unknown step: missing-fault-dependency",
                         "References unknown step: missing-assertion-dependency",
                         "References unknown step: missing-target");
+        assertThat(result.errors()).extracting(Diagnostic::path).containsExactly(
+                "faults[0].dependsOn[0]", "assertions[0].dependsOn[0]", "assertions[0].targetStep");
     }
 
     @Test
