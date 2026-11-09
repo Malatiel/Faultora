@@ -43,6 +43,8 @@ supports it. The newer 2026-07-28 binding is not implemented.
   types, available catalog IDs and whether execution is configured. The
   `operatorPolicy` object lists the operator's `allowedOperationClasses` and
   `allowedFaultTypes`. An empty fault list permits no fault injection.
+  `installedFaultTypes` lists fault support independent of that policy.
+  `runtime.faultTypes` lists installed faults admitted by the operator.
 - describe_catalog takes {"catalogId":"payments"}. It returns target IDs,
   protocols, operation IDs, safety classes, static permission and the same
   `operatorPolicy` object. Use each operation's `permitted` flag to account
@@ -72,6 +74,8 @@ A diagnostic may point to a whole section or the root when the failure cannot
 be attributed to one field. The empty path identifies the root. Scenario
 codes include `SCENARIO_UNKNOWN_FIELD`, `SCENARIO_TYPE_MISMATCH` and
 `SCENARIO_INVALID`. A compiler refusal uses `PLAN_COMPILATION_REFUSED`.
+Warnings use `SCENARIO_WARNING`, `PLAN_COMPILATION_WARNING` or
+`CATALOG_IMPORT_WARNING` as appropriate.
 Missing or undeclared input bindings return
 `INVALID_ARGUMENT` with `path: "inputs"` and a `detailCode` of
 `INPUT_REQUIRED` or `UNKNOWN_INPUT`.
@@ -163,14 +167,17 @@ Four additional tools are advertised only in this execution profile:
   for the operator and is not an MCP artifact. Unknown/foreign IDs, changed
   ownership, changed report bytes, oversize files and reparse paths are refused.
 
-The terminal `get_run` result and report carry `assertions` entries with
-`nodeId`, `assertionType` and `outcome` (`PASS`, `FAIL` or
-`INDETERMINATE`). These are evaluated checks in journal order. Conditions
-from an `eventually` group share its node ID and follow declaration order.
-The list is limited to a prefix whose JSON encoding fits 40 KiB.
-`omittedAssertionCount` counts evaluated checks beyond that prefix.
-Aggregate outcome counts cover the whole run. Keep secrets out of scenario
-identifiers, which can appear in results.
+Terminal `get_run` results and reports from a completed engine run carry
+`assertions` entries with `nodeId`, a known `assertionType` and `outcome`.
+Evaluated checks appear in journal order as `PASS`, `FAIL` or
+`INDETERMINATE`. The remaining planned checks follow in plan order as
+`SKIPPED` or `NOT_EVALUATED` with a fixed `reasonCode`, such as
+`DEPENDENCY_NOT_PASSED` or `ASSERTION_REFUSED`. An unknown assertion type
+is omitted. Conditions from an `eventually` group share its node ID and
+follow declaration order. The list is limited to a prefix whose JSON
+encoding fits 40 KiB. `omittedAssertionCount` counts checks beyond that
+prefix. Aggregate counts describe evaluated checks across the whole run.
+Keep secrets out of scenario identifiers, which can appear in results.
 
 CLI reports use fixed assertion verdict text. Both CLI and MCP withhold
 scenario author `message`, provider prose and comparison values. The MCP

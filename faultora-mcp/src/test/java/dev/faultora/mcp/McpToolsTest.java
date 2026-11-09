@@ -32,6 +32,12 @@ class McpToolsTest {
             assertThat(policy).isEqualTo(McpJson.MAPPER.readTree("""
                     {"allowedOperationClasses":["READ_ONLY"],"allowedFaultTypes":["http-latency"]}
                     """));
+            assertThat(result.path("structuredContent").path("installedFaultTypes"))
+                    .isEqualTo(McpJson.MAPPER.readTree("""
+                            ["http-error","http-latency","http-response-loss"]
+                            """));
+            assertThat(result.path("structuredContent").path("runtime").path("faultTypes"))
+                    .isEqualTo(policy.path("allowedFaultTypes"));
             var catalog = tools.call("describe_catalog", McpJson.MAPPER.createObjectNode().put("catalogId", "demo"));
             assertThat(catalog.path("isError").asBoolean()).isFalse();
             assertThat(catalog.path("structuredContent").path("operations").get(0).path("id").asText()).isEqualTo("read");

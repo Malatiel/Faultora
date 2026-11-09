@@ -176,7 +176,8 @@ final class McpTools implements AutoCloseable {
         McpConfiguration.fields(arguments, Set.of());
         return McpJson.MAPPER.valueToTree(Map.of("runtime", runtime(), "tools", names(),
                 "catalogIds", configuration.catalogs().keySet().stream().sorted().toList(),
-                "executionAvailable", runs != null, "operatorPolicy", operatorPolicy()));
+                "executionAvailable", runs != null, "operatorPolicy", operatorPolicy(),
+                "installedFaultTypes", LocalFaultProvider.supportedFaultTypes().stream().sorted().toList()));
     }
 
     private CatalogAssembly.Document catalog(String id) {

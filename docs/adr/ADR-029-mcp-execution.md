@@ -76,16 +76,20 @@ Its byte limit, regular-file/no-redirection checks, owner marker and captured
 digest prevent altered local files from becoming an export channel. The journal
 stays local. This is a deliberately smaller export surface than CLI reporting.
 Terminal status and the owned report project evaluated assertions from the
-engine's events to node ID, assertion type and outcome. A byte-bounded prefix
-with an explicit omitted count preserves access to the terminal verdict and
-report for large runs. An eventually group's conditions share the group ID
-and retain declaration order. Identifiers are public scenario topology.
+engine's events to node ID, assertion type and outcome. Planned checks with
+no evaluation event follow with a skipped or unevaluated outcome and a fixed
+reason code derived from the node result. Unknown declared types and error
+prose stay local. A byte-bounded prefix with an explicit omitted count
+preserves access to the terminal verdict and report for large runs.
+An eventually group's conditions share the group ID and retain declaration
+order. Identifiers are public scenario topology.
 Scenario author messages and provider prose stay behind the same structural
 export boundary for CLI and MCP. CLI retains its fixed verdict descriptions.
 
 The capability and catalog tools disclose the operator's permitted operation
-classes and fault types separately from runtime support. Catalog permission
-also reflects target policy. Preparation refusals expose fixed diagnostic
+classes and fault types. Capability inspection also lists installed faults
+separately from admitted runtime support. Catalog permission also reflects
+target policy. Preparation refusals expose fixed diagnostic
 codes and structural field paths, with section or root fallbacks. Paths
 exclude arbitrary map keys, scenario values and raw exception text.
 

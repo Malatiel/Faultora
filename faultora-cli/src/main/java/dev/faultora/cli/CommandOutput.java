@@ -41,9 +41,7 @@ final class CommandOutput {
     }
 
     void scenario(List<Diagnostic> source) {
-        source.forEach(diagnostic -> diagnostics.add(CliDiagnostic.of(
-                diagnostic.isError() ? CliDiagnostic.Code.SCENARIO_INVALID : CliDiagnostic.Code.SCENARIO_WARNING,
-                diagnostic.severity().name(), null, diagnostic.path())));
+        source.forEach(diagnostic -> diagnostics.add(CliDiagnostic.fromScenario(diagnostic)));
     }
 
     /** The family is the location: the importer's message stays in human output only. */
