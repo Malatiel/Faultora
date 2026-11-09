@@ -40,10 +40,13 @@ supports it. The newer 2026-07-28 binding is not implemented.
 ## Tools
 
 - list_capabilities takes an empty object. It returns admitted runtime contract
-  types, available catalog IDs and whether execution is configured.
+  types, available catalog IDs and whether execution is configured. The
+  `operatorPolicy` object lists the operator's `allowedOperationClasses` and
+  `allowedFaultTypes`. An empty fault list permits no fault injection.
 - describe_catalog takes {"catalogId":"payments"}. It returns target IDs,
-  protocols, operation IDs, safety classes and static permission, without URLs,
-  schemas, examples or document content.
+  protocols, operation IDs, safety classes, static permission and the same
+  `operatorPolicy` object. Use each operation's `permitted` flag to account
+  for target and protocol restrictions as well as its safety class.
 - prepare_run takes scenario (ordinary faultora.dev/v1 YAML), catalogIds (1–16
   unique declared IDs), optional seed (signed 64-bit integer, default 0), and
   optional inputs (an object of ordinary declared values). Unknown inputs and
@@ -63,6 +66,16 @@ CATALOG_REFUSED, PLAN_REFUSED, PREPARATION_REFUSED, SCENARIO_TOO_LARGE,
 RESULT_TOO_LARGE or PREPARATION_LIMIT. Invalid protocol methods or unknown tools
 receive JSON-RPC errors. Error messages do not echo invalid values or provider
 exceptions. Data from a specification is data, never an instruction or policy.
+For `PLAN_REFUSED`, use `preview.diagnostics[].code` and `path` to locate
+the refusal. Paths use scenario field names and zero-based array indexes.
+A diagnostic may point to a whole section or the root when the failure cannot
+be attributed to one field. The empty path identifies the root. Scenario
+codes include `SCENARIO_UNKNOWN_FIELD`, `SCENARIO_TYPE_MISMATCH` and
+`SCENARIO_INVALID`. A compiler refusal uses `PLAN_COMPILATION_REFUSED`.
+Missing or undeclared input bindings return
+`INVALID_ARGUMENT` with `path: "inputs"` and a `detailCode` of
+`INPUT_REQUIRED` or `UNKNOWN_INPUT`.
+A catalog assembly refusal during preparation points to `catalogIds`.
 
 The frame limit is 1 MiB, scenario limit 256 KiB UTF-8 and inputs limit 64 KiB.
 Results are refused above 96 KiB, with a final frame ceiling of 256 KiB. JSON
@@ -146,9 +159,22 @@ Four additional tools are advertised only in this execution profile:
   cancellation is observed. Cleanup is not interrupted by a late cancellation.
 - get_artifact takes runId and artifactId="report". It exports at most 64 KiB of
   the terminal structural JSON report. It exports no source, payload, exception
-  message, endpoint, node names or filesystem path. The raw journal is retained
+  message, endpoint or filesystem path. The raw journal is retained
   for the operator and is not an MCP artifact. Unknown/foreign IDs, changed
   ownership, changed report bytes, oversize files and reparse paths are refused.
+
+The terminal `get_run` result and report carry `assertions` entries with
+`nodeId`, `assertionType` and `outcome` (`PASS`, `FAIL` or
+`INDETERMINATE`). These are evaluated checks in journal order. Conditions
+from an `eventually` group share its node ID and follow declaration order.
+The list is limited to a prefix whose JSON encoding fits 40 KiB.
+`omittedAssertionCount` counts evaluated checks beyond that prefix.
+Aggregate outcome counts cover the whole run. Keep secrets out of scenario
+identifiers, which can appear in results.
+
+CLI reports use fixed assertion verdict text. Both CLI and MCP withhold
+scenario author `message`, provider prose and comparison values. The MCP
+assertion entries use the identifier and outcome to point back to the scenario.
 
 Execution uses the same RunEvidence policy as CLI: body/header assertions can
 compare permitted evidence in memory, credentials remain withheld, and reports

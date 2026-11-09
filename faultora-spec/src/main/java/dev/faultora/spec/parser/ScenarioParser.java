@@ -1,15 +1,22 @@
 package dev.faultora.spec.parser;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.faultora.spec.model.ApiVersions;
 import dev.faultora.spec.model.ScenarioDocument;
+import dev.faultora.spec.model.ScenarioMetadata;
+import dev.faultora.spec.model.ScenarioStep;
+import dev.faultora.spec.model.AssertionStep;
+import dev.faultora.spec.model.FaultStep;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Parses YAML scenario documents into the typed model.
@@ -17,6 +24,10 @@ import java.util.List;
  */
 public class ScenarioParser {
 
+    private static final Set<Class<?>> PATH_RECORDS = Set.of(
+            ScenarioDocument.class, ScenarioMetadata.class, ScenarioStep.class,
+            ScenarioStep.RetryPolicy.class, ScenarioStep.Condition.class, ScenarioStep.Generate.class,
+            AssertionStep.class, FaultStep.class);
     private final ObjectMapper yamlMapper;
 
     public ScenarioParser() {
@@ -39,6 +50,10 @@ public class ScenarioParser {
 
         try {
             JsonNode root = yamlMapper.readTree(content);
+            if (root == null || !root.isObject()) {
+                diagnostics.add(Diagnostic.error("", "Scenario document must be an object"));
+                return new ParseResult<>(null, diagnostics);
+            }
 
             // Validate apiVersion
             String apiVersion = getTextOrNull(root, "apiVersion");
@@ -93,13 +108,44 @@ public class ScenarioParser {
             return new ParseResult<>(document, diagnostics);
 
         } catch (UnrecognizedPropertyException e) {
-            diagnostics.add(Diagnostic.error(e.getPath().get(0).getFieldName(),
+            diagnostics.add(Diagnostic.error(Diagnostic.Code.SCENARIO_UNKNOWN_FIELD, structuralPath(e),
                     "Unrecognized field: " + e.getPropertyName()));
+            return new ParseResult<>(null, diagnostics);
+        } catch (JsonMappingException e) {
+            diagnostics.add(Diagnostic.error(Diagnostic.Code.SCENARIO_TYPE_MISMATCH, structuralPath(e),
+                    "Failed to parse YAML: " + e.getMessage()));
             return new ParseResult<>(null, diagnostics);
         } catch (IOException e) {
             diagnostics.add(Diagnostic.error("", "Failed to parse YAML: " + e.getMessage()));
             return new ParseResult<>(null, diagnostics);
         }
+    }
+
+    /** Only declared record fields and list positions can appear in exported diagnostics. */
+    private static String structuralPath(JsonMappingException error) {
+        StringBuilder path = new StringBuilder();
+        for (var reference : error.getPath()) {
+            Object from = reference.getFrom();
+            if (from == null) {
+                break;
+            }
+            Class<?> owner = from instanceof Class<?> type ? type : from.getClass();
+            if (reference.getIndex() >= 0 && List.class.isAssignableFrom(owner)) {
+                path.append('[').append(reference.getIndex()).append(']');
+                continue;
+            }
+            String field = reference.getFieldName();
+            if (!PATH_RECORDS.contains(owner) || Arrays.stream(owner.getRecordComponents())
+                    .noneMatch(component -> component.getName().equals(field))) {
+                // Unknown fields and keys of input/parameter maps are document data.
+                break;
+            }
+            if (!path.isEmpty()) {
+                path.append('.');
+            }
+            path.append(field);
+        }
+        return path.toString();
     }
 
     private String getTextOrNull(JsonNode node, String field) {

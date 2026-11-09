@@ -25,6 +25,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Session ownership lasts until execution, connector close and artifact flush have finished. */
 final class McpRuns implements AutoCloseable {
+    // Leave room for the summary and for quoting the report in both MCP result representations.
+    private static final int MAX_ASSERTION_BYTES = 40 * 1024;
+    private static final int MAX_REPORT_BYTES = 64 * 1024;
     private final McpConfiguration.Execution configuration;
     private final Map<String, OwnedRun> runs = new LinkedHashMap<>();
     private final RunExecutor executor;
@@ -175,7 +178,7 @@ final class McpRuns implements AutoCloseable {
         }
     }
 
-    private static JsonNode summary(RunResult result, RunJournal journal) {
+    private static JsonNode summary(RunResult result, RunJournal journal) throws IOException {
         var response = McpJson.MAPPER.createObjectNode().put("runId", result.runId().value())
                 .put("terminal", true).put("status", result.status().name()).put("totalNodes", result.totalNodes())
                 .put("passedAssertions", result.passedAssertions()).put("failedAssertions", result.failedAssertions());
@@ -184,7 +187,27 @@ final class McpRuns implements AutoCloseable {
             String outcome = assertion.outcome().name();
             outcomes.put(outcome, outcomes.path(outcome).asInt() + 1);
         }));
-        boolean cleanupFailed = journal.events().stream().anyMatch(event ->
+        var events = journal.events();
+        var assertions = response.putArray("assertions");
+        int remaining = MAX_ASSERTION_BYTES - 2; // Array brackets.
+        int omitted = 0;
+        for (RunEvent event : events) {
+            if (event instanceof RunEvent.AssertionEvaluated assertion) {
+                if (omitted == 0) {
+                    var detail = McpJson.MAPPER.createObjectNode().put("nodeId", assertion.nodeId().value())
+                            .put("assertionType", assertion.assertionType()).put("outcome", assertion.outcome());
+                    int size = McpJson.MAPPER.writeValueAsBytes(detail).length + (assertions.isEmpty() ? 0 : 1);
+                    if (size <= remaining) {
+                        assertions.add(detail);
+                        remaining -= size;
+                        continue;
+                    }
+                }
+                omitted++;
+            }
+        }
+        response.put("omittedAssertionCount", omitted);
+        boolean cleanupFailed = events.stream().anyMatch(event ->
                 event instanceof RunEvent.CleanupCompleted cleanup && cleanup.failed() != 0);
         // An ERROR may mean rollback, journal or connector close was not confirmed.
         response.put("cleanupConfirmed", !cleanupFailed && result.status() != RunResult.Status.ERROR);
@@ -229,7 +252,7 @@ final class McpRuns implements AutoCloseable {
             if (!owner.equals(id)) {
                 throw new IOException("Artifact owner changed");
             }
-            byte[] bytes = McpConfiguration.readFile(run.directory.resolve("report.json"), 65_536);
+            byte[] bytes = McpConfiguration.readFile(run.directory.resolve("report.json"), MAX_REPORT_BYTES);
             String text = McpJson.utf8(bytes);
             if (!run.reportDigest.equals(ContentDigest.sha256Uri(text))) {
                 throw new IOException("Artifact changed");

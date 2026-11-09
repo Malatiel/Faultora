@@ -180,6 +180,10 @@ class McpExecutionTest {
             JsonNode terminal = session.finished(prepared);
             assertThat(terminal.path("status").asText()).isEqualTo("PASSED");
             assertThat(terminal.path("assertionOutcomes").path("PASS").asInt()).isEqualTo(1);
+            assertThat(terminal.path("assertions")).isEqualTo(McpJson.MAPPER.readTree("""
+                    [{"nodeId":"check","assertionType":"jsonpath","outcome":"PASS"}]
+                    """));
+            assertThat(terminal.path("omittedAssertionCount").asInt(-1)).isZero();
             assertThat(terminal.path("cleanupConfirmed").asBoolean()).isTrue();
             assertThat(session.requests).hasValue(1);
             var report = session.artifact(prepared, "report");
@@ -189,6 +193,73 @@ class McpExecutionTest {
             assertThat(session.start(prepared).path("structuredContent").path("code").asText())
                     .isEqualTo("UNKNOWN_PREPARATION");
             assertThat(session.requests).hasValue(1);
+        }
+    }
+
+    @Test
+    void largeAssertionInventoryKeepsVerdictAndReportsOmissionsInBothViews() throws Exception {
+        int count = 180;
+        var scenario = new StringBuilder(McpFixtures.SCENARIO).append("assertions:\n");
+        for (int index = 0; index < count; index++) {
+            scenario.append("""
+                      - id: check-%d-%s
+                        assertionType: status
+                        targetStep: read
+                        params: {expected: 200}
+                    """.formatted(index, "x".repeat(230)));
+        }
+        try (var session = new Session()) {
+            JsonNode prepared = session.prepare(scenario.toString());
+            assertThat(session.start(prepared).path("isError").asBoolean()).isFalse();
+            JsonNode terminal = session.finished(prepared);
+            assertThat(terminal.path("status").asText()).isEqualTo("PASSED");
+            assertThat(terminal.path("assertionOutcomes").path("PASS").asInt()).isEqualTo(count);
+            int omitted = terminal.path("omittedAssertionCount").asInt();
+            assertThat(omitted).isPositive();
+            assertThat(terminal.path("assertions").size() + omitted).isEqualTo(count);
+            var report = session.artifact(prepared, "report");
+            assertThat(report.path("isError").asBoolean()).isFalse();
+            assertThat(report.path("structuredContent").path("bytes").asInt()).isLessThanOrEqualTo(65_536);
+            assertThat(McpJson.MAPPER.readTree(report.path("structuredContent").path("text").asText()))
+                    .isEqualTo(terminal);
+        }
+    }
+
+    @Test
+    void eventuallyKeepsEachConditionEvenWhenItsNodeIdAndTypeRepeat() throws Exception {
+        try (var session = new Session()) {
+            JsonNode prepared = session.prepare("""
+                    apiVersion: faultora.dev/v1
+                    kind: Scenario
+                    metadata: {name: synthetic}
+                    execute:
+                      - id: readiness
+                        type: eventually
+                        timeout: 2s
+                        interval: 100ms
+                        steps:
+                          - id: read
+                            type: operation
+                            operationId: read
+                        until:
+                          - assertionType: status
+                            params: {expected: 200}
+                          - assertionType: jsonpath
+                            params: {path: value, equals: SYNTHETIC_PRIVATE_VALUE}
+                          - assertionType: status
+                            params: {expected: 200}
+                    """);
+            assertThat(session.start(prepared).path("isError").asBoolean()).isFalse();
+            JsonNode terminal = session.finished(prepared);
+            assertThat(terminal.path("status").asText()).isEqualTo("PASSED");
+            assertThat(terminal.path("assertions")).isEqualTo(McpJson.MAPPER.readTree("""
+                    [
+                      {"nodeId":"readiness","assertionType":"status","outcome":"PASS"},
+                      {"nodeId":"readiness","assertionType":"jsonpath","outcome":"PASS"},
+                      {"nodeId":"readiness","assertionType":"status","outcome":"PASS"}
+                    ]
+                    """));
+            assertThat(terminal.toString()).doesNotContain(McpFixtures.MARKER);
         }
     }
 

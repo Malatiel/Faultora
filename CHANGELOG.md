@@ -6,6 +6,11 @@ All notable changes to Faultora are documented in this file.
 
 ### Added
 
+- **Readable MCP run results and preparation refusals.** Terminal status and
+  reports identify evaluated assertions by node, type and outcome. Capability
+  and catalog tools expose operator permissions. Preparation diagnostics
+  identify the field or section to fix with a stable code and path.
+
 - **Guidance for contributors and support requests.** Source-build and
   focused-test instructions, community conduct and version/support policies,
   and issue and pull request templates explain how to contribute and share

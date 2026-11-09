@@ -117,23 +117,33 @@ class RunPreparationTest {
         var result = prepare(scenario, null);
         var preview = PlanPreview.describe(result, RuntimeCapabilities.describe(EXTENSIONS, POLICY, Set.of()), POLICY);
         assertThat(preview.compiled()).isFalse();
-        assertThat(preview.diagnostics()).anyMatch(diagnostic -> diagnostic.severity().equals("ERROR"));
+        assertThat(preview.diagnostics()).singleElement().satisfies(diagnostic -> {
+            assertThat(diagnostic.severity()).isEqualTo("ERROR");
+            assertThat(diagnostic.code()).isEqualTo("SCENARIO_INVALID");
+            assertThat(diagnostic.path()).isEqualTo("timeout");
+        });
         assertThat(preview.actions()).isEmpty();
         assertThat(new ObjectMapper().writeValueAsString(preview)).doesNotContain("SYNTHETIC_PRIVATE_DURATION");
     }
 
     @Test
-    void aFaultOutsidePolicyCannotBePreviewedAsCompiled() {
+    void aFaultOutsidePolicyHasAStructuralPathAndKeepsTheLocalNodeId() {
         var result = prepare(SCENARIO + """
                 faults:
-                  - id: reset
+                  - id: SYNTHETIC_PRIVATE_FAULT_ID
                     faultType: network-reset
                     duration: 1s
                 """, null);
         assertThat(result.isSuccess()).isFalse();
         var preview = PlanPreview.describe(result, RuntimeCapabilities.describe(EXTENSIONS, POLICY, Set.of()), POLICY);
         assertThat(preview.compiled()).isFalse();
-        assertThat(preview.diagnostics()).anyMatch(diagnostic -> "faults".equals(diagnostic.phase()));
+        assertThat(preview.diagnostics()).anySatisfy(diagnostic -> {
+            assertThat(diagnostic.phase()).isEqualTo("faults");
+            assertThat(diagnostic.code()).isEqualTo("PLAN_COMPILATION_REFUSED");
+            assertThat(diagnostic.path()).isEqualTo("faults[0]");
+            assertThat(diagnostic.nodeId()).isEqualTo("SYNTHETIC_PRIVATE_FAULT_ID");
+        });
+        assertThat(preview.catalog()).isNotNull();
     }
 
     @Test

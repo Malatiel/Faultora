@@ -41,6 +41,9 @@ public class ScenarioValidator {
         if (document.execute() == null || document.execute().isEmpty()) {
             diagnostics.add(Diagnostic.error("execute", "Execute section must not be empty"));
         }
+        if (document.inputs() != null && document.inputs().values().stream().anyMatch(value -> value == null)) {
+            diagnostics.add(Diagnostic.error("inputs", "Input declarations must be objects"));
+        }
 
         // Validate step references in dependsOn
         validateDependsOn(document.setup(), stepIds, "setup", diagnostics);
@@ -69,27 +72,29 @@ public class ScenarioValidator {
     private void validateScenarioStepIds(List<ScenarioStep> steps, String section,
                                           Set<String> allIds, List<Diagnostic> diagnostics) {
         if (steps == null) return;
-        for (ScenarioStep step : steps) {
-            if (step.id() == null || step.id().isBlank()) {
-                diagnostics.add(Diagnostic.error(section, "Step must have a non-empty id"));
-            } else if (!allIds.add(step.id())) {
-                diagnostics.add(Diagnostic.error(section + "." + step.id(),
-                        "Duplicate step id: " + step.id()));
+        for (int index = 0; index < steps.size(); index++) {
+            ScenarioStep step = steps.get(index);
+            String path = indexed(section, index);
+            if (step == null) {
+                diagnostics.add(Diagnostic.error(path, "Step must be an object"));
+                continue;
             }
+            validateId(step.id(), path, "Step", allIds, diagnostics);
             // Children of parallel groups share the global step-ID namespace.
-            validateScenarioStepIds(step.steps(), section, allIds, diagnostics);
+            validateScenarioStepIds(step.steps(), path + ".steps", allIds, diagnostics);
         }
     }
 
     private void validateFaultStepIds(List<FaultStep> steps, String section,
                                        Set<String> allIds, List<Diagnostic> diagnostics) {
         if (steps == null) return;
-        for (FaultStep step : steps) {
-            if (step.id() == null || step.id().isBlank()) {
-                diagnostics.add(Diagnostic.error(section, "Fault step must have a non-empty id"));
-            } else if (!allIds.add(step.id())) {
-                diagnostics.add(Diagnostic.error(section + "." + step.id(),
-                        "Duplicate step id: " + step.id()));
+        for (int index = 0; index < steps.size(); index++) {
+            FaultStep step = steps.get(index);
+            String path = indexed(section, index);
+            if (step == null) {
+                diagnostics.add(Diagnostic.error(path, "Fault step must be an object"));
+            } else {
+                validateId(step.id(), path, "Fault step", allIds, diagnostics);
             }
         }
     }
@@ -97,27 +102,34 @@ public class ScenarioValidator {
     private void validateAssertionStepIds(List<AssertionStep> steps, String section,
                                            Set<String> allIds, List<Diagnostic> diagnostics) {
         if (steps == null) return;
-        for (AssertionStep step : steps) {
-            if (step.id() == null || step.id().isBlank()) {
-                diagnostics.add(Diagnostic.error(section, "Assertion step must have a non-empty id"));
-            } else if (!allIds.add(step.id())) {
-                diagnostics.add(Diagnostic.error(section + "." + step.id(),
-                        "Duplicate step id: " + step.id()));
+        for (int index = 0; index < steps.size(); index++) {
+            AssertionStep step = steps.get(index);
+            String path = indexed(section, index);
+            if (step == null) {
+                diagnostics.add(Diagnostic.error(path, "Assertion step must be an object"));
+            } else {
+                validateId(step.id(), path, "Assertion step", allIds, diagnostics);
             }
+        }
+    }
+
+    private void validateId(String id, String path, String label,
+                            Set<String> allIds, List<Diagnostic> diagnostics) {
+        if (id == null || id.isBlank()) {
+            diagnostics.add(Diagnostic.error(path + ".id", label + " must have a non-empty id"));
+        } else if (!allIds.add(id)) {
+            diagnostics.add(Diagnostic.error(path + ".id", "Duplicate step id: " + id));
         }
     }
 
     private void validateDependsOn(List<ScenarioStep> steps, Set<String> allIds,
                                     String section, List<Diagnostic> diagnostics) {
         if (steps == null) return;
-        for (ScenarioStep step : steps) {
-            if (step.dependsOn() != null) {
-                for (String dep : step.dependsOn()) {
-                    if (!allIds.contains(dep)) {
-                        diagnostics.add(Diagnostic.error(section + "." + step.id() + ".dependsOn",
-                                "References unknown step: " + dep));
-                    }
-                }
+        for (int index = 0; index < steps.size(); index++) {
+            ScenarioStep step = steps.get(index);
+            if (step != null) {
+                validateReferences(step.dependsOn(), allIds,
+                        indexed(section, index) + ".dependsOn", diagnostics);
             }
         }
     }
@@ -125,22 +137,27 @@ public class ScenarioValidator {
     private void validateFaultReferences(
             List<FaultStep> steps, Set<String> allIds, List<Diagnostic> diagnostics) {
         if (steps == null) return;
-        for (FaultStep step : steps) {
-            validateReferences(step.dependsOn(), allIds,
-                    "faults." + step.id() + ".dependsOn", diagnostics);
+        for (int index = 0; index < steps.size(); index++) {
+            FaultStep step = steps.get(index);
+            if (step != null) {
+                validateReferences(step.dependsOn(), allIds,
+                        indexed("faults", index) + ".dependsOn", diagnostics);
+            }
         }
     }
 
     private void validateAssertionReferences(
             List<AssertionStep> steps, Set<String> allIds, List<Diagnostic> diagnostics) {
         if (steps == null) return;
-        for (AssertionStep step : steps) {
-            validateReferences(step.dependsOn(), allIds,
-                    "assertions." + step.id() + ".dependsOn", diagnostics);
+        for (int index = 0; index < steps.size(); index++) {
+            AssertionStep step = steps.get(index);
+            if (step == null) continue;
+            String path = indexed("assertions", index);
+            validateReferences(step.dependsOn(), allIds, path + ".dependsOn", diagnostics);
             if (step.targetStep() != null && !step.targetStep().isBlank()
                     && !allIds.contains(step.targetStep())) {
                 diagnostics.add(Diagnostic.error(
-                        "assertions." + step.id() + ".targetStep",
+                        path + ".targetStep",
                         "References unknown step: " + step.targetStep()));
             }
         }
@@ -153,9 +170,10 @@ public class ScenarioValidator {
             List<Diagnostic> diagnostics
     ) {
         if (references == null) return;
-        for (String reference : references) {
+        for (int index = 0; index < references.size(); index++) {
+            String reference = references.get(index);
             if (!allIds.contains(reference)) {
-                diagnostics.add(Diagnostic.error(path, "References unknown step: " + reference));
+                diagnostics.add(Diagnostic.error(indexed(path, index), "References unknown step: " + reference));
             }
         }
     }
@@ -163,9 +181,11 @@ public class ScenarioValidator {
     private void validateSteps(
             List<ScenarioStep> steps, String section, List<Diagnostic> diagnostics) {
         if (steps == null) return;
-        for (ScenarioStep step : steps) {
+        for (int index = 0; index < steps.size(); index++) {
+            ScenarioStep step = steps.get(index);
+            if (step == null) continue;
             String type = step.type() == null ? "operation" : step.type();
-            String path = section + "." + step.id();
+            String path = indexed(section, index);
             if (!"operation".equals(type) && !"wait".equals(type)
                     && !GROUP_TYPES.contains(type)) {
                 diagnostics.add(Diagnostic.error(path + ".type",
@@ -214,18 +234,20 @@ public class ScenarioValidator {
 
     private void validateOutputBindings(ScenarioDocument document, List<Diagnostic> diagnostics) {
         Set<String> names = new HashSet<>();
-        validateOutputBindings(document.setup(), "setup", names, diagnostics);
-        validateOutputBindings(document.execute(), "execute", names, diagnostics);
-        validateOutputBindings(document.cleanup(), "cleanup", names, diagnostics);
+        validateOutputBindings(document.setup(), "setup", false, names, diagnostics);
+        validateOutputBindings(document.execute(), "execute", false, names, diagnostics);
+        validateOutputBindings(document.cleanup(), "cleanup", true, names, diagnostics);
     }
 
-    private void validateOutputBindings(List<ScenarioStep> steps, String section,
+    private void validateOutputBindings(List<ScenarioStep> steps, String section, boolean cleanup,
                                          Set<String> names, List<Diagnostic> diagnostics) {
         if (steps == null) return;
-        for (ScenarioStep step : steps) {
+        for (int index = 0; index < steps.size(); index++) {
+            ScenarioStep step = steps.get(index);
+            if (step == null) continue;
             String outputAs = step.outputAs();
             if (outputAs == null || outputAs.isBlank()) continue;
-            String path = section + "." + step.id() + ".outputAs";
+            String path = indexed(section, index) + ".outputAs";
             if (!OUTPUT_NAME.matcher(outputAs).matches()) {
                 diagnostics.add(Diagnostic.error(path,
                         "Output name must match [A-Za-z_][A-Za-z0-9_-]*: " + outputAs));
@@ -233,20 +255,26 @@ public class ScenarioValidator {
                 diagnostics.add(Diagnostic.error(path,
                         "Duplicate output name: " + outputAs));
             }
-            if ("cleanup".equals(section)) {
+            if (cleanup) {
                 diagnostics.add(Diagnostic.warning(path,
                         "outputAs on a cleanup step has no consumers"));
             }
         }
-        for (ScenarioStep step : steps) {
-            validateOutputBindings(step.steps(), section, names, diagnostics);
+        for (int index = 0; index < steps.size(); index++) {
+            ScenarioStep step = steps.get(index);
+            if (step != null) {
+                validateOutputBindings(step.steps(), indexed(section, index) + ".steps", cleanup,
+                        names, diagnostics);
+            }
         }
     }
 
     private void validateFaultSteps(List<FaultStep> steps, List<Diagnostic> diagnostics) {
         if (steps == null) return;
-        for (FaultStep step : steps) {
-            String path = "faults." + step.id();
+        for (int index = 0; index < steps.size(); index++) {
+            FaultStep step = steps.get(index);
+            if (step == null) continue;
+            String path = indexed("faults", index);
             if (step.faultType() == null || step.faultType().isBlank()) {
                 diagnostics.add(Diagnostic.error(path + ".faultType",
                         "Fault step requires a faultType"));
@@ -302,8 +330,8 @@ public class ScenarioValidator {
                     "Parallel step requires at least one child step"));
             return;
         }
-        for (ScenarioStep child : step.steps()) {
-            validateGroupChild(child, path, "Parallel",
+        for (int index = 0; index < step.steps().size(); index++) {
+            validateGroupChild(step.steps().get(index), indexed(path + ".steps", index), "Parallel",
                     "Parallel children start together and cannot declare dependsOn",
                     diagnostics);
         }
@@ -345,8 +373,8 @@ public class ScenarioValidator {
                     "Repeat step requires at least one child step"));
             return;
         }
-        for (ScenarioStep child : step.steps()) {
-            validateGroupChild(child, path, "Repeat",
+        for (int index = 0; index < step.steps().size(); index++) {
+            validateGroupChild(step.steps().get(index), indexed(path + ".steps", index), "Repeat",
                     "Repeat children run in declaration order and cannot declare dependsOn",
                     diagnostics);
         }
@@ -375,7 +403,9 @@ public class ScenarioValidator {
         } else {
             for (int i = 0; i < step.until().size(); i++) {
                 ScenarioStep.Condition condition = step.until().get(i);
-                if (condition.assertionType() == null || condition.assertionType().isBlank()) {
+                if (condition == null) {
+                    diagnostics.add(Diagnostic.error(indexed(path + ".until", i), "Until condition must be an object"));
+                } else if (condition.assertionType() == null || condition.assertionType().isBlank()) {
                     diagnostics.add(Diagnostic.error(path + ".until[" + i + "].assertionType",
                             "Until condition requires an assertionType"));
                 }
@@ -387,24 +417,26 @@ public class ScenarioValidator {
             return;
         }
         ScenarioStep child = step.steps().get(0);
-        validateGroupChild(child, path, "Eventually",
+        if (child == null) return;
+        String childPath = indexed(path + ".steps", 0);
+        validateGroupChild(child, childPath, "Eventually",
                 "The polled step cannot declare dependsOn", diagnostics);
         if (child.retry() != null) {
-            diagnostics.add(Diagnostic.error(path + "." + child.id() + ".retry",
+            diagnostics.add(Diagnostic.error(childPath + ".retry",
                     "The polled step cannot retry: the eventually budget already "
                             + "governs repeated attempts"));
         }
         if (child.expectError()) {
-            diagnostics.add(Diagnostic.error(path + "." + child.id() + ".expectError",
+            diagnostics.add(Diagnostic.error(childPath + ".expectError",
                     "The polled step cannot declare expectError: a failed poll is "
                             + "simply an unsatisfied condition"));
         }
     }
 
     private void validateGroupChild(
-            ScenarioStep child, String path, String groupLabel,
+            ScenarioStep child, String childPath, String groupLabel,
             String dependsOnMessage, List<Diagnostic> diagnostics) {
-        String childPath = path + "." + child.id();
+        if (child == null) return;
         String childType = child.type() == null ? "operation" : child.type();
         if (!"operation".equals(childType)) {
             diagnostics.add(Diagnostic.error(childPath + ".type",
@@ -479,6 +511,10 @@ public class ScenarioValidator {
 
     private static String capitalize(String value) {
         return Character.toUpperCase(value.charAt(0)) + value.substring(1);
+    }
+
+    private static String indexed(String field, int index) {
+        return field + '[' + index + ']';
     }
 
     private boolean isPositiveDuration(String value) {

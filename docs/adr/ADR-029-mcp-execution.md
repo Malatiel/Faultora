@@ -75,6 +75,20 @@ Only an owned structural report is exportable by the fixed artifact ID report.
 Its byte limit, regular-file/no-redirection checks, owner marker and captured
 digest prevent altered local files from becoming an export channel. The journal
 stays local. This is a deliberately smaller export surface than CLI reporting.
+Terminal status and the owned report project evaluated assertions from the
+engine's events to node ID, assertion type and outcome. A byte-bounded prefix
+with an explicit omitted count preserves access to the terminal verdict and
+report for large runs. An eventually group's conditions share the group ID
+and retain declaration order. Identifiers are public scenario topology.
+Scenario author messages and provider prose stay behind the same structural
+export boundary for CLI and MCP. CLI retains its fixed verdict descriptions.
+
+The capability and catalog tools disclose the operator's permitted operation
+classes and fault types separately from runtime support. Catalog permission
+also reflects target policy. Preparation refusals expose fixed diagnostic
+codes and structural field paths, with section or root fallbacks. Paths
+exclude arbitrary map keys, scenario values and raw exception text.
+
 Evidence for assertions uses RunEvidence.defaultPolicy, keeping CLI semantics
 without promoting body/header values into reports. Secret resolution is unavailable
 in this profile. Existing preparation-only configurations still expose three tools.
