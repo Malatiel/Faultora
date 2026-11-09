@@ -95,14 +95,19 @@ All notable changes to Faultora are documented in this file.
   parse and validate without a warning.
 - The retry guidance said to pin an idempotency key in `with:`; it belongs in
   the step's `inputs`.
-- The scenario reference now says that an HTTP response of any status completes
-  an operation step — only a normalized error fails it — and that
-  `steps.<name>` names an `outputAs` binding, not a step `id`.
+- The scenario reference now says what fails an operation step: without
+  `expectError`, only a normalized error does, and a response the connector
+  accepts completes the step whatever its status; with `expectError`, such a
+  response fails it. It also says that `steps.<name>` names an `outputAs`
+  binding, not a step `id`.
 - `validate` printed `Steps:` for a number that counts top-level entries,
   assertions and faults included, but not the children of groups a report
   lists; it now says `Top-level entries:` and what it counts. The diagnostics
-  guide explains the preview's `deadlineMs` (`0` is no timeout of its own),
-  `maxAttempts` and `repetitions`.
+  guide explains, for each kind of preview action, what `deadlineMs` (`0` on an
+  operation is no timeout of its own), `maxAttempts` and `repetitions` mean.
+- The README's console examples showed assertion messages and details that
+  Faultora does not print; they now show the fixed verdict text it does, and
+  say why.
 
 ### Security
 

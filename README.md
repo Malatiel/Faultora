@@ -344,16 +344,21 @@ java -jar faultora-cli/target/faultora-0.11.3.jar \
   [PASSED] race (167ms)
   [PASSED] list-payments (164ms)
   [PASSED] first-client-got-a-payment (0ms)
-         Assertion: PASS — Path 'id' exists: true
+         Assertion: PASS — Assertion passed
   [PASSED] second-client-got-a-payment (0ms)
-         Assertion: PASS — Path 'id' exists: true
+         Assertion: PASS — Assertion passed
   [PASSED] exactly-one-payment (0ms)
-         Assertion: PASS — Path '@' has 1 elements
+         Assertion: PASS — Assertion passed
 
 --- Faults ---
   [http-latency] target * — active 10003ms, rollback: run-end
          During fault: first-client, second-client, list-payments
 ```
+
+An assertion's verdict line is fixed text. Reports, journals and diagnostics
+carry its outcome, not the values it compared — those can quote what the
+target returned — and not the `message` written in the scenario; the node ID
+says which assertion it was, and the scenario says what it checks.
 
 The same scenario detects the classic check-then-act idempotency bug: the
 end-to-end suite runs it against a deliberately broken variant of the example
@@ -396,8 +401,8 @@ duration:
   [PASSED] create-payment (47ms)
   [PASSED] poll-payment (444ms)
   [PASSED] settlement-visible (444ms) — 3 polls
-         Assertion: PASS — Status 200 matches expected 200
-         Assertion: PASS — Path 'status' equals 'settled'
+         Assertion: PASS — Assertion passed
+         Assertion: PASS — Assertion passed
 ```
 
 When the conditions never hold, the block fails with the budget it spent and
@@ -488,14 +493,14 @@ once:
   [PASSED] send-command-again (5ms) — published to payment-commands at 0:1
   [PASSED] poll-events (1080ms) — observed 1 of 1 on payment-events
   [PASSED] settlement-appears (1080ms) — 1 poll
-         Assertion: PASS — Observed 1 message
+         Assertion: PASS — Assertion passed
   [PASSED] read-settlements (2075ms) — observed 1 of 1 on payment-events
   [PASSED] one-effect-per-command (0ms)
-         Assertion: PASS — Observed 1 message
+         Assertion: PASS — Assertion passed
   [PASSED] no-payment-settled-twice (4ms)
-         Assertion: PASS — 1 message with distinct payload:paymentId
+         Assertion: PASS — Assertion passed
   [PASSED] correlation-survives-the-hop (3ms)
-         Assertion: PASS — 1 message carries header:correlation-id 'pay-77001'
+         Assertion: PASS — Assertion passed
 ```
 
 Against a consumer that is not idempotent, the same scenario says so:
@@ -503,10 +508,9 @@ Against a consumer that is not idempotent, the same scenario says so:
 ```text
   [PASSED] read-settlements (2058ms) — observed 2 of 2 on payment-events
   [FAILED] one-effect-per-command (3ms)
-         Assertion: FAIL — Expected exactly 1 message, observed 2
+         Assertion: FAIL — Assertion failed
   [FAILED] no-payment-settled-twice (3ms)
-         Assertion: FAIL — Two messages carry the same payload:paymentId
-                    'pay-77002': offsets 0 and 1
+         Assertion: FAIL — Assertion failed
 ```
 
 The worker both variants run against lives in
@@ -638,11 +642,11 @@ reports in one run:
 --- Nodes ---
   [PASSED] create-payment (48ms)
   [PASSED] create-status (2ms)
-         Assertion: PASS — Status 201 matches expected 201
+         Assertion: PASS — Assertion passed
   [PASSED] response-has-id (23ms)
-         Assertion: PASS — Path 'id' exists: true
+         Assertion: PASS — Assertion passed
   [PASSED] response-matches-its-contract (1ms)
-         Assertion: PASS — Response matches its declared schema
+         Assertion: PASS — Assertion passed
   [PASSED] list-payments (2ms)
 
 Result: PASSED — 5 nodes, 3 passed assertions, 0 failed assertions (98ms)

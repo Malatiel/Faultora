@@ -82,11 +82,15 @@ Without the global flag, `test --preview` retains its original direct JSON form.
 
 Each entry in the preview's `actions` is one node of the compiled plan, group
 children included, so a preview usually lists more entries than `validate`
-counts top-level entries. `deadlineMs` is the node's own `timeout`; `0` means
-it has none of its own and runs within the deadline of its group, the
-scenario (`budgets.scenarioTimeoutMs`) and the run's duration budget. `maxAttempts` counts the first attempt,
-so `1` means no retry, and `repetitions` is the iteration count of a `repeat`
-group.
+counts top-level entries. What the numbers mean depends on `kind`:
+
+| `kind` | `deadlineMs` | `maxAttempts` | `repetitions` |
+|---|---|---|---|
+| `operation`, `cleanup` | The step's own `timeout`; `0` when it has none and runs within its group's, the scenario's (`budgets.scenarioTimeoutMs`) and the run's duration budget | Attempts including the first: `1` is no retry | `1`, or the iterations of the `repeat` or the `maxPolls` of the `eventually` it belongs to |
+| `parallel`, `repeat` | The group's `timeout`, `0` when none | `0` | `1`, or the iteration count of a `repeat` |
+| `eventually` | The polling `timeout` | `0` | `maxPolls` |
+| `wait` | How long it waits | `0` | `1` |
+| `assertion`, `fault-stop` | `0` | `0` | `1` |
 
 This is a terminal diagnostic result, not a streaming status protocol or the
 complete command data model. For example, `discover` reports successful catalog

@@ -199,13 +199,17 @@ Operation steps may appear in `setup`, `execute`, and `cleanup`.
 | `expectError` | no | When `true`, the step passes only if the operation fails with a normalized error, and its dependents still run. Use for requests executed under an injected fault. If the operation succeeds instead, the step fails with `EXPECTED_ERROR`. |
 | `metadata` | no | Arbitrary step metadata. |
 
-**A response is a result, not a failure.** An operation step fails only when
-the operation cannot complete: a timeout, a refused connection or destination,
-an exhausted budget, or an injected fault — a normalized error. An HTTP
-response of any status, `409` or `500` included, completes the step: its
-dependents run, and what the status should have been is checked with a
-[`status` assertion](#status). That is what lets a scenario send a request
-that is supposed to be refused and then check the refusal.
+**A response is a result, not a failure.** An ordinary operation step — one
+without `expectError` — fails only when the operation ends in a normalized
+error: a timeout, a refused connection or destination, an exhausted budget, an
+injected fault, or a response the connector itself refuses, such as a redirect
+its policy does not follow or a body over the size limit. A response the
+connector accepts completes the step whatever its HTTP status, `409` or `500`
+included: its dependents run, and what the status should have been is checked
+with a [`status` assertion](#status). That is what lets a scenario send a
+request that is supposed to be refused and then check the refusal. A step
+with `expectError: true` is the reverse: an accepted response of any status
+fails it with `EXPECTED_ERROR`.
 
 Operation timeout examples:
 
