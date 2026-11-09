@@ -4,6 +4,14 @@ All notable changes to Faultora are documented in this file.
 
 ## Unreleased
 
+### Added
+
+- **Using Faultora with an AI assistant**, `docs/AI_ASSISTANTS.md`: generating
+  the approval key, an operator configuration, connecting Claude Code, the
+  Codex CLI or another MCP client, the approval loop, how to read
+  per-assertion results, the mistakes an assistant made in a trial, and a
+  brief to hand it. The README and the MCP reference point to it.
+
 ### Changed
 
 - **The README starts with the first ten minutes.** Right after what Faultora

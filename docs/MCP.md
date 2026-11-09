@@ -1,5 +1,9 @@
 # Prepare and execute over MCP stdio
 
+This is the reference for every tool, field and limit. To connect an assistant
+and get to a first approved run, start with
+[using Faultora with an AI assistant](AI_ASSISTANTS.md).
+
 Start the packaged CLI as a subprocess:
 
 ```sh

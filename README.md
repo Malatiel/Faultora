@@ -128,6 +128,11 @@ race; the [examples guide](examples/README.md) shows retries, eventual
 consistency, events and faults the same way, and the
 [scenario reference](docs/SCENARIO_REFERENCE.md) lists every field.
 
+**Or let an AI assistant do it.** Faultora's MCP server lets an assistant
+inspect your description, write and prepare scenarios, and run them once you
+sign an approval; [using Faultora with an AI assistant](docs/AI_ASSISTANTS.md)
+shows how to connect one.
+
 ## What 0.12.0 includes
 
 In short: OpenAPI, AsyncAPI and read-only database catalogs; HTTP and Kafka
