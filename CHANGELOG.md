@@ -96,6 +96,26 @@ All notable changes to Faultora are documented in this file.
 
 - The Kubernetes example named runner image 0.9.0; it now names the release
   version and is held to it with the other version mentions.
+- The scenario reference said `apiVersion` must be `faultora.dev/v1alpha1`,
+  while `init`, the examples and the frozen format use `faultora.dev/v1`; the
+  architecture guide's example used the preview version too and had an empty
+  `execute`. Every complete scenario the documentation shows is now checked to
+  parse and validate without a warning.
+- The retry guidance said to pin an idempotency key in `with:`; it belongs in
+  the step's `inputs`.
+- The scenario reference now says what fails an operation step: without
+  `expectError`, only a normalized error does, and a response the connector
+  accepts completes the step whatever its status; with `expectError`, such a
+  response fails it. It also says that `steps.<name>` names an `outputAs`
+  binding, not a step `id`.
+- `validate` printed `Steps:` for a number that counts top-level entries,
+  assertions and faults included, but not the children of groups a report
+  lists; it now says `Top-level entries:` and what it counts. The diagnostics
+  guide explains, for each kind of preview action, what `deadlineMs` (`0` on an
+  operation is no timeout of its own), `maxAttempts` and `repetitions` mean.
+- The README's console examples showed assertion messages and details that
+  Faultora does not print; they now show the fixed verdict text it does, and
+  say why.
 
 ### Security
 

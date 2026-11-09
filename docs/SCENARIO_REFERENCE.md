@@ -118,7 +118,7 @@ java -jar faultora-0.11.3.jar validate --scenario scenario.yaml \
 
 | Field | Required | Description |
 |---|---:|---|
-| `apiVersion` | yes | Must be `faultora.dev/v1alpha1`. |
+| `apiVersion` | yes | `faultora.dev/v1`. The preview `faultora.dev/v1alpha1` is still read, with a deprecation warning; see the table above. |
 | `kind` | yes | Must be `Scenario`. |
 | `metadata` | yes | Scenario identity and descriptive metadata. |
 | `timeout` | no | Scenario deadline. Once it elapses no further step starts, cleanup still runs, and the run fails with `SCENARIO_DEADLINE_EXCEEDED`. |
@@ -199,6 +199,18 @@ Operation steps may appear in `setup`, `execute`, and `cleanup`.
 | `expectError` | no | When `true`, the step passes only if the operation fails with a normalized error, and its dependents still run. Use for requests executed under an injected fault. If the operation succeeds instead, the step fails with `EXPECTED_ERROR`. |
 | `metadata` | no | Arbitrary step metadata. |
 
+**A response is a result, not a failure.** An ordinary operation step — one
+without `expectError` — fails only when the operation ends in a normalized
+error: a timeout, a refused connection or destination, an exhausted budget, an
+injected fault, or a response the connector itself refuses, such as a redirect
+its policy does not follow or a body over the size limit. A response the
+connector accepts completes the step whatever its HTTP status, `409` or `500`
+included: its dependents run, and what the status should have been is checked
+with a [`status` assertion](#status). That is what lets a scenario send a
+request that is supposed to be refused and then check the refusal. A step
+with `expectError: true` is the reverse: an accepted response of any status
+fails it with `EXPECTED_ERROR`.
+
 Operation timeout examples:
 
 ```yaml
@@ -241,8 +253,10 @@ including inside nested maps and lists (`body`, `headers`). A value that is a
 single template keeps its original type; mixed strings interpolate.
 
 A path addresses an object by key and a list by position, so
-`{{steps.read.protocol.messages.0.payload.paymentId}}` reads the first message a
-step observed. A quoted segment is always a key: `"0"` never indexes.
+`{{steps.read.protocol.messages.0.payload.paymentId}}` reads the first message
+observed by the step bound with `outputAs: read`. `steps.<name>` always names
+an `outputAs` binding, never a step `id`; the two are often given the same
+word, which is why examples can look as if they used the id. A quoted segment is always a key: `"0"` never indexes.
 
 An expression goes to [JMESPath](https://jmespath.org/) only when it begins with
 a function call, such as `{{length(steps.read.protocol.messages)}}`. JMESPath's
@@ -567,9 +581,9 @@ you can write.
 
 What follows from that:
 
-- send an idempotency key when the operation supports one, and pin it in
-  `with:` rather than generating it per attempt, so every attempt carries the
-  same key;
+- send an idempotency key when the operation supports one, and pin it in the
+  step's `inputs` rather than generating it per attempt, so every attempt
+  carries the same key;
 - when the operation has no such key, expect duplicates and assert on them,
   rather than assuming the retry was free;
 - read the `OPERATION_RETRIED` events in a failing run before concluding the

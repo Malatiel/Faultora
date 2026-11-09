@@ -171,7 +171,7 @@ model treats it as versioned structured data.
 A scenario has six lifecycle sections:
 
 ```yaml
-apiVersion: faultora.dev/v1alpha1
+apiVersion: faultora.dev/v1
 kind: Scenario
 
 metadata:
@@ -179,7 +179,9 @@ metadata:
 
 inputs: {}
 setup: []
-execute: []
+execute:              # the only section that must not be empty
+  - id: create-payment
+    operationId: create-payment
 faults: []
 assertions: []
 cleanup: []
