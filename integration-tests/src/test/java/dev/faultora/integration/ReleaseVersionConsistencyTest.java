@@ -40,14 +40,16 @@ class ReleaseVersionConsistencyTest {
             Pattern.compile("## What " + SEMVER + " includes"),
             Pattern.compile("implemented by Faultora " + SEMVER),
             Pattern.compile("available in " + SEMVER + "\\."),
-            Pattern.compile("Reserved; " + SEMVER + " reports"),
-            Pattern.compile("## 2\\. Where " + SEMVER + " stands"));
+            Pattern.compile("## 2\\. Where " + SEMVER + " stands"),
+            // Prose wraps: a line break between the words must not hide a mention.
+            Pattern.compile("in\\s+the\\s+" + SEMVER + "\\s+release"),
+            Pattern.compile("technical\\s+preview\\s+\\(" + SEMVER + "\\)"));
 
     private static final List<String> FILES = List.of(
             "README.md", "examples/README.md", "examples/catalog-service/README.md", "docs/INSTALLATION.md", "Dockerfile", "deploy/docker-compose.yml", "deploy/offline-bundle.sh",
             "deploy/kubernetes/runner.yaml", "deploy/README.md",
             "docs/CLI_DIAGNOSTICS.md", "docs/MCP.md", "docs/RELEASE_PLAN.md",
-            "docs/SCENARIO_REFERENCE.md", "examples/github-actions/faultora.yml");
+            "docs/SCENARIO_REFERENCE.md", "docs/WHY.md", "examples/github-actions/faultora.yml");
 
     @Test
     void everyReleaseMentionNamesTheProjectVersion() throws IOException {

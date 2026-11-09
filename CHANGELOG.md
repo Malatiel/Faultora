@@ -2,7 +2,16 @@
 
 All notable changes to Faultora are documented in this file.
 
-## Unreleased
+## 0.12.0 — 2026-11-09
+
+Results an operator, a bug report and an AI assistant can act on: MCP names
+each assertion's outcome and the field a refused preparation got wrong,
+`faultora diagnose` writes a bundle to attach to a report, and logs can be
+JSON. A runner commits its evidence locally before sending it. The guides now
+say why Faultora exists and how to contribute, and the problems two
+cold-start trials met in them are fixed. No change to the scenario format or
+exit codes; machine diagnostics add an optional `detailCode` and index list
+paths, and text log lines change layout.
 
 ### Added
 
@@ -13,7 +22,6 @@ All notable changes to Faultora are documented in this file.
   or section to fix with a stable code and path. CLI scenario diagnostic paths
   now use array indexes. Unknown fields and invalid field types include a
   specific `detailCode` in JSON while retaining the broad scenario `code`.
-
 - **Guidance for contributors and support requests.** Source-build and
   focused-test instructions, community conduct and version/support policies,
   and issue and pull request templates explain how to contribute and share

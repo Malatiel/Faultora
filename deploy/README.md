@@ -124,8 +124,8 @@ the fingerprint and every listed file, the verification script included, with
 the system's own `sha256sum`:
 
 ```bash
-tar xzf faultora-0.11.3-offline.tar.gz
-cd faultora-0.11.3-offline
+tar xzf faultora-0.12.0-offline.tar.gz
+cd faultora-0.12.0-offline
 FINGERPRINT=the-recorded-64-hex-digits
 echo "${FINGERPRINT}  SHA256SUMS" | sha256sum -c - && sha256sum -c --quiet SHA256SUMS
 ```
