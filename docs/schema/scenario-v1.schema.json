@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Malatiel/Faultora/main/docs/schema/scenario-v1.schema.json",
+  "title": "Faultora scenario, faultora.dev/v1",
+  "description": "The shape of a faultora.dev/v1 scenario document, for editors and AI assistants. Faultora itself validates further: references between steps, operation IDs against the catalog, assertion parameters and execution policy. docs/SCENARIO_REFERENCE.md describes every field.",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "execute"],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {"const": "faultora.dev/v1"},
+    "kind": {"const": "Scenario"},
+    "metadata": {"$ref": "#/$defs/metadata"},
+    "inputs": {
+      "type": "object",
+      "description": "Runtime inputs by name.",
+      "additionalProperties": {"$ref": "#/$defs/inputDeclaration"}
+    },
+    "timeout": {"$ref": "#/$defs/duration"},
+    "setup": {"type": "array", "items": {"$ref": "#/$defs/step"}},
+    "execute": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/step"}},
+    "faults": {"type": "array", "items": {"$ref": "#/$defs/fault"}},
+    "assertions": {"type": "array", "items": {"$ref": "#/$defs/assertion"}},
+    "cleanup": {"type": "array", "items": {"$ref": "#/$defs/step"}}
+  },
+  "$defs": {
+    "duration": {
+      "description": "A whole number of milliseconds, optionally suffixed with ms, s or m.",
+      "oneOf": [
+        {"type": "string", "pattern": "^\\s*[0-9]+\\s*(ms|s|m|MS|S|M)?\\s*$"},
+        {"type": "integer", "minimum": 0}
+      ]
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "description": {"type": "string"},
+        "labels": {"type": "object", "additionalProperties": {"type": "string"}},
+        "annotations": {"type": "object", "additionalProperties": {"type": "string"}}
+      }
+    },
+    "inputDeclaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {"type": "string", "description": "string, number, boolean or object"},
+        "description": {"type": "string"},
+        "required": {"type": "boolean"},
+        "defaultValue": {}
+      }
+    },
+    "step": {
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "type": {"enum": ["operation", "wait", "parallel", "repeat", "eventually"]},
+        "operationId": {"type": "string", "description": "An operation of the catalog; required for an operation step."},
+        "inputs": {"type": "object", "description": "Path, query, header and body values; strings may contain {{expressions}}."},
+        "outputAs": {"type": "string", "description": "Name that later steps read as steps.<name>."},
+        "dependsOn": {"type": "array", "items": {"type": "string"}},
+        "timeout": {"$ref": "#/$defs/duration"},
+        "retry": {"$ref": "#/$defs/retry"},
+        "expectError": {"type": "boolean"},
+        "steps": {"type": "array", "items": {"$ref": "#/$defs/step"}, "description": "Children of a parallel, repeat or eventually group."},
+        "count": {"type": "integer", "minimum": 1, "description": "Iterations of a fixed repeat group."},
+        "forEach": {"type": "array", "description": "Items of a data-driven repeat group, one iteration each."},
+        "interval": {"$ref": "#/$defs/duration"},
+        "until": {"type": "array", "items": {"$ref": "#/$defs/condition"}, "description": "Conditions an eventually group polls for."},
+        "generate": {"$ref": "#/$defs/generate"},
+        "metadata": {"type": "object"}
+      }
+    },
+    "retry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxAttempts": {"type": "integer", "minimum": 1, "maximum": 10},
+        "backoffMs": {"type": "integer", "minimum": 0},
+        "backoffMultiplier": {"type": "number", "minimum": 1},
+        "maxBackoffMs": {"type": "integer", "minimum": 0}
+      }
+    },
+    "generate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fields": {"type": "array", "items": {"type": "string"}},
+        "strategy": {"enum": ["valid", "boundary", "invalid"]},
+        "preferExamples": {"type": "boolean"}
+      }
+    },
+    "condition": {
+      "type": "object",
+      "required": ["assertionType"],
+      "additionalProperties": false,
+      "properties": {
+        "assertionType": {"type": "string"},
+        "params": {"type": "object"},
+        "message": {"type": "string"}
+      }
+    },
+    "fault": {
+      "type": "object",
+      "required": ["id", "faultType"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "faultType": {"type": "string", "description": "For example http-latency, http-error, http-response-loss, or a network fault through Toxiproxy."},
+        "targetScope": {"type": "string"},
+        "params": {"type": "object"},
+        "duration": {"$ref": "#/$defs/duration"},
+        "dependsOn": {"type": "array", "items": {"type": "string"}},
+        "metadata": {"type": "object"}
+      }
+    },
+    "assertion": {
+      "type": "object",
+      "required": ["id", "assertionType"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "assertionType": {"type": "string", "description": "status, header, schema, jsonpath, duration, the event and row assertions, or an admitted extension's type."},
+        "targetStep": {"type": "string"},
+        "params": {"type": "object"},
+        "dependsOn": {"type": "array", "items": {"type": "string"}},
+        "message": {"type": "string", "description": "A note for readers of the scenario; reports do not show it."},
+        "metadata": {"type": "object"}
+      }
+    }
+  }
+}

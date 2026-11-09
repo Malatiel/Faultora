@@ -12,6 +12,20 @@ Faultora rejects unsupported versions, missing required fields, duplicate step
 IDs, unknown references, dependency cycles, and execution features that are not
 available in 0.12.0.
 
+A [JSON Schema](schema/scenario-v1.schema.json) of the format lets an editor
+or an AI assistant check a document's shape as it is written; it is also in
+the release archive under `docs/schema/`. With the YAML language server, for
+example in VS Code, start a scenario with
+
+```text
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Malatiel/Faultora/main/docs/schema/scenario-v1.schema.json
+```
+
+The schema checks fields and types only. `faultora validate` and
+`test --preview` remain the authority: they also check references between
+steps, operation IDs against your catalog, assertion parameters and the
+execution policy.
+
 ## Compatibility
 
 `faultora.dev/v1` is **frozen**. Within 1.x the only change permitted is an

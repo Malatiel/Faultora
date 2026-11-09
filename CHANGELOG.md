@@ -11,6 +11,12 @@ All notable changes to Faultora are documented in this file.
   Codex CLI or another MCP client, the approval loop, how to read
   per-assertion results, the mistakes an assistant made in a trial, and a
   brief to hand it. The README and the MCP reference point to it.
+- **A JSON Schema of `faultora.dev/v1`**, `docs/schema/scenario-v1.schema.json`,
+  also in the release archive, for editors and AI assistants to check a
+  scenario's fields and types as it is written. It is held to the same frozen
+  surface snapshot as the model, every bundled example satisfies it, and
+  documents Faultora refuses do not. `validate` remains the authority on
+  references, catalog operations and policy.
 
 ### Changed
 

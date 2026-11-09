@@ -223,6 +223,8 @@ class CliArchiveE2ETest {
         assertThat(home.resolve("THIRD-PARTY.txt")).isRegularFile();
         assertThat(home.resolve("README.md")).isRegularFile();
         assertThat(home.resolve("docs/INSTALLATION.md")).isRegularFile();
+        assertThat(home.resolve("docs/schema/scenario-v1.schema.json")).as("the scenario schema, usable offline")
+                .content().contains("\"faultora.dev/v1\"");
         checkLocalLinks(home);
         assertThat(Files.readString(home.resolve("bin/faultora")))
                 .startsWith("#!/bin/sh\n").contains("faultora-" + version + ".jar").doesNotContain("\r");

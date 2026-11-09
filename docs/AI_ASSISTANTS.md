@@ -158,6 +158,10 @@ a planted defect in an unfamiliar service through this server:
   `SCENARIO_UNKNOWN_FIELD`; change that field rather than guessing.
 - **Check `operatorPolicy` first.** `list_capabilities` says which operation
   classes and fault types this operator permits.
+- **Check the shape before preparing.** The trial assistant read the
+  documentation through a web fetch that paraphrased its YAML examples; the
+  [JSON Schema](schema/scenario-v1.schema.json) of the format gives exact
+  field names and types to check a draft against.
 - **Keep the YAML.** A scenario that ran over MCP runs the same way with
   `faultora test`, so it can join CI.
 
@@ -166,8 +170,8 @@ a planted defect in an unfamiliar service through this server:
 ```text
 Faultora is connected as the MCP server "faultora". Use it to check whether
 <service> keeps <promise>. Start with list_capabilities and describe_catalog.
-Write faultora.dev/v1 scenarios (reference: docs/SCENARIO_REFERENCE.md),
-prepare them with prepare_run, and when one compiles, stop and ask me to
+Write faultora.dev/v1 scenarios (reference: docs/SCENARIO_REFERENCE.md;
+shape: docs/schema/scenario-v1.schema.json), prepare them with prepare_run, and when one compiles, stop and ask me to
 approve it, giving preparedId, preparationDigest and runId. Name each
 assertion after the promise it checks. After the run, report which
 assertions failed and whether you trust the result.

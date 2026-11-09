@@ -48,6 +48,7 @@
             <includes>
                 <include>**/*.md</include>
                 <include>assets/**</include>
+                <include>schema/*.schema.json</include>
             </includes>
             <fileMode>0644</fileMode>
         </fileSet>
