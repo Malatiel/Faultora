@@ -103,7 +103,10 @@ public class ValidateCommand implements Command {
             output.out().println("Scenario is VALID: " + scenarioPath);
             output.out().println("  Name: " + doc.metadata().name());
             output.out().println("  Description: " + doc.metadata().description());
-            output.out().println("  Steps: " + countSteps(doc));
+            // A run report counts nodes, children of groups included, so a bare
+            // "Steps" here read as a number that did not match the report.
+            output.out().println("  Top-level entries: " + countSteps(doc)
+                    + " (steps, faults and assertions; children of groups are listed by test --preview)");
         } catch (IOException e) {
             output.error(CliDiagnostic.Code.FILE_READ_FAILED, null, null);
             output.err().println("Cannot read scenario file: " + e.getMessage());

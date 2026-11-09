@@ -130,6 +130,27 @@ class ValidateCommandTest {
     }
 
     @Test
+    void theCountSaysItCountsTopLevelEntriesNotTheNodesAReportShows() throws Exception {
+        Path scenario = write("scenario.yaml", """
+                apiVersion: faultora.dev/v1
+                kind: Scenario
+                metadata: {name: grouped}
+                execute:
+                  - id: both
+                    type: parallel
+                    steps:
+                      - {id: first, operationId: read}
+                      - {id: second, operationId: read}
+                """);
+
+        var validated = run("validate", "--scenario", scenario.toString());
+
+        assertThat(validated.exit()).isEqualTo(FaultoraCli.EXIT_PASS);
+        assertThat(validated.stdout()).contains("Top-level entries: 1 (", "children of groups")
+                .doesNotContain("Steps:");
+    }
+
+    @Test
     void anUnreadableCatalogIsAReadFailureNotAValidScenario() throws Exception {
         Path scenario = write("scenario.yaml", SCENARIO);
 
