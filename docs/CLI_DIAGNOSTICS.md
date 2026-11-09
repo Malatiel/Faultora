@@ -47,8 +47,9 @@ file returns 2 for `validate` and 3 for `test`, `discover`, and `init`.
 | `code` | Stable category; branch on this rather than hint text. |
 | `severity` | `ERROR`, `WARNING`, or `INFO`. Warnings alone do not change success. |
 | `node` | Public plan node ID, or null when unavailable. |
-| `path` | Document path or compilation phase, never an input filesystem path; null when unavailable. |
+| `path` | Document path or compilation phase, never an input filesystem path; null when unavailable. Scenario paths index lists, such as `execute[0].retry`. |
 | `hint` | Fixed guidance without interpolated values or provider exception text. |
+| `detailCode` | Optional refinement of a scenario `code`: `SCENARIO_UNKNOWN_FIELD` or `SCENARIO_TYPE_MISMATCH`. Absent otherwise; branch on `code` first. |
 
 Locations are limited to 256 characters and identifier/dot/bracket/hyphen
 syntax; other locations are null. Source text, input values, credential handles,
@@ -86,7 +87,8 @@ counts top-level entries. What the numbers mean depends on `kind`:
 
 | `kind` | `deadlineMs` | `maxAttempts` | `repetitions` |
 |---|---|---|---|
-| `operation`, `cleanup` | The step's own `timeout`; `0` when it has none and runs within its group's, the scenario's (`budgets.scenarioTimeoutMs`) and the run's duration budget | Attempts including the first: `1` is no retry | `1`, or the iterations of the `repeat` or the `maxPolls` of the `eventually` it belongs to |
+| `operation` | The step's own `timeout`; `0` when it has none and runs within its group's, the scenario's (`budgets.scenarioTimeoutMs`) and the run's duration budget | Attempts including the first: `1` is no retry | `1`, or the iterations of the `repeat` or the `maxPolls` of the `eventually` it belongs to |
+| `cleanup` | The step's own `timeout`; `0` when it has none. Cleanup runs after the scenario under its own shared cleanup budget, not the scenario's or the run's | `1` | `1` |
 | `parallel`, `repeat` | The group's `timeout`, `0` when none | `0` | `1`, or the iteration count of a `repeat` |
 | `eventually` | The polling `timeout` | `0` | `maxPolls` |
 | `wait` | How long it waits | `0` | `1` |
