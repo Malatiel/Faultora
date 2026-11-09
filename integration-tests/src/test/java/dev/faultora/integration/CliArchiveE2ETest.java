@@ -49,43 +49,77 @@ class CliArchiveE2ETest {
 
     /**
      * The README's first ten minutes, step by step, from the archive alone:
-     * the starter scenario {@code init} writes validates, previews and runs
-     * against a live service with the flags the README names.
+     * the launcher found on {@code PATH}, run from the user's own project
+     * directory with the README's relative paths, so the starter scenario
+     * {@code init} writes validates, previews and runs against a live service
+     * with the flags the README names — and nothing lands in the installation.
      */
     @Test
     void theReadmesFirstTenMinutesWorkFromTheArchive() throws Exception {
         Path home = unpack(windows() ? "zip" : "tar.gz");
-        List<String> launcher = windows()
-                ? List.of("cmd.exe", "/d", "/c", "call", home.resolve("bin/faultora.cmd").toString())
-                : List.of(home.resolve("bin/faultora").toString());
-        String openapi = home.resolve("examples/payment-service/openapi.yaml").toString();
+        Path project = Files.createDirectory(directory.resolve("my project " + PATH_LABEL));
+        Files.copy(home.resolve("examples/payment-service/openapi.yaml"), project.resolve("openapi.yaml"));
+        // A shell looks the command up on the PATH given here, as a user's terminal would.
+        List<String> faultora = windows() ? List.of("cmd.exe", "/d", "/c", "call", "faultora")
+                : List.of("/bin/sh", "-c", "faultora \"$@\"", "faultora");
 
-        Result init = launch(launcher, home, true, "init", "--from-openapi", openapi, "--output", "my-checks");
+        Result init = onPath(faultora, home, project, "init", "--from-openapi", "openapi.yaml", "--output", "my-checks");
         assertThat(init.code()).as(init.output()).isZero();
         assertThat(init.output()).contains("Generated scenario:", "Next:");
-        String scenario = home.resolve("my-checks/scenario.yaml").toString();
 
-        Result validated = launch(launcher, home, true, "validate", "--scenario", scenario, "--openapi", openapi);
+        Result validated = onPath(faultora, home, project,
+                "validate", "--scenario", "my-checks/scenario.yaml", "--openapi", "openapi.yaml");
         assertThat(validated.code()).as(validated.output()).isZero();
-        Result preview = launch(launcher, home, true, "test", "--preview", "--scenario", scenario,
-                "--openapi", openapi, "--target", "https://staging.example.com");
+        Result preview = onPath(faultora, home, project, "test", "--preview", "--scenario", "my-checks/scenario.yaml",
+                "--openapi", "openapi.yaml", "--target", "https://staging.example.com");
         assertThat(preview.code()).as(preview.output()).isZero();
         assertThat(preview.output()).contains("\"compiled\"");
 
         PaymentApi api = new PaymentApi();
         api.start();
         Result run;
+        Result again;
         try {
-            run = launch(launcher, home, true, "test", "--scenario", scenario, "--openapi", openapi,
+            List<String> arguments = List.of("test", "--scenario", "my-checks/scenario.yaml", "--openapi", "openapi.yaml",
                     "--target", api.baseUrl(), "--allow-private", "--format", "console,html", "--output", "results");
+            run = onPath(faultora, home, project, arguments.toArray(String[]::new));
+            again = onPath(faultora, home, project, arguments.toArray(String[]::new));
         } finally {
             api.stop();
         }
         assertThat(run.code()).as(run.output()).isZero();
-        try (Stream<Path> results = Files.walk(home.resolve("results"))) {
+        try (Stream<Path> results = Files.walk(project.resolve("results"))) {
             assertThat(results.map(path -> path.getFileName().toString()))
-                    .as("the README says results/ holds the HTML report and the journal")
+                    .as("the README says the output directory holds the HTML report and the journal")
                     .anyMatch(name -> name.endsWith(".html")).contains("events.ndjson");
+        }
+        assertThat(again.code()).as("the README: a reused --output directory is exit 3").isEqualTo(3);
+        assertThat(home.resolve("my-checks")).as("nothing is written into the installation").doesNotExist();
+        assertThat(home.resolve("results")).doesNotExist();
+    }
+
+    /** As the README sets it up: the archive's bin on PATH ahead of everything else, Java from JAVA_HOME. */
+    private Result onPath(List<String> prefix, Path home, Path work, String... args) throws Exception {
+        List<String> command = new ArrayList<>(prefix);
+        command.addAll(List.of(args));
+        Path log = Files.createTempFile(directory, "process-", ".log");
+        ProcessBuilder builder = new ProcessBuilder(command).directory(work.toFile())
+                .redirectErrorStream(true).redirectOutput(log.toFile());
+        builder.environment().put("JAVA_HOME", System.getProperty("java.home"));
+        String pathKey = builder.environment().keySet().stream()
+                .filter(key -> key.equalsIgnoreCase("PATH")).findFirst().orElse("PATH");
+        builder.environment().put(pathKey, home.resolve("bin") + java.io.File.pathSeparator
+                + builder.environment().getOrDefault(pathKey, ""));
+        Process process = builder.start();
+        try {
+            assertThat(process.waitFor(60, TimeUnit.SECONDS)).as("archive command finished: %s", command).isTrue();
+            return new Result(process.exitValue(), new String(Files.readAllBytes(log),
+                    Charset.forName(System.getProperty("native.encoding", "UTF-8"))));
+        } finally {
+            if (process.isAlive()) {
+                process.descendants().forEach(ProcessHandle::destroyForcibly);
+                process.destroyForcibly();
+            }
         }
     }
 

@@ -40,21 +40,25 @@ test environment where it runs. Nothing is sent anywhere else.
 **1. Install.** Download `faultora-0.12.0.tar.gz` (or `.zip`) and `SHA256SUMS`
 from the [release](https://github.com/Malatiel/Faultora/releases/tag/v0.12.0),
 check them as [Installing the CLI](docs/INSTALLATION.md) shows, including who
-built them, and extract:
+built them, extract the archive where you keep tools, and put its `bin` on
+your `PATH`:
 
 ```bash
-tar xzf faultora-0.12.0.tar.gz
-cd faultora-0.12.0
-bin/faultora --version
+mkdir -p ~/tools && tar xzf faultora-0.12.0.tar.gz -C ~/tools
+export PATH="$HOME/tools/faultora-0.12.0/bin:$PATH"
+faultora --version
 ```
 
-On Windows the launcher is `bin\faultora.cmd`. The commands below run from this
-directory.
+On Windows, extract the `.zip` with `Expand-Archive`, add its `bin` to `PATH`
+(`$env:Path = "C:\tools\faultora-0.12.0\bin;$env:Path"`) and the command is
+the same; in PowerShell, join the continued lines below or end them with a
+backtick instead of `\`. Keep your scenarios and results in your own project,
+not in the installation, which an upgrade replaces.
 
-**2. Generate a starter scenario** from your description:
+**2. Generate a starter scenario** from your description, in your project:
 
 ```bash
-bin/faultora init --from-openapi /path/to/openapi.yaml --output my-checks
+faultora init --from-openapi openapi.yaml --output my-checks
 ```
 
 `init` writes `my-checks/scenario.yaml` with a step for every operation that
@@ -64,9 +68,9 @@ need, and prints the next commands.
 **3. Check it without contacting anything:**
 
 ```bash
-bin/faultora validate --scenario my-checks/scenario.yaml --openapi /path/to/openapi.yaml
-bin/faultora test --preview --scenario my-checks/scenario.yaml \
-  --openapi /path/to/openapi.yaml --target https://staging.example.com
+faultora validate --scenario my-checks/scenario.yaml --openapi openapi.yaml
+faultora test --preview --scenario my-checks/scenario.yaml \
+  --openapi openapi.yaml --target https://staging.example.com
 ```
 
 `validate` checks the documents; the preview compiles the plan against the
@@ -75,13 +79,15 @@ execution policy and prints it as JSON, without a single request.
 **4. Run it:**
 
 ```bash
-bin/faultora test --scenario my-checks/scenario.yaml --openapi /path/to/openapi.yaml \
+faultora test --scenario my-checks/scenario.yaml --openapi openapi.yaml \
   --target https://staging.example.com --format console,html --output results
 ```
 
 Exit code 0 means every assertion passed, 1 that the run found a failure, 2
-that the configuration was refused before anything ran. The console shows
-each node; `results/` holds the HTML report and the journal. A service on
+that the configuration was refused before anything ran, and 3 that the command
+itself could not do its job — for example because `results/` already holds an
+earlier run; give each run a new `--output` directory. The console shows each
+node; the output directory holds the HTML report and the journal. A service on
 localhost or another private address also needs `--allow-private`, and a step
 that deletes something needs `--allow-destructive`;
 [troubleshooting](docs/TROUBLESHOOTING.md) explains each refusal.
@@ -113,6 +119,9 @@ assertions:
     params: {path: "@", count: 1}
 ```
 
+Counting the whole list holds only where it starts empty; on a shared
+environment, read back what this run created — by the ID a client got back,
+or a list filtered by a value only this run used.
 [`fault-concurrent-duplicate.yaml`](examples/payment-service/scenarios/fault-concurrent-duplicate.yaml)
 is the complete version of this check, with injected latency widening the
 race; the [examples guide](examples/README.md) shows retries, eventual
@@ -203,17 +212,21 @@ missing.
 
 ## Running the bundled examples
 
-The archive carries the examples, so the commands in this and the following
-sections run from the extracted directory, like the first ten minutes above.
-From a source checkout, use `java -jar faultora-cli/target/faultora-0.12.0.jar`
-in place of `bin/faultora`.
+The commands in this and the following sections use `faultora` on your `PATH`,
+as in the first ten minutes; from a source checkout, use
+`java -jar faultora-cli/target/faultora-0.12.0.jar` instead. Paths such as
+`examples/payment-service/...` are relative to the extracted archive or the
+repository root. The archive carries the example descriptions and scenarios,
+so `validate` and `test --preview` work from it as shown; the example
+services a real run talks to are started from a source checkout, as the
+[examples guide](examples/README.md) explains.
 
 Check the executable and validate the example scenario:
 
 ```bash
-bin/faultora --version
+faultora --version
 
-bin/faultora \
+faultora \
   validate \
   --scenario examples/payment-service/scenarios/passing.yaml
 ```
@@ -221,7 +234,7 @@ bin/faultora \
 Generate a starter scenario from an OpenAPI document:
 
 ```bash
-bin/faultora \
+faultora \
   init \
   --from-openapi examples/payment-service/openapi.yaml \
   --output ./generated
@@ -230,7 +243,7 @@ bin/faultora \
 Run a scenario against an API:
 
 ```bash
-bin/faultora \
+faultora \
   test \
   --scenario examples/payment-service/scenarios/passing.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -260,7 +273,7 @@ With `test --preview`, the preview is nested in the same result. See the
 Add `--preview` to `test` to inspect the compiled plan without running it:
 
 ```bash
-bin/faultora \
+faultora \
   test --preview \
   --scenario examples/payment-service/scenarios/passing.yaml \
   --openapi examples/payment-service/openapi.yaml
@@ -317,7 +330,7 @@ race window, then asserts the business invariant that exactly one payment
 exists:
 
 ```bash
-bin/faultora \
+faultora \
   test \
   --scenario examples/payment-service/scenarios/fault-concurrent-duplicate.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -431,7 +444,7 @@ An AsyncAPI 3.0 description brings Kafka channels into the same catalog as the
 HTTP operations, and `--openapi` and `--asyncapi` can be given together:
 
 ```bash
-bin/faultora \
+faultora \
   test \
   --scenario examples/payment-worker/scenarios/duplicate-delivery.yaml \
   --asyncapi examples/payment-worker/asyncapi.yaml \
@@ -534,7 +547,7 @@ observations:
 ```
 
 ```bash
-bin/faultora \
+faultora \
   test \
   --scenario examples/payment-recovery/scenarios/settlement-invariant.yaml \
   --openapi examples/payment-recovery/openapi.yaml \
@@ -671,7 +684,7 @@ handle is mapped to an environment variable with the `FAULTORA_SECRET_` prefix:
 ```bash
 export FAULTORA_SECRET_PAYMENTS_API='replace-with-a-real-token'
 
-bin/faultora \
+faultora \
   test \
   --scenario scenario.yaml \
   --openapi openapi.yaml \
@@ -737,7 +750,7 @@ A container image, Compose and Kubernetes examples, and an offline installation
 bundle are in [deploy/](deploy/README.md), which also says which of their
 claims are exercised by tests and which are documentation.
 
-The control plane that dispatches to a runner is 2.0. What 0.9 ships is the
+The control plane that dispatches to a runner is 2.0. What ships now is the
 runner and the protocol it speaks; the counterpart in this repository is
 qualification scaffolding and is named so.
 
