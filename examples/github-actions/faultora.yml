@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 env:
-  FAULTORA_VERSION: '0.11.3'
+  FAULTORA_VERSION: '0.12.0'
 
 jobs:
   api-checks:

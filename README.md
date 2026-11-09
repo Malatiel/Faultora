@@ -28,11 +28,11 @@ report a problem or contribute, see
 The scenario format is frozen at `faultora.dev/v1`; the application version
 below moves independently of it.
 
-Version 0.11.3 is a runnable technical preview. It targets local development
+Version 0.12.0 is a runnable technical preview. It targets local development
 and CI use on Java 21, and it can now run **inside a private network** as a
 runner that dials out for work.
 
-## What 0.11.3 includes
+## What 0.12.0 includes
 
 Scenario execution:
 
@@ -107,7 +107,19 @@ Local tool integration:
 - [MCP stdio](docs/MCP.md) for capabilities, operator-declared catalog inspection
   and scenario preparation. Optional execution requires a separate operator
   signature on the exact preparation; owned runs support cancellation and
-  bounded structural report export.
+  bounded structural report export. Results name each assertion by node ID,
+  type and outcome, including checks that were skipped or never evaluated,
+  and a refused preparation names the field to fix.
+
+Operations and support:
+
+- `faultora diagnose` writes a bundle to attach to a bug report: the run's
+  journal reduced to identifiers, counts, outcomes and digests, and nothing
+  else from the run directory ([troubleshooting](docs/TROUBLESHOOTING.md));
+- `FAULTORA_LOG_FORMAT=json` writes structured logs a collector can read,
+  naming the run and node and holding no payload;
+- an [upgrade and rollback runbook](docs/UPGRADE_ROLLBACK.md) and a measured
+  [capacity baseline](docs/CAPACITY.md).
 
 Private-network execution:
 
@@ -116,6 +128,9 @@ Private-network execution:
   authenticated TLS;
 - runs bounded by a lease the runner renews by asking, so losing contact stops
   a run and rolls back its faults rather than extending either;
+- every event and the final result committed to a local spool before they are
+  sent, so a disk failure cannot report a passing run
+  ([runner spool](docs/RUNNER_SPOOL.md));
 - a signed execution and evidence policy, verified against a key the operator
   configures, narrowed by limits the deployment states and a dispatch can never
   widen;
@@ -176,7 +191,7 @@ find them under `faultora-cli/target/`.
 Download the release JAR and its checksums:
 
 ```bash
-FAULTORA_VERSION=0.11.3
+FAULTORA_VERSION=0.12.0
 RELEASE_URL="https://github.com/Malatiel/Faultora/releases/download/v${FAULTORA_VERSION}"
 
 curl --fail --location --retry 3 \
@@ -209,7 +224,7 @@ their prerequisites are unavailable; those skips do not prove qualification.
 The executable artifact is written to:
 
 ```text
-faultora-cli/target/faultora-0.11.3.jar
+faultora-cli/target/faultora-0.12.0.jar
 ```
 
 The regular CI build can run without repository secrets. Configure the
@@ -222,9 +237,9 @@ missing.
 Check the executable and validate the example scenario:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.11.3.jar --version
+java -jar faultora-cli/target/faultora-0.12.0.jar --version
 
-java -jar faultora-cli/target/faultora-0.11.3.jar \
+java -jar faultora-cli/target/faultora-0.12.0.jar \
   validate \
   --scenario examples/payment-service/scenarios/passing.yaml
 ```
@@ -232,7 +247,7 @@ java -jar faultora-cli/target/faultora-0.11.3.jar \
 Generate a starter scenario from an OpenAPI document:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.11.3.jar \
+java -jar faultora-cli/target/faultora-0.12.0.jar \
   init \
   --from-openapi examples/payment-service/openapi.yaml \
   --output ./generated
@@ -241,7 +256,7 @@ java -jar faultora-cli/target/faultora-0.11.3.jar \
 Run a scenario against an API:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.11.3.jar \
+java -jar faultora-cli/target/faultora-0.12.0.jar \
   test \
   --scenario examples/payment-service/scenarios/passing.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -271,7 +286,7 @@ With `test --preview`, the preview is nested in the same result. See the
 Add `--preview` to `test` to inspect the compiled plan without running it:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.11.3.jar \
+java -jar faultora-cli/target/faultora-0.12.0.jar \
   test --preview \
   --scenario examples/payment-service/scenarios/passing.yaml \
   --openapi examples/payment-service/openapi.yaml
@@ -328,7 +343,7 @@ race window, then asserts the business invariant that exactly one payment
 exists:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.11.3.jar \
+java -jar faultora-cli/target/faultora-0.12.0.jar \
   test \
   --scenario examples/payment-service/scenarios/fault-concurrent-duplicate.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -442,7 +457,7 @@ An AsyncAPI 3.0 description brings Kafka channels into the same catalog as the
 HTTP operations, and `--openapi` and `--asyncapi` can be given together:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.11.3.jar \
+java -jar faultora-cli/target/faultora-0.12.0.jar \
   test \
   --scenario examples/payment-worker/scenarios/duplicate-delivery.yaml \
   --asyncapi examples/payment-worker/asyncapi.yaml \
@@ -545,7 +560,7 @@ observations:
 ```
 
 ```bash
-java -jar faultora-cli/target/faultora-0.11.3.jar \
+java -jar faultora-cli/target/faultora-0.12.0.jar \
   test \
   --scenario examples/payment-recovery/scenarios/settlement-invariant.yaml \
   --openapi examples/payment-recovery/openapi.yaml \
@@ -682,7 +697,7 @@ handle is mapped to an environment variable with the `FAULTORA_SECRET_` prefix:
 ```bash
 export FAULTORA_SECRET_PAYMENTS_API='replace-with-a-real-token'
 
-java -jar faultora-cli/target/faultora-0.11.3.jar \
+java -jar faultora-cli/target/faultora-0.12.0.jar \
   test \
   --scenario scenario.yaml \
   --openapi openapi.yaml \

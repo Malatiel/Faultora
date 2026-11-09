@@ -26,7 +26,7 @@ Three consequences worth stating plainly:
   runners to execute exactly that. A team that invests in a scenario suite
   before 1.0 keeps it afterwards.
 
-## 2. Where 0.11.3 stands
+## 2. Where 0.12.0 stands
 
 | Milestone | State |
 |---|---|
@@ -36,7 +36,7 @@ Three consequences worth stating plainly:
 | M3 — Event-driven and cross-component | complete |
 | M4 — Private-network runner | shipped in 0.9.1; runner and image qualification suites exist |
 | M5 — Distributed execution | deferred to 2.0 |
-| M6 — 1.0 hardening | in progress: scenario API, run output and runner protocol v1 frozen; plugin trust and artifact identity implemented; MCP preparation and approved execution shipped; extension process isolation not yet |
+| M6 — 1.0 hardening | in progress: scenario API, run output and runner protocol v1 frozen; plugin trust and artifact identity implemented; MCP preparation and approved execution shipped, with per-assertion results; diagnostic bundle, structured logs, upgrade runbook and capacity baseline shipped; runner evidence committed locally before delivery; a supervised extension child process exists as a library, extension process isolation not yet enforced |
 
 Shipped and working: OpenAPI, AsyncAPI and observation-catalog import into one
 catalog, HTTP, Kafka and JDBC connectors under one destination policy, scenario
@@ -69,6 +69,7 @@ a skipped container or operating-system check is not qualification.
 | 0.9 | M4 | Runs execute inside a private network without inbound access |
 | 0.10 | M6 part 1 | Frozen scenario API, migration tooling, and compatibility diagnostics |
 | 0.11 | M6 part 2 | Extension trust, runtime budgets, frozen run output, previews and MCP |
+| 0.12 | M6 part 3 | Results an operator, a bug report and an AI assistant can act on; runner evidence committed to disk that survives a process crash |
 | **1.0** | M6 | Frozen contracts, isolated extensions, signed artifacts, operational docs |
 | 2.0 | M5 | A controller shards one run across workers and returns one result |
 

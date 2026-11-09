@@ -1,6 +1,6 @@
 # Scenario reference
 
-This page documents the scenario format implemented by Faultora 0.11.3. The
+This page documents the scenario format implemented by Faultora 0.12.0. The
 format is versioned independently from the application:
 
 ```yaml
@@ -10,7 +10,7 @@ kind: Scenario
 
 Faultora rejects unsupported versions, missing required fields, duplicate step
 IDs, unknown references, dependency cycles, and execution features that are not
-available in 0.11.3.
+available in 0.12.0.
 
 ## Compatibility
 
@@ -101,7 +101,7 @@ cleanup:
 Validate a document before running it:
 
 ```bash
-java -jar faultora-0.11.3.jar validate --scenario scenario.yaml
+java -jar faultora-0.12.0.jar validate --scenario scenario.yaml
 ```
 
 Give it the catalogs the run will use and it imports them as `test` does,
@@ -110,7 +110,7 @@ two documents declaring one name — fails `validate` with the same exit code,
 and importer warnings are printed.
 
 ```bash
-java -jar faultora-0.11.3.jar validate --scenario scenario.yaml \
+java -jar faultora-0.12.0.jar validate --scenario scenario.yaml \
   --openapi openapi.yaml --asyncapi asyncapi.yaml --observations observations.yaml
 ```
 
@@ -717,7 +717,7 @@ Every assertion has this common shape:
 | `params` | yes | Parameters documented for the selected assertion type. |
 | `targetStep` | no | Operation evidence to inspect; defaults to the last `execute` step. A grouping step holds no evidence of its own, so name one of its children. |
 | `dependsOn` | no | Additional dependencies that must pass first. |
-| `message` | no | Reserved; 0.11.3 reports the assertion provider's evaluated message. |
+| `message` | no | A note for readers of the scenario. Reports, journals and MCP results do not show it; they show a fixed verdict for the assertion's node ID. |
 | `metadata` | no | Arbitrary assertion metadata. |
 
 An assertion that cannot be evaluated is treated as a failed node rather than

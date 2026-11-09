@@ -2,8 +2,8 @@
 
 This page says what problem Faultora is meant to solve, for whom, what it
 deliberately does not do, and what is not yet proven. Each capability named
-here is in the 0.11.3 release, unless it is marked as only on the main branch,
-and links to where it is documented or tested. A statement about who needs it
+here is in the 0.12.0 release and links to where it is documented or
+tested. A statement about who needs it
 is marked as a hypothesis until users outside the project have confirmed it.
 
 ## The problem
@@ -156,7 +156,7 @@ reviewable evidence, self-hosted — rather than any one part.
 
 ## What is not yet proven
 
-Faultora is a technical preview (0.11.3). Before 1.0:
+Faultora is a technical preview (0.12.0). Before 1.0:
 
 - **Whether a person new to Faultora gets to a first useful result unaided**
   has not been measured. In a first trial an AI assistant with no prior
@@ -169,9 +169,9 @@ Faultora is a technical preview (0.11.3). Before 1.0:
   a policy that requires isolation is refused rather than pretended
   ([ADR-023](adr/ADR-023-extension-isolation.md)).
 - **A runner does not yet deliver after a restart** what it had not sent
-  before. In 0.11.3 the journal stays in its working directory; the main
-  branch adds a committed local spool as the first step towards that
-  delivery ([ADR-031](adr/ADR-031-runner-recovery-ownership.md),
+  before. Since 0.12.0 it commits that evidence to a local spool first, as
+  the first step towards such delivery
+  ([ADR-031](adr/ADR-031-runner-recovery-ownership.md),
   [runner spool](RUNNER_SPOOL.md)), but nothing is replayed after a restart.
 - **Distributed workers** belong to 2.0 ([release plan](RELEASE_PLAN.md)).
 
