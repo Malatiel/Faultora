@@ -25,6 +25,7 @@ import dev.faultora.spec.expression.ExpressionContext;
 import dev.faultora.spi.context.ConnectorContext;
 import dev.faultora.spi.contract.FaultProvider;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -54,6 +55,7 @@ public final class DispatchedRun {
     private final Function<String, dev.faultora.model.security.SecretHandle> secrets;
     private final boolean allowPrivate;
     private final SpoolFactory spools;
+    private final ReplayProtection replayProtection;
 
     @FunctionalInterface
     interface SpoolFactory {
@@ -86,6 +88,7 @@ public final class DispatchedRun {
         this.secrets = secrets;
         this.allowPrivate = allowPrivate;
         this.spools = spools;
+        this.replayProtection = new ReplayProtection(workingDirectory);
     }
 
     /**
@@ -136,15 +139,7 @@ public final class DispatchedRun {
             WhileRunning whileRunning
     ) {
         long receivedAt = System.currentTimeMillis();
-        if (dispatch != null) {
-            try {
-                new RunId(dispatch.runId());
-            } catch (IllegalArgumentException | NullPointerException invalidIdentity) {
-                return Outcome.refused(Refusal.of(Refusal.Reason.REPLAYED_DISPATCH,
-                        "dispatch requires a valid run identity"));
-            }
-        }
-        DispatchVerifier.Verdict verdict = verifier.verify(dispatch, receivedAt);
+        DispatchVerifier.Verdict verdict = verifier.validate(dispatch, receivedAt);
         if (!verdict.isAccepted()) {
             return Outcome.refused(verdict.refusal());
         }
@@ -213,6 +208,20 @@ public final class DispatchedRun {
                     diagnostic -> why.append("\n  ").append(diagnostic.message()));
             return Outcome.refused(
                     Refusal.of(Refusal.Reason.SCENARIO_INVALID, why.toString()));
+        }
+
+        long admittedAt = Math.max(receivedAt, System.currentTimeMillis());
+        if (dispatch.lease().deadlineFrom(receivedAt) <= admittedAt) {
+            return Outcome.refused(Refusal.of(Refusal.Reason.LEASE_EXPIRED,
+                    "dispatch lease expired during preparation"));
+        }
+        try {
+            if (!replayProtection.claim(dispatch, admittedAt)) {
+                return Outcome.refused(Refusal.of(Refusal.Reason.REPLAYED_DISPATCH,
+                        "dispatch is outside the replay window or its run ID or nonce was already admitted"));
+            }
+        } catch (IOException unavailable) {
+            throw new StartupFailure("dispatch replay protection is unavailable", unavailable);
         }
 
         Path journalPath;

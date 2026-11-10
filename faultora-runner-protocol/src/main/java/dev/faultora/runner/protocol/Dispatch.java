@@ -132,6 +132,9 @@ public record Dispatch(
      * everything an unsynchronized pair produces.
      */
     public boolean issuedNear(long nowEpochMs) {
-        return Math.abs(nowEpochMs - issuedAtEpochMs) <= CLOCK_SKEW_ALLOWANCE_MS;
+        long skew = CLOCK_SKEW_ALLOWANCE_MS;
+        long earliest = nowEpochMs < Long.MIN_VALUE + skew ? Long.MIN_VALUE : nowEpochMs - skew;
+        long latest = nowEpochMs > Long.MAX_VALUE - skew ? Long.MAX_VALUE : nowEpochMs + skew;
+        return issuedAtEpochMs >= earliest && issuedAtEpochMs <= latest;
     }
 }

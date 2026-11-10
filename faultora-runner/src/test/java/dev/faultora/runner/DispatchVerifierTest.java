@@ -116,6 +116,28 @@ class DispatchVerifierTest {
     }
 
     @Test
+    void nonceIsRequiredAndReusedNonceIsRefusedAcrossRunIds() {
+        long now = System.currentTimeMillis();
+        Dispatch original = wellFormed("run-first", now);
+        Dispatch next = wellFormed("run-next", now);
+
+        for (String invalid : new String[] {null, " ", "x".repeat(129)}) {
+            var refused = verifier.verify(withNonce(next, invalid), now);
+            assertThat(refused.refusal().reason()).isEqualTo(Refusal.Reason.REPLAYED_DISPATCH);
+            assertThat(refused.refusal().describe()).contains("nonce");
+        }
+        assertThat(verifier.verify(original, now).isAccepted()).isTrue();
+        assertThat(verifier.verify(next, now).refusal().reason()).isEqualTo(Refusal.Reason.REPLAYED_DISPATCH);
+        assertThat(verifier.verify(withNonce(next, "x".repeat(128)), now).isAccepted()).isTrue();
+    }
+
+    private static Dispatch withNonce(Dispatch dispatch, String nonce) {
+        return new Dispatch(dispatch.runId(), dispatch.issuedAtEpochMs(), nonce, dispatch.scenario(),
+                dispatch.documents(), dispatch.inputs(), dispatch.targetRedirects(), dispatch.credentials(),
+                dispatch.seed(), dispatch.policy(), dispatch.lease(), dispatch.scenarioDigest(), dispatch.catalogDigest());
+    }
+
+    @Test
     void aDispatchFromOutsideTheClockWindowIsRefused() {
         long now = System.currentTimeMillis();
         long longAgo = now - Dispatch.CLOCK_SKEW_ALLOWANCE_MS - 1;

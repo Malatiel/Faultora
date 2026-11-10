@@ -99,11 +99,12 @@ happens at each edge.
   authorization. The window is a clock-skew allowance between two hosts nobody
   promised to synchronize — the same reason the Kafka observation floor carries
   a grace, at the scale a dispatch needs rather than a broker timestamp.
-  **The set of accepted run ids lives in memory**, so a restarted runner will
-  accept a replay of a dispatch it saw before it restarted. That is stated
-  rather than hidden: closing it needs durable state whose own failure modes
-  are worse than the window it closes, and a restart is not something an
-  attacker can cause from outside the private network.
+  Before starting target work, the runner reserves both the run ID and nonce
+  in a bounded ledger in its work directory. The ledger persists across
+  process restarts and retains entries until their issue times fall outside
+  the window. Full or unverifiable state prevents admission. See
+  [Dispatch replay protection](../RUNNER_PROTOCOL.md#dispatch-replay-protection)
+  for the limits and clock behavior.
 - **A refusal is named, and it is not a failure of the run.** Every refusal
   above — untrusted peer, bad signature, replayed dispatch, digest mismatch,
   a policy exceeding the local floor, an unsupported protocol version — has its

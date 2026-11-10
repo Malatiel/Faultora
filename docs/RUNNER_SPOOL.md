@@ -96,11 +96,17 @@ extends a lease or authorizes repeating target actions.
 ## Operating the work directory
 
 Give each runner its own persistent, operator-controlled `--work-dir`. Keep
-`runner-identity` and every `run-<digest>` directory together. A run directory
-can contain `run-owner`, `spool.bin`, `events.ndjson` and reports. These files
+`runner-identity`, `dispatch-replay/` and every `run-<digest>` directory together.
+A run directory can contain `run-owner`, `spool.bin`, `events.ndjson` and reports. These files
 preserve evidence and prevent the same dispatch ID from claiming the
 directory again. `health.json` defaults to this volume and describes the
 current process. Its presence alone says nothing about readiness.
+
+`dispatch-replay/` holds the bounded ledger for run IDs and nonces. The runner
+forces each new ledger snapshot before atomically replacing the previous one.
+Keep the ledger across restarts, and pause dispatch if the runner refuses work
+because the ledger is damaged or inaccessible. Reconcile the dispatcher and
+the work directory before restoring ledger data from backup.
 
 ### Capacity and retention
 
@@ -130,7 +136,8 @@ new dispatches and add capacity while preserving the work directory.
 
 Follow the [runner drain procedure](UPGRADE_ROLLBACK.md#a-runner) and wait
 for the process to exit. Confirm no other runner can write the volume before
-copying it. Back up the entire tree, including identity and ownership files.
+copying it. Back up the entire tree, including identity, replay ledger and
+ownership files.
 Store the backup outside the runner volume with access restricted to the
 operator. Back up deployment configuration and keys separately.
 
@@ -159,7 +166,7 @@ any volume.
 Check ownership and permissions separately before using the restored volume.
 Keep the original stopped and dispatch paused. Restored ownership covers only
 attempts in the backup. Reconcile attempts admitted since the backup and
-ensure the dispatcher cannot offer their run IDs again. If you cannot
+ensure the dispatcher cannot offer their run IDs or nonces again. If you cannot
 establish that, keep the restored volume for inspection. Once those attempts
 are fenced off, start a single runner and check fresh readiness with
 `faultora health --file <status file> --require-registered` before resuming

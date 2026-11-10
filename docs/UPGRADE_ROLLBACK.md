@@ -46,6 +46,12 @@ a replacement and a restart.
 
 Rolling back is the same four steps with the previous release.
 
+Keep `dispatch-replay/` in the work directory through upgrades and rollbacks.
+A release without replay ledger support relies on retained run ownership.
+Fence recent run IDs and nonces at the dispatcher before starting such a
+release. On the first upgrade, the ledger starts recording new admissions.
+Reconcile dispatches from before that upgrade at the dispatcher.
+
 ## What does not survive
 
 - **A run cut off by the move is not resumed.** If the grace expires first,

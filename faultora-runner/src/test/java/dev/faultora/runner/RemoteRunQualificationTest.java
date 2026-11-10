@@ -16,6 +16,7 @@ import dev.faultora.runner.protocol.DispatchedDocument;
 import dev.faultora.runner.protocol.DurableDelivery;
 import dev.faultora.runner.protocol.EffectivePolicy;
 import dev.faultora.runner.protocol.Lease;
+import dev.faultora.runner.protocol.Refusal;
 import dev.faultora.runner.protocol.Session;
 import dev.faultora.runner.protocol.SignedPolicy;
 import dev.faultora.runtime.RunArtifacts;
@@ -110,7 +111,7 @@ class RemoteRunQualificationTest {
                 500, 2, 300_000, 1024, Set.of(), Set.of());
         try {
             return new Dispatch(
-                    runId, System.currentTimeMillis(), "nonce", scenario, List.of(),
+                    runId, System.currentTimeMillis(), "nonce-" + runId, scenario, List.of(),
                     Map.of(), Map.of("", "http://localhost:1"),
                     Dispatch.Credentials.none(), 11L,
                     new SignedPolicy(
@@ -337,17 +338,7 @@ class RemoteRunQualificationTest {
         String runId = "run-durable-mutation";
         Path run = RunArtifacts.dispatchedDirectory(work, new RunId(runId));
         var mutations = new AtomicInteger();
-        var target = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        target.createContext("/change", exchange -> {
-            if (!exchange.getRequestMethod().equals("POST")) {
-                exchange.sendResponseHeaders(405, -1);
-            } else {
-                mutations.incrementAndGet();
-                exchange.sendResponseHeaders(204, -1);
-            }
-            exchange.close();
-        });
-        target.start();
+        var target = mutatingTarget(mutations);
         try {
             Dispatch offered = mutatingDispatch(runId, target.getAddress().getPort());
             int port;
@@ -388,6 +379,43 @@ class RemoteRunQualificationTest {
                 assertThat(dispatcher.durableTerminalOf(runId)).isEqualTo(terminal);
                 assertThat(mutations).hasValue(1);
             }
+        } finally {
+            target.stop(0);
+        }
+    }
+
+    @Test
+    void restartedRunnersRefuseReplayedRunIdsAndNoncesBeforeMutating() throws Exception {
+        Path work = directory.resolve("runner");
+        var mutations = new AtomicInteger();
+        var target = mutatingTarget(mutations);
+        try {
+            int port = target.getAddress().getPort();
+            Dispatch original = mutatingDispatch("run-original", "nonce-original", port);
+            var first = mutatingRunner(work).execute(original, Map.of(), EXTENSIONS);
+            assertThat(first.completed()).isTrue();
+            assertThat(first.result().status()).isEqualTo(RunResult.Status.PASSED);
+            assertThat(mutations).hasValue(1);
+
+            var replayedNonce = mutatingDispatch("run-nonce-replay", original.nonce(), port);
+            var nonceRefusal = mutatingRunner(work).execute(replayedNonce, Map.of(), EXTENSIONS);
+            assertThat(nonceRefusal.refusal()).isNotNull();
+            assertThat(nonceRefusal.refusal().reason()).isEqualTo(Refusal.Reason.REPLAYED_DISPATCH);
+            assertThat(mutations).hasValue(1);
+
+            // Archive the evidence so artifact ownership cannot independently refuse the replay.
+            Files.move(first.journalPath().getParent(), directory.resolve("archived-run"));
+            var replayedRun = mutatingDispatch(original.runId(), "nonce-new", port);
+            var runRefusal = mutatingRunner(work).execute(replayedRun, Map.of(), EXTENSIONS);
+            assertThat(runRefusal.refusal()).isNotNull();
+            assertThat(runRefusal.refusal().reason()).isEqualTo(Refusal.Reason.REPLAYED_DISPATCH);
+            assertThat(mutations).hasValue(1);
+
+            var newDispatch = mutatingDispatch("run-new", port);
+            var next = mutatingRunner(work).execute(newDispatch, Map.of(), EXTENSIONS);
+            assertThat(next.completed()).isTrue();
+            assertThat(next.result().status()).isEqualTo(RunResult.Status.PASSED);
+            assertThat(mutations).hasValue(2);
         } finally {
             target.stop(0);
         }
@@ -649,14 +677,37 @@ class RemoteRunQualificationTest {
     }
 
     private static RunnerAgent durableAgent(RunnerClient client, Path work) {
+        return new RunnerAgent(client, mutatingRunner(work), Map.of(), EXTENSIONS);
+    }
+
+    private static DispatchedRun mutatingRunner(Path work) {
         var limits = new LocalLimits(Set.of(), Set.of(SafetyClassification.MUTATING, SafetyClassification.READ_ONLY), Set.of(),
                 Set.of(), 4, 600_000, 1000, 1_048_576, null);
-        var runs = new DispatchedRun(new DispatchVerifier(limits, policy -> "trusted".equals(policy.keyId())),
+        return new DispatchedRun(new DispatchVerifier(limits, policy -> "trusted".equals(policy.keyId())),
                 work, handle -> null, true);
-        return new RunnerAgent(client, runs, Map.of(), EXTENSIONS);
+    }
+
+    private static HttpServer mutatingTarget(AtomicInteger mutations) throws IOException {
+        var target = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        target.createContext("/change", exchange -> {
+            try (exchange) {
+                if (!exchange.getRequestMethod().equals("POST")) {
+                    exchange.sendResponseHeaders(405, -1);
+                } else {
+                    mutations.incrementAndGet();
+                    exchange.sendResponseHeaders(204, -1);
+                }
+            }
+        });
+        target.start();
+        return target;
     }
 
     private static Dispatch mutatingDispatch(String runId, int port) throws IOException {
+        return mutatingDispatch(runId, "nonce-" + runId, port);
+    }
+
+    private static Dispatch mutatingDispatch(String runId, String nonce, int port) throws IOException {
         String scenario = """
                 apiVersion: faultora.dev/v1
                 kind: Scenario
@@ -679,7 +730,7 @@ class RemoteRunQualificationTest {
                 500, 2, 300_000, 1024, Set.of(), Set.of());
         var documents = List.of(new DispatchedDocument("openapi", api));
         long now = System.currentTimeMillis();
-        return new Dispatch(runId, now, "nonce", scenario, documents, Map.of(),
+        return new Dispatch(runId, now, nonce, scenario, documents, Map.of(),
                 Map.of("", "http://127.0.0.1:" + port), Dispatch.Credentials.none(), 11L,
                 new SignedPolicy(MAPPER.writeValueAsString(EffectivePolicy.of(policy)), "trusted", "c2ln"),
                 new Lease(now, 60_000, 10_000), ContentDigest.sha256Uri(scenario), Dispatch.digestOfDocuments(documents));
