@@ -16,6 +16,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.channels.OverlappingFileLockException;
@@ -112,6 +113,12 @@ public final class DurableRunSpool implements AutoCloseable {
 
     @FunctionalInterface
     public interface EventReader { void accept(RunEvent event) throws IOException; }
+
+    @FunctionalInterface
+    interface LineReader { void accept(String line) throws IOException; }
+
+    @FunctionalInterface
+    private interface RecordReader { void accept(RunEvent event, byte[] payload) throws IOException; }
 
     @FunctionalInterface
     interface Force { void force(FileChannel channel) throws IOException; }
@@ -222,10 +229,19 @@ public final class DurableRunSpool implements AutoCloseable {
         }
     }
 
-    public static Snapshot recover(Path path) throws IOException { return recover(path, event -> { }); }
+    public static Snapshot recover(Path path) throws IOException { return inspect(path, null); }
 
     /** Read-only inspection of a closed spool. It never resumes a writer or invokes business operations. */
     public static Snapshot recover(Path path, EventReader reader) throws IOException {
+        return inspect(path, (event, payload) -> reader.accept(event));
+    }
+
+    /** Preserve the original committed event bytes across retries and process restarts. */
+    static Snapshot recoverLines(Path path, LineReader reader) throws IOException {
+        return inspect(path, (event, payload) -> reader.accept(new String(payload, StandardCharsets.UTF_8)));
+    }
+
+    private static Snapshot inspect(Path path, RecordReader reader) throws IOException {
         noLinks(path);
         try (FileChannel input = FileChannel.open(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
             FileLock readLock;
@@ -234,7 +250,8 @@ public final class DurableRunSpool implements AutoCloseable {
             if (readLock == null) throw failure("SPOOL_IN_USE");
             try (readLock) {
                 // Do not expose a prefix to a caller before ruling out later corruption.
-                scan(input, event -> { });
+                Snapshot verified = scan(input, null);
+                if (reader == null) return verified;
                 input.position(0);
                 return scan(input, reader);
             }
@@ -243,7 +260,7 @@ public final class DurableRunSpool implements AutoCloseable {
         }
     }
 
-    private static Snapshot scan(FileChannel input, EventReader reader) throws IOException {
+    private static Snapshot scan(FileChannel input, RecordReader reader) throws IOException {
         if (input.size() > Limits.defaults().maxBytes()) throw failure("SPOOL_TOO_LARGE");
         ByteBuffer magic = ByteBuffer.allocate(MAGIC.length);
         if (!read(input, magic) || !Arrays.equals(magic.array(), MAGIC)) throw failure("SPOOL_CORRUPT");
@@ -281,7 +298,7 @@ public final class DurableRunSpool implements AutoCloseable {
                 if (!descriptor.identity().runId().equals(event.runId().value()) || ++events > descriptor.limits().maxEvents()) {
                     throw failure("SPOOL_CORRUPT");
                 }
-                reader.accept(event);
+                if (reader != null) reader.accept(event, payload);
             } else if (kind == TERMINAL) {
                 terminal = decode(payload, Terminal.class);
                 if (terminal.status() == null || terminal.finalPosition() != events
@@ -357,7 +374,7 @@ public final class DurableRunSpool implements AutoCloseable {
         return true;
     }
 
-    private static void noLinks(Path path) throws IOException {
+    static void noLinks(Path path) throws IOException {
         Path absolute = path.toAbsolutePath().normalize();
         Path checked = absolute.getRoot();
         for (Path part : absolute) {

@@ -79,7 +79,7 @@ final class RunnerCommand implements Command {
                 options.dispatcherUrl(),
                 new TlsMaterial(options.keystore(), options.truststore(),
                         () -> passwordOf(secrets, options.tlsSecretId())),
-                options.runnerId(), version(), RunEnvironment.PROTOCOLS_SPOKEN);
+                options.runnerId(), version(), RunEnvironment.PROTOCOLS_SPOKEN, options.durableDelivery());
 
         DispatchedRun runs = new DispatchedRun(
                 new DispatchVerifier(
@@ -116,9 +116,9 @@ final class RunnerCommand implements Command {
      * flight to finish and deliver what it found — a hook that only set a flag
      * would let the JVM exit mid-run, which is the "stopped and told nobody"
      * failure ADR-020 names. It is a bound and not a guarantee: a run longer
-     * than the grace is cut off, and its journal is on disk. <b>A journal a
-     * runner still holds when it stops is not re-delivered when it starts
-     * again</b> — that is recorded as a gap rather than implied away here.
+     * than the grace is cut off, and its journal is on disk. In durable
+     * delivery mode a later session can send the committed terminal and
+     * journal without resuming execution.
      */
     private int serve(RunnerClient client, RunnerAgent agent, RunnerHealth health,
             boolean once, long graceMs) {
@@ -164,6 +164,10 @@ final class RunnerCommand implements Command {
                 } catch (InterruptedException stopped) {
                     Thread.currentThread().interrupt();
                     return FaultoraCli.EXIT_PASS;
+                } catch (RunnerAgent.DeliveryStorageFailure unavailable) {
+                    err.println("Durable delivery stopped: " + unavailable.getMessage()
+                            + ". Reconcile --work-dir before restarting.");
+                    return FaultoraCli.EXIT_RUNNER_FAILURE;
                 } catch (Exception unreachable) {
                     // The far side is gone, which is ordinary. The session it
                     // held is gone with it, so the next thing to do is register
@@ -368,5 +372,6 @@ final class RunnerCommand implements Command {
         out.println("  --shutdown-grace <duration> How long a signal waits for the run in");
         out.println("                              flight to finish and report (default 30s)");
         out.println("  --once                      Take one dispatch and stop");
+        out.println("  --durable-delivery          Require protocol 2 for acknowledged delivery");
     }
 }

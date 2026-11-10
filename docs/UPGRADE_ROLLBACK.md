@@ -52,11 +52,11 @@ Rolling back is the same four steps with the previous release.
   the run stops and its outcome may never reach the control plane.
   `RunnerShutdownTest` shows both halves: with a grace the outcome arrives,
   with one too short it does not.
-- **A journal the runner still holds when it stops is not delivered after
-  restart,** by the same version or another. It stays in the working
-  directory, and collecting it is a person with shell access rather than the
-  protocol. Durable delivery across restarts is designed in
-  [ADR-031](adr/ADR-031-runner-recovery-ownership.md) and not implemented.
+- **Protocol v1 leaves undelivered journals in the working directory.**
+  An operator with shell access can collect them after restart. In the
+  [protocol 2 qualification setup](RUNNER_PROTOCOL.md#version-2-durable-delivery),
+  a runner can replay delivery of a closed spool with a committed terminal.
+  The restored work directory and the original dispatcher route are required.
 - **Nothing in the working directory is migrated.** Keep it on storage that
   outlives the container, so that such a journal can still be collected.
 

@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 
+import java.util.List;
+
 /**
  * The answer to a registration: a session, or a reason there is none.
  * <p>
@@ -28,6 +30,10 @@ public record Session(String protocolVersion, String sessionId, Refusal refusal)
 
     /** Decode before negotiation so malformed JSON receives a named, data-free refusal. */
     public static Session answerJson(String registrationJson, String sessionId) {
+        return answerJson(registrationJson, sessionId, ProtocolVersion.SUPPORTED);
+    }
+
+    public static Session answerJson(String registrationJson, String sessionId, List<String> supported) {
         if (registrationJson == null || registrationJson.length() > Registration.MAX_JSON_BYTES
                 || registrationJson.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
                         > Registration.MAX_JSON_BYTES) {
@@ -55,7 +61,7 @@ public record Session(String protocolVersion, String sessionId, Refusal refusal)
                     }
                 }
             }
-            return answer(MAPPER.treeToValue(tree, Registration.class), sessionId);
+            return answer(MAPPER.treeToValue(tree, Registration.class), sessionId, supported);
         } catch (com.fasterxml.jackson.core.JacksonException | IllegalArgumentException invalid) {
             return malformed();
         }
@@ -96,16 +102,20 @@ public record Session(String protocolVersion, String sessionId, Refusal refusal)
      * test are looking at the same rule.
      */
     public static Session answer(Registration registration, String sessionId) {
+        return answer(registration, sessionId, ProtocolVersion.SUPPORTED);
+    }
+
+    private static Session answer(Registration registration, String sessionId, List<String> supported) {
         if (registration == null || !registration.wellFormed()
                 || sessionId == null || sessionId.isBlank()) {
             return malformed();
         }
-        String agreed = ProtocolVersion.negotiate(registration.protocols());
+        String agreed = ProtocolVersion.negotiate(registration.protocols(), supported);
         if (agreed == null) {
             return refused(Refusal.of(Refusal.Reason.UNSUPPORTED_PROTOCOL_VERSION,
                     "runner '" + registration.runnerId() + "' speaks "
                             + registration.protocols() + " and this side speaks "
-                            + ProtocolVersion.SUPPORTED));
+                            + supported));
         }
         return accepted(agreed, sessionId);
     }

@@ -30,8 +30,8 @@ import java.util.function.Consumer;
  * the run stops on the runner's own clock — which is the release gate:
  * <em>disconnection cannot extend a run or an active fault beyond policy</em>.
  * Committed findings remain in the local spool. Live reconnection can send
- * them while this process owns the run; automatic restart delivery requires
- * a future durable-ACK protocol.
+ * them while this process owns the run. Opt-in protocol 2 resumes delivery
+ * from committed spool records independently of execution.
  */
 public final class RunnerAgent {
 
@@ -51,6 +51,15 @@ public final class RunnerAgent {
     private final DispatchedRun runs;
     private final Map<String, FaultProvider> faultProviders;
     private final ExtensionPolicy extensions;
+    private final DurableRunDelivery delivery;
+    private String recoveredSession;
+
+    /** Local durable state needs operator reconciliation before another dispatch can be admitted. */
+    public static final class DeliveryStorageFailure extends IOException {
+        DeliveryStorageFailure(IOException cause) {
+            super("DURABLE_DELIVERY_STORAGE_UNAVAILABLE", cause);
+        }
+    }
 
     public RunnerAgent(
             RunnerClient client,
@@ -62,6 +71,7 @@ public final class RunnerAgent {
         this.runs = runs;
         this.faultProviders = faultProviders;
         this.extensions = extensions;
+        this.delivery = client.durableDelivery() ? new DurableRunDelivery(client, runs.workingDirectory()) : null;
     }
 
     /**
@@ -87,6 +97,10 @@ public final class RunnerAgent {
     public Optional<DispatchedRun.Outcome> takeOneDispatch(
             String sessionId, Consumer<String> tookDispatch)
             throws IOException, InterruptedException {
+        if (delivery != null && !sessionId.equals(recoveredSession)) {
+            delivery.resumePending(sessionId);
+            recoveredSession = sessionId;
+        }
         Optional<Dispatch> work = client.pollForWork(sessionId);
         if (work.isEmpty()) {
             return Optional.empty();
@@ -96,12 +110,24 @@ public final class RunnerAgent {
 
         JournalTail[] tail = new JournalTail[1];
         Thread[] keepingAlive = new Thread[1];
+        DeliveryStorageFailure[] storageFailure = new DeliveryStorageFailure[1];
         var terminalCommitted = new java.util.concurrent.atomic.AtomicBoolean();
         DispatchedRun.Outcome outcome = runs.execute(
                 dispatch, faultProviders, extensions,
                 new DispatchedRun.WhileRunning() {
+                  @Override public void spoolOpened(DurableRunSpool.Identity identity, java.nio.file.Path spool)
+                          throws IOException {
+                    if (delivery == null) return;
+                    try {
+                        delivery.opened(identity, spool);
+                    } catch (DeliveryStorageFailure unavailable) {
+                        storageFailure[0] = unavailable;
+                        throw unavailable;
+                    }
+                  }
+
                   @Override public void started(LeaseWatch lease, java.nio.file.Path journalPath) {
-                    tail[0] = new JournalTail(journalPath);
+                    if (delivery == null) tail[0] = new JournalTail(journalPath);
                     keepingAlive[0] = new Thread(
                             () -> keepAlive(dispatch.runId(), lease, tail[0]),
                             "runner-heartbeat-" + dispatch.runId());
@@ -110,12 +136,19 @@ public final class RunnerAgent {
                   }
                   @Override public void terminalCommitted() { terminalCommitted.set(true); }
                 });
+        if (storageFailure[0] != null) throw storageFailure[0];
         if (keepingAlive[0] != null) {
             keepingAlive[0].interrupt();
             keepingAlive[0].join(2_000);
         }
 
-        deliverWhatIsLeft(dispatch.runId(), outcome, tail[0], terminalCommitted.get());
+        if (delivery == null) {
+            deliverWhatIsLeft(dispatch.runId(), outcome, tail[0], terminalCommitted.get());
+        } else if (terminalCommitted.get()) {
+            recoveredSession = null;
+            delivery.completed(sessionId, outcome.journalPath());
+            recoveredSession = sessionId;
+        }
         return Optional.of(outcome);
     }
 
@@ -133,7 +166,7 @@ public final class RunnerAgent {
                 if (renewed.isPresent()) {
                     lease.renew(renewed.get(), System.currentTimeMillis());
                 }
-                sendWhateverIsFinished(runId, tail);
+                if (tail != null) sendWhateverIsFinished(runId, tail);
             } catch (InterruptedException stopping) {
                 Thread.currentThread().interrupt();
                 return;

@@ -3,11 +3,15 @@ package dev.faultora.testkit;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsExchange;
 import com.sun.net.httpserver.HttpsParameters;
 import com.sun.net.httpserver.HttpsServer;
+import dev.faultora.model.security.ContentDigest;
 import dev.faultora.runner.protocol.Dispatch;
+import dev.faultora.runner.protocol.DurableDelivery;
 import dev.faultora.runner.protocol.Lease;
 import dev.faultora.runner.protocol.Progress;
+import dev.faultora.runner.protocol.ProtocolVersion;
 import dev.faultora.runner.protocol.Registration;
 import dev.faultora.runner.protocol.Session;
 
@@ -17,13 +21,18 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.security.cert.CertificateEncodingException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.UnaryOperator;
 
 /**
  * Something for a runner to dial, so the runner can be qualified.
@@ -44,6 +53,11 @@ public final class QualificationDispatcher implements AutoCloseable {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final HttpsServer server;
+    private final ExecutorService executor;
+    private final QualificationDeliveryStore delivery;
+    private final ConcurrentMap<String, QualificationDeliveryStore.Peer> sessions = new ConcurrentHashMap<>();
+    private final AtomicBoolean loseTerminalAck = new AtomicBoolean();
+    private final AtomicReference<UnaryOperator<DurableDelivery.Ack>> changeProgressAck = new AtomicReference<>();
     private final AtomicReference<Dispatch> pending = new AtomicReference<>();
     private final ConcurrentMap<String, List<String>> journals = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, String> outcomes = new ConcurrentHashMap<>();
@@ -72,7 +86,23 @@ public final class QualificationDispatcher implements AutoCloseable {
      * happens to be listening on.
      */
     public QualificationDispatcher(SSLContext context, String bindHost) throws IOException {
-        server = HttpsServer.create(new InetSocketAddress(bindHost, 0), 0);
+        this(context, bindHost, 0, null);
+    }
+
+    /** Opt-in receiver for qualifying durable delivery across process recreation on the same route. */
+    public QualificationDispatcher(SSLContext context, Path deliveryDirectory, int port) throws IOException {
+        this(context, "127.0.0.1", port, new QualificationDeliveryStore(deliveryDirectory));
+    }
+
+    private QualificationDispatcher(SSLContext context, String bindHost, int port,
+                                    QualificationDeliveryStore delivery) throws IOException {
+        this.delivery = delivery;
+        try {
+            server = HttpsServer.create(new InetSocketAddress(bindHost, port), 0);
+        } catch (IOException unavailable) {
+            if (delivery != null) delivery.close();
+            throw unavailable;
+        }
         server.setHttpsConfigurator(new HttpsConfigurator(context) {
             @Override
             public void configure(HttpsParameters parameters) {
@@ -86,7 +116,12 @@ public final class QualificationDispatcher implements AutoCloseable {
         server.createContext("/runner/progress", this::progress);
         server.createContext("/runner/heartbeat", this::heartbeat);
         server.createContext("/runner/result", this::result);
-        server.setExecutor(Executors.newFixedThreadPool(4));
+        if (delivery != null) {
+            server.createContext("/runner/v2/progress", this::durableProgress);
+            server.createContext("/runner/v2/result", this::durableResult);
+        }
+        executor = Executors.newFixedThreadPool(4);
+        server.setExecutor(executor);
         server.start();
     }
 
@@ -115,6 +150,22 @@ public final class QualificationDispatcher implements AutoCloseable {
         return outcomes.get(runId);
     }
 
+    public DurableDelivery.Terminal durableTerminalOf(String runId) throws IOException {
+        return delivery.terminalOf(runId);
+    }
+
+    public List<String> durableJournalOf(String runId) throws IOException {
+        return delivery.journalOf(runId);
+    }
+
+    /** Close the next accepted terminal response after persistence, before sending its ACK. */
+    public void loseNextDurableTerminalAck() { loseTerminalAck.set(true); }
+
+    /** Replace one progress ACK when qualifying a malformed or conflicting peer. */
+    public void changeNextDurableProgressAck(UnaryOperator<DurableDelivery.Ack> change) {
+        changeProgressAck.set(change);
+    }
+
     /** Every registration this dispatcher has answered. */
     public List<Registration> registrations() {
         return List.copyOf(registrations);
@@ -123,13 +174,19 @@ public final class QualificationDispatcher implements AutoCloseable {
     private void register(HttpExchange exchange) throws IOException {
         byte[] body = exchange.getRequestBody().readNBytes(Registration.MAX_JSON_BYTES + 1);
         String json = new String(body, java.nio.charset.StandardCharsets.UTF_8);
-        Session session = body.length > Registration.MAX_JSON_BYTES
-                ? Session.answerJson(null, UUID.randomUUID().toString())
-                : Session.answerJson(json, UUID.randomUUID().toString());
+        List<String> supported = delivery == null ? ProtocolVersion.SUPPORTED
+                : List.of(ProtocolVersion.DURABLE_DELIVERY);
+        Session session = Session.answerJson(body.length > Registration.MAX_JSON_BYTES ? null : json,
+                UUID.randomUUID().toString(), supported);
         if (session.isAccepted()) {
-            registrations.add(MAPPER.readerFor(Registration.class)
+            Registration registration = MAPPER.readerFor(Registration.class)
                     .without(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
-                    .readValue(json));
+                    .readValue(json);
+            if (delivery != null) {
+                var peer = new QualificationDeliveryStore.Peer(registration.runnerId(), certificateDigest(exchange));
+                sessions.put(session.sessionId(), peer);
+            }
+            registrations.add(registration);
         }
         respond(exchange, session.isAccepted() ? 200 : 409,
                 MAPPER.writeValueAsString(session));
@@ -144,13 +201,94 @@ public final class QualificationDispatcher implements AutoCloseable {
      * be right, and it is the half being qualified.
      */
     private void work(HttpExchange exchange) throws IOException {
+        QualificationDeliveryStore.Peer registered = delivery == null ? null : registeredPeer(exchange);
+        if (delivery != null && registered == null) {
+            respond(exchange, 403, "");
+            return;
+        }
         Dispatch dispatch = pending.getAndSet(null);
         if (dispatch == null) {
             exchange.sendResponseHeaders(204, -1);
             exchange.close();
             return;
         }
+        if (registered != null) {
+            try {
+                delivery.authorize(registered, dispatch);
+            } catch (QualificationDeliveryStore.Conflict conflict) {
+                respond(exchange, 409, "");
+                return;
+            } catch (IOException unavailable) {
+                pending.compareAndSet(null, dispatch);
+                respond(exchange, 503, "");
+                return;
+            }
+        }
         respond(exchange, 200, MAPPER.writeValueAsString(dispatch));
+    }
+
+    private QualificationDeliveryStore.Peer registeredPeer(HttpExchange exchange) throws IOException {
+        String session = queryValue(exchange, "session");
+        QualificationDeliveryStore.Peer registered = session == null ? null : sessions.get(session);
+        return registered != null && registered.certificateDigest().equals(certificateDigest(exchange))
+                ? registered : null;
+    }
+
+    private static String certificateDigest(HttpExchange exchange) throws IOException {
+        try {
+            return ContentDigest.sha256Uri(((HttpsExchange) exchange).getSSLSession()
+                    .getPeerCertificates()[0].getEncoded());
+        } catch (CertificateEncodingException unavailable) {
+            throw new IOException("DURABLE_RECEIVER_PEER_UNAVAILABLE");
+        }
+    }
+
+    private void durableProgress(HttpExchange exchange) throws IOException {
+        deliver(exchange, DurableDelivery.Progress.class, (peer, progress) -> {
+            var ack = delivery.progress(peer, progress);
+            var change = changeProgressAck.getAndSet(null);
+            return change == null ? ack : change.apply(ack);
+        });
+    }
+
+    private void durableResult(HttpExchange exchange) throws IOException {
+        deliver(exchange, DurableDelivery.Terminal.class, (peer, terminal) -> {
+            var ack = delivery.terminal(peer, terminal);
+            return loseTerminalAck.getAndSet(false) ? null : ack;
+        });
+    }
+
+    @FunctionalInterface
+    private interface Accept<T> {
+        DurableDelivery.Ack accept(QualificationDeliveryStore.Peer peer, T message) throws IOException;
+    }
+
+    private <T> void deliver(HttpExchange exchange, Class<T> type, Accept<T> accept) throws IOException {
+        QualificationDeliveryStore.Peer registered = registeredPeer(exchange);
+        if (registered == null || !"POST".equals(exchange.getRequestMethod())) {
+            respond(exchange, 403, "");
+            return;
+        }
+        T message;
+        try {
+            message = DurableDelivery.decode(exchange.getRequestBody().readNBytes(DurableDelivery.MAX_REQUEST_BYTES + 1),
+                    type, DurableDelivery.MAX_REQUEST_BYTES);
+        } catch (IOException malformed) {
+            respond(exchange, 400, "");
+            return;
+        }
+        DurableDelivery.Ack ack;
+        try {
+            ack = accept.accept(registered, message);
+        } catch (QualificationDeliveryStore.Conflict conflict) {
+            respond(exchange, 409, "");
+            return;
+        } catch (IOException unavailable) {
+            respond(exchange, 503, "");
+            return;
+        }
+        if (ack == null) exchange.close();
+        else respond(exchange, 200, MAPPER.writeValueAsString(ack));
     }
 
     /**
@@ -166,6 +304,10 @@ public final class QualificationDispatcher implements AutoCloseable {
      * since a real controller has to implement the same pair.
      */
     private void progress(HttpExchange exchange) throws IOException {
+        if (delivery != null) {
+            respond(exchange, 403, "");
+            return;
+        }
         Progress progress = MAPPER.readValue(exchange.getRequestBody(), Progress.class);
         List<String> journal = journals.computeIfAbsent(
                 progress.runId(), runId -> java.util.Collections.synchronizedList(
@@ -216,6 +358,10 @@ public final class QualificationDispatcher implements AutoCloseable {
     }
 
     private void result(HttpExchange exchange) throws IOException {
+        if (delivery != null) {
+            respond(exchange, 403, "");
+            return;
+        }
         String runId = queryValue(exchange, "run");
         String body = new String(
                 exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
@@ -250,5 +396,10 @@ public final class QualificationDispatcher implements AutoCloseable {
     @Override
     public void close() {
         server.stop(0);
+        executor.shutdownNow();
+        if (delivery != null) {
+            try { delivery.close(); }
+            catch (IOException failed) { throw new java.io.UncheckedIOException("Receiver storage close failed", failed); }
+        }
     }
 }

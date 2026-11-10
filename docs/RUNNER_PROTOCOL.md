@@ -1,4 +1,6 @@
-# Runner protocol v1
+# Runner protocol
+
+## Version 1
 
 The transport version is the string `1`, independent of scenario YAML
 (`faultora.dev/v1` or its legacy alias) and of the Faultora build version.
@@ -26,3 +28,59 @@ Rejected alternatives: deriving transport version from YAML couples independent
 consumers; silently coercing malformed fields delays failures until dispatch;
 choosing the numerically highest version discards the runner's deployment-tested
 preference. Protocol 1 preserves runner preference and returns explicit refusals.
+
+## Version 2 durable delivery
+
+`faultora runner --durable-delivery` requests transport version `2` during
+registration and requires the dispatcher to select it before accepting work.
+The default runner continues to request version `1`. Version 2 uses the same
+work and lease endpoints. The two delivery endpoints below require a version 2
+session. The qualification dispatcher implements the receiver in a separate,
+version-2-only fixture mode.
+
+The attempt object carries the persistent spool `runnerId` UUID, the logical
+`runId`, the execution `attemptId` UUID and the `dispatchDigest` fingerprint.
+The spool UUID and the runner's registration name identify different things.
+The qualification receiver records dispatch ownership before handing out work.
+It fences the run ID from that point, including when no attempt has delivered
+its first record. It binds delivery to the registered runner name and the
+fingerprint of its authenticated TLS leaf certificate. Replaying on the fixture
+requires the original certificate.
+
+| POST endpoint | Request fields | Successful response |
+|---|---|---|
+| `/runner/v2/progress?session=…` | `attempt`, `fromPosition`, `eventLines` | `attempt`, exclusive `nextPosition`, `terminalDigest: null` |
+| `/runner/v2/result?session=…` | `attempt`, `finalPosition`, `status`, `cleanupConfirmed`, `leaseExpired`, `reasonCode`, `terminalDigest` | `attempt`, `nextPosition` equal to `finalPosition`, matching `terminalDigest` |
+
+Positions count committed records starting at zero and stop at 100,000.
+Progress batches carry up to 64 records and at most 1 MiB of combined
+UTF-8 event-line bytes, excluding line separators. Encoded requests are
+limited to 3 MiB and ACKs to 4 KiB.
+The terminal digest is SHA-256 of the UTF-8 text formed by joining the status,
+decimal final position, cleanup flag, lease-expiry flag and reason code with
+LF characters and no trailing LF. The digest uses the `sha256:` prefix.
+
+The receiver compares overlapping records, persists the accepted prefix before
+acknowledging it and accepts a terminal only after the full prefix is present.
+Replaying the same terminal returns its ACK. A conflicting record, conflicting
+terminal or gap is refused.
+
+The sender delivers from the closed, verified spool. It records the
+acknowledged position and terminal digest in `delivery-ack.json`, bound to
+the attempt and original route. On reconnect or restart it resumes delivery
+from the checkpoint. An attempt without a committed terminal stays available
+for recovery inspection. Replay submits records and results only, with no
+scenario execution or lease extension.
+
+A checkpoint that cannot be verified against the spool or its configured
+route blocks recovery and new dispatches. The CLI reports
+`DURABLE_DELIVERY_STORAGE_UNAVAILABLE` and asks the operator to reconcile
+the work directory before restarting.
+
+A refusal before execution stays local to the runner. The version 2 fixture
+retains the issued ID for reconciliation and accepts only a spool-backed
+terminal on the durable result endpoint.
+
+The checkpoint and qualification receiver use forced file writes and atomic
+replacement for process restart. Power-loss durability and retention
+automation require separate qualification.

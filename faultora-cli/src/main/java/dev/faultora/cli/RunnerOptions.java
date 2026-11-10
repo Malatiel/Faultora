@@ -54,6 +54,7 @@ import java.util.Set;
  * @param shutdownGraceMs    how long a signal waits for the run in flight to
  *                           finish and report before the process goes
  * @param once               take one dispatch and stop, rather than serving
+ * @param durableDelivery    require a protocol 2 dispatcher
  * @param helpRequested      whether the operator asked for help instead
  */
 record RunnerOptions(
@@ -71,6 +72,7 @@ record RunnerOptions(
         Path healthFile,
         long shutdownGraceMs,
         boolean once,
+        boolean durableDelivery,
         boolean helpRequested
 ) {
     /** Where journals go when the operator names nowhere. */
@@ -127,6 +129,7 @@ record RunnerOptions(
         Path healthFile = null;
         long shutdownGraceMs = DEFAULT_SHUTDOWN_GRACE_MS;
         boolean once = false;
+        boolean durableDelivery = false;
 
         EvidencePolicy keeps = RunEvidence.defaultPolicy();
         boolean captureBodies = keeps.captureBodies();
@@ -176,12 +179,18 @@ record RunnerOptions(
                 case "--shutdown-grace" ->
                         shutdownGraceMs = duration(value(remaining, option), option);
                 case "--once" -> once = true;
+                case "--durable-delivery" -> durableDelivery = true;
                 default -> throw new CliException(
                         "Unknown option: " + option, FaultoraCli.EXIT_INVALID_CONFIG);
             }
         }
 
         require(dispatcherUrl, "--dispatcher", "the address this runner dials out to");
+        if (durableDelivery && (!"https".equalsIgnoreCase(dispatcherUrl.getScheme())
+                || dispatcherUrl.getHost() == null || dispatcherUrl.getUserInfo() != null)) {
+            throw new CliException("--durable-delivery requires an HTTPS dispatcher without user info",
+                    FaultoraCli.EXIT_INVALID_CONFIG);
+        }
         require(keystore, "--keystore", "this runner's own key material");
         require(truststore, "--truststore",
                 "the control planes this runner will speak to");
@@ -211,14 +220,14 @@ record RunnerOptions(
                                 keeps.contentTypeAllowlist(), keeps.retentionClass())),
                 toxiproxyUrl, List.copyOf(allowedExtensions),
                 healthFile == null ? workDirectory.resolve("health.json") : healthFile,
-                shutdownGraceMs, once, false);
+                shutdownGraceMs, once, durableDelivery, false);
     }
 
     private static RunnerOptions help() {
         return new RunnerOptions(null, null, null, null, Map.of(), DEFAULT_WORK_DIRECTORY,
                 null, false, null, null, List.of(),
                 DEFAULT_WORK_DIRECTORY.resolve("health.json"),
-                DEFAULT_SHUTDOWN_GRACE_MS, false, true);
+                DEFAULT_SHUTDOWN_GRACE_MS, false, false, true);
     }
 
     /**
