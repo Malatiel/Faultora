@@ -63,6 +63,16 @@ public final class ExtensionProcess implements AutoCloseable {
         if (entrypoint == null || !entrypoint.matches("[A-Za-z_$][A-Za-z0-9_$.]{0,255}")) {
             throw new IllegalArgumentException("A qualified protocol entrypoint is required");
         }
+        return launch(artifact, entrypoint, runtimeClasspath, declaration, lifetime);
+    }
+
+    static ExtensionProcess startAssertion(StagedArtifact artifact, List<Path> runtimeClasspath,
+                                           Declaration declaration, Duration lifetime) throws IOException, InterruptedException {
+        return launch(artifact, VerifiedJvmMain.ASSERTION_MODE, runtimeClasspath, declaration, lifetime);
+    }
+
+    private static ExtensionProcess launch(StagedArtifact artifact, String entrypoint, List<Path> runtimeClasspath,
+                                           Declaration declaration, Duration lifetime) throws IOException, InterruptedException {
         String separator = System.getProperty("path.separator");
         List<String> paths = new ArrayList<>();
         for (Path path : runtimeClasspath) {
@@ -134,6 +144,16 @@ public final class ExtensionProcess implements AutoCloseable {
 
     /** Requests stay opaque data here; typed provider adapters validate their result before use. */
     public JsonNode request(Provider provider, JsonNode input, Duration timeout) throws IOException, InterruptedException {
+        return request(provider, input, timeout, value -> value);
+    }
+
+    @FunctionalInterface
+    interface ResultReader<T> {
+        T read(JsonNode value) throws IOException;
+    }
+
+    <T> T request(Provider provider, JsonNode input, Duration timeout, ResultReader<T> reader)
+            throws IOException, InterruptedException {
         if (closed || !pending.compareAndSet(false, true)) throw new IOException("INVALID_STATE");
         long started = System.nanoTime();
         try {
@@ -147,8 +167,9 @@ public final class ExtensionProcess implements AutoCloseable {
             require(reply.path("kind").asText().equals("result"), "PROVIDER_ERROR");
             fields(reply.get("data"), "provider", "value");
             require(selector(provider).equals(reply.path("data").get("provider")), "ID_MISMATCH");
+            T result = reader.read(reply.path("data").get("value"));
             require(beforeDeadline(started, budget), "DEADLINE_EXCEEDED");
-            return reply.path("data").get("value");
+            return result;
         } catch (IOException | InterruptedException failed) {
             abort(failed);
             throw failed;
@@ -205,18 +226,18 @@ public final class ExtensionProcess implements AutoCloseable {
     }
 
     private ObjectNode plugin() { return JSON.createObjectNode().put("id", declaration.id()).put("version", declaration.version()); }
-    private static ObjectNode selector(Provider provider) {
+    static ObjectNode selector(Provider provider) {
         return JSON.createObjectNode().put("kind", provider.kind()).put("name", provider.name());
     }
 
-    private static void fields(JsonNode value, String... expected) throws IOException {
+    static void fields(JsonNode value, String... expected) throws IOException {
         require(value != null && value.isObject(), "MALFORMED_MESSAGE");
         Set<String> actual = new HashSet<>();
         value.fieldNames().forEachRemaining(actual::add);
         require(actual.equals(Set.of(expected)), "MALFORMED_MESSAGE");
     }
 
-    private static void require(boolean condition, String code) throws IOException {
+    static void require(boolean condition, String code) throws IOException {
         if (!condition) throw new IOException(code);
     }
 

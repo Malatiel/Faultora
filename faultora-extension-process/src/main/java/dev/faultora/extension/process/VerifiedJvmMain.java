@@ -16,12 +16,16 @@ import java.util.zip.ZipInputStream;
 
 /** Trusted bootstrap: authenticate the complete copy before reading any plugin class or resource. */
 public final class VerifiedJvmMain {
+    static final String ASSERTION_MODE = "--assertion-provider";
+
     private VerifiedJvmMain() { }
 
     public static void main(String[] args) {
         try {
             if (args.length != 3 || !args[1].matches("sha256:[0-9a-f]{64}")
-                    || !args[2].matches("[A-Za-z_$][A-Za-z0-9_$.]{0,255}")) throw new IOException("INVALID_LAUNCH");
+                    || !(ASSERTION_MODE.equals(args[2]) || args[2].matches("[A-Za-z_$][A-Za-z0-9_$.]{0,255}"))) {
+                throw new IOException("INVALID_LAUNCH");
+            }
             Path artifact = Path.of(args[0]);
             StagedArtifact.noLinks(artifact);
             byte[] bytes;
@@ -32,9 +36,13 @@ public final class VerifiedJvmMain {
             String actual = "sha256:" + HexFormat.of().formatHex(StagedArtifact.sha256().digest(bytes));
             if (!actual.equals(args[1])) throw new IOException("ARTIFACT_CHANGED");
             MemoryJar loader = new MemoryJar(bytes);
+            Thread.currentThread().setContextClassLoader(loader);
+            if (ASSERTION_MODE.equals(args[2])) {
+                AssertionPeer.run(loader, System.in, System.out);
+                return;
+            }
             Class<?> entry = Class.forName(args[2], false, loader);
             if (entry.getClassLoader() != loader) throw new IOException("ENTRYPOINT_NOT_IN_ARTIFACT");
-            Thread.currentThread().setContextClassLoader(loader);
             entry.getMethod("main", String[].class).invoke(null, (Object) new String[0]);
         } catch (Throwable refused) {
             System.err.println("EXTENSION_START_OR_EXECUTION_FAILED");

@@ -97,7 +97,7 @@ public record EvidenceSnapshot(
 
             @Override
             public Optional<byte[]> responseBody() {
-                return Optional.ofNullable(body);
+                return Optional.ofNullable(body).map(byte[]::clone);
             }
 
             @Override

@@ -5,10 +5,9 @@
 This is the normative data contract for the process-boundary slice of
 [ADR-023](adr/ADR-023-extension-isolation.md). The fixtures, a **test-only**
 conformance probe and the bounded `faultora-extension-protocol` codec exist.
-The child lifecycle is implemented as a separate library; provider adapters
-and policy enforcement remain pending. Requesting process isolation still
-fails closed. This document does not claim an OS sandbox, a heap ceiling,
-network enforcement or provider-side recovery merely because a child stops.
+The child lifecycle library includes an assertion adapter. The CLI and
+runner still refuse policies that require process isolation. Importer and
+renderer adapters and resource, network and secret controls remain pending.
 
 Only `AssertionProvider`, `SourceImporter` and `ReportRenderer` cross this
 boundary. Connectors, fault providers and secret resolvers do not. There is no
@@ -97,7 +96,8 @@ there is no queue, batching, server notification or concurrent dispatch in 1.0.
 3. Child sends `ready`: `maxFrameBytes`, `plugin`, `providers`. Its plugin
    declaration must match; the selector **set** must equal the offer (order
    does not matter). Missing, additional or unsupported providers are refused.
-   No request is sent or provider invoked before this acknowledgement.
+   The parent sends the first request after this acknowledgement. The child
+   evaluates a provider only in response to a request.
 4. Parent sends a `request`, child sends exactly one matching `result` or
    terminal `error`. A successful result returns the session to idle.
 5. When idle, parent sends `shutdown` with `data.timeoutMs`; child returns
@@ -216,18 +216,26 @@ by the caller, which must discard the channel after a refusal and enforce I/O
 deadlines. Handshake state, provider payloads, process start/stop and policy
 enforcement are not implemented by the codec.
 
-The next slices are the three adapters, resource/network/secret enforcement and packaged plugin
-qualification. Existing ADR-023 policy refusals remain until those controls
-are implemented. Do not infer isolation from passing these conformance tests.
+Tests compare assertion payloads with the wire fixtures and exercise the
+adapter with a real child. The remaining slices cover the importer and
+renderer adapters, resource, network and secret controls, and packaged
+plugin qualification. Existing ADR-023 policy refusals remain in effect.
 
 ## Child lifecycle implementation
 
 `faultora-extension-process` starts an admitted protocol peer using an
 absolute Java launcher and an argument list, without a shell. The caller
 supplies an approved artifact digest and declaration and an operator-owned
-runtime classpath. Manifest/API/capability admission and typed provider
-adapters remain separate responsibilities; an arbitrary class on a classpath
-does not acquire provider authority through this API.
+runtime classpath. The caller retains responsibility for manifest, API and
+capability admission.
+
+`ExtensionAssertionProvider` selects one assertion type. Its trusted child
+loads one artifact-local `AssertionProvider` from the verified JAR's service
+declaration. The caller supplies evidence already narrowed by policy and
+projects protocol-specific Java values to plain JSON before calling the
+adapter. The adapter bounds tree construction before encoding the frame
+and returns the verdict with fixed diagnostic text. A malformed or
+mismatched reply closes the peer and yields `INDETERMINATE`.
 
 `StagedArtifact.copy` creates an owner-only run directory, rejects link/reparse
 paths, bounds the copy at 128 MiB and computes its SHA-256 after writing and
