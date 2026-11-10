@@ -2,6 +2,7 @@ package dev.faultora.runner;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import dev.faultora.engine.run.RunResult;
 import dev.faultora.model.security.ExtensionPolicy;
 import dev.faultora.runner.protocol.Dispatch;
 import dev.faultora.runner.protocol.Lease;
@@ -143,7 +144,15 @@ public final class RunnerAgent {
         }
 
         if (delivery == null) {
-            deliverWhatIsLeft(dispatch.runId(), outcome, tail[0], terminalCommitted.get());
+            JournalTail finalTail = null;
+            // The heartbeat owns the cursor until it stops.
+            if (keepingAlive[0] == null || !keepingAlive[0].isAlive()) {
+                finalTail = tail[0];
+                if (finalTail == null && outcome.journalPath() != null) {
+                    finalTail = new JournalTail(outcome.journalPath());
+                }
+            }
+            deliverWhatIsLeft(client, dispatch.runId(), outcome, finalTail, terminalCommitted.get());
         } else if (terminalCommitted.get()) {
             recoveredSession = null;
             delivery.completed(sessionId, outcome.journalPath());
@@ -166,7 +175,7 @@ public final class RunnerAgent {
                 if (renewed.isPresent()) {
                     lease.renew(renewed.get(), System.currentTimeMillis());
                 }
-                if (tail != null) sendWhateverIsFinished(runId, tail);
+                if (tail != null) sendProgress(client, runId, tail, tail.next());
             } catch (InterruptedException stopping) {
                 Thread.currentThread().interrupt();
                 return;
@@ -182,20 +191,11 @@ public final class RunnerAgent {
         }
     }
 
-    /**
-     * Send the part of the journal that is finished being written.
-     * <p>
-     * Finished, not merely present: the tail hands over whole lines only, so a
-     * half-written event stays here until it is an event. Delivering it would
-     * move the far side's position past a fragment that no re-send can repair.
-     */
-    private void sendWhateverIsFinished(String runId, JournalTail tail)
+    private static JournalTail.Batch sendProgress(
+            RunnerClient client, String runId, JournalTail tail, JournalTail.Batch batch)
             throws IOException, InterruptedException {
-        JournalTail.Batch batch = tail.next();
-        if (!batch.isEmpty()) {
-            tail.delivered(batch, client.sendProgress(
-                    runId, batch.fromPosition(), batch.lines()));
-        }
+        if (batch.isEmpty()) return batch;
+        return tail.delivered(batch, client.sendProgress(runId, batch.fromPosition(), batch.lines()));
     }
 
     /**
@@ -205,26 +205,33 @@ public final class RunnerAgent {
      * lease, or broke part-way. A run that was bounded and whose findings never
      * arrived has failed the gate from the other side.
      */
-    private void deliverWhatIsLeft(
-            String runId, DispatchedRun.Outcome outcome, JournalTail tail, boolean terminalCommitted) {
+    static void deliverWhatIsLeft(RunnerClient client, String runId,
+            DispatchedRun.Outcome outcome, JournalTail tail, boolean terminalCommitted) {
+        boolean journalDelivered = false;
         try {
             if (tail != null) {
-                sendWhateverIsFinished(runId, tail);
-            } else if (outcome.journalPath() != null) {
-                sendWhateverIsFinished(runId, new JournalTail(outcome.journalPath()));
+                JournalTail.Batch pending = tail.next();
+                // Retry just the unacknowledged suffix of the closed mirror. Each
+                // response must advance the cursor to justify another request.
+                while (!pending.isEmpty()) {
+                    JournalTail.Batch remaining = sendProgress(client, runId, tail, pending);
+                    if (remaining.fromPosition() == pending.fromPosition()) break;
+                    pending = remaining;
+                }
+                journalDelivered = pending.isEmpty() && pending.atEnd() && tail.position() > 0;
             }
         } catch (InterruptedException stopping) {
             Thread.currentThread().interrupt();
             return;
-        } catch (Exception progressUnavailable) {
-            // A broken journal mirror must not suppress a committed failure diagnosis.
+        } catch (IOException | NumberFormatException | TlsMaterial.TlsUnavailable progressUnavailable) {
+            // Even when the mirror is unavailable, a committed failure is reportable.
         }
         if (outcome.refusal() == null && !terminalCommitted) return;
         try {
-            client.sendOutcome(runId, describe(outcome));
+            client.sendOutcome(runId, describe(outcome, journalDelivered));
         } catch (InterruptedException stopping) {
             Thread.currentThread().interrupt();
-        } catch (Exception stillUnreachable) {
+        } catch (IOException | TlsMaterial.TlsUnavailable stillUnreachable) {
             // Committed facts remain on disk. Protocol v1 supplies no durable
             // ACK or automatic restart delivery; neither implies execution replay.
         }
@@ -242,6 +249,10 @@ public final class RunnerAgent {
     // asserted directly. A run that broke is the case with no other
     // diagnosis, and it is the one that was empty.
     static String describe(DispatchedRun.Outcome outcome) {
+        return describe(outcome, true);
+    }
+
+    private static String describe(DispatchedRun.Outcome outcome, boolean journalDelivered) {
         ObjectNode described = MAPPER.createObjectNode();
         if (outcome.refusal() != null) {
             described.put("refused", outcome.refusal().reason().toString());
@@ -249,6 +260,9 @@ public final class RunnerAgent {
         } else if (outcome.failure() != null) {
             described.put("broke", true);
             described.put("why", outcome.failure());
+        } else if (outcome.result().status() == RunResult.Status.PASSED && !journalDelivered) {
+            described.put("broke", true);
+            described.put("why", "journal delivery incomplete");
         } else {
             described.put("status", outcome.result().status().toString());
             described.put("leaseExpired", outcome.leaseExpired());

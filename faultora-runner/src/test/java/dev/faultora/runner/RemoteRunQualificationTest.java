@@ -29,6 +29,7 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -36,6 +37,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -448,6 +450,86 @@ class RemoteRunQualificationTest {
             assertThat(terminal.finalPosition()).isEqualTo(count);
             assertThat(checkpoint(artifacts.directory()).path("terminalDigest").textValue())
                     .isEqualTo(terminal.terminalDigest());
+        }
+    }
+
+    @Test
+    void aPartialAckPersistsOnlyTheConfirmedPrefixAndRetriesFromItAfterRestart() throws Exception {
+        Pair tls = trustingEachOther();
+        Path work = directory.resolve("runner");
+        var runId = new RunId("run-partial-ack");
+        Path run = RunArtifacts.dispatchedDirectory(work, runId);
+        try (var dispatcher = new QualificationDispatcher(tls.dispatcher().sslContext(),
+                directory.resolve("receiver"), 0)) {
+            var client = durableClient(dispatcher, tls, "runner-1");
+            Session first = client.register();
+            dispatcher.offer(dispatch(runId.value(), scenarioLasting(1, "1ms"), 60_000));
+            var original = new AtomicReference<DurableDelivery.Progress>();
+            var immediateRetry = new AtomicReference<DurableDelivery.Progress>();
+            dispatcher.interceptNextDurableProgressAck((progress, ack) -> {
+                original.set(progress);
+                dispatcher.interceptNextDurableProgressAck((retry, nextAck) -> {
+                    immediateRetry.set(retry);
+                    return new DurableDelivery.Ack(nextAck.attempt(), retry.fromPosition(), null);
+                });
+                return new DurableDelivery.Ack(ack.attempt(), 1, null);
+            });
+
+            assertThatThrownBy(() -> durableAgent(client, work).takeOneDispatch(first.sessionId()))
+                    .hasMessage("DURABLE_DELIVERY_ACK_MISMATCH");
+            assertThat(checkpoint(run).path("nextPosition").longValue()).isEqualTo(1L);
+            assertThat(original.get().fromPosition()).isZero();
+            List<String> committed = dispatcher.durableJournalOf(runId.value());
+            assertThat(committed.size()).isGreaterThan(1);
+            var suffix = committed.subList(1, committed.size());
+            assertThat(immediateRetry.get()).isEqualTo(new DurableDelivery.Progress(original.get().attempt(), 1, suffix));
+            assertThat(dispatcher.durableTerminalOf(runId.value())).isNull();
+
+            var restartedRequest = new AtomicReference<DurableDelivery.Progress>();
+            dispatcher.interceptNextDurableProgressAck((retry, ack) -> {
+                restartedRequest.set(retry);
+                return ack;
+            });
+            Session restarted = client.register();
+            assertThat(durableAgent(client, work).takeOneDispatch(restarted.sessionId())).isEmpty();
+            assertThat(restartedRequest.get()).isEqualTo(immediateRetry.get());
+            assertThat(dispatcher.durableJournalOf(runId.value())).containsExactlyElementsOf(committed);
+            assertThat(dispatcher.durableTerminalOf(runId.value()).finalPosition()).isEqualTo(committed.size());
+        }
+    }
+
+    @Test
+    void aTornSpoolWithoutATerminalPreservesItsPrefixWithoutPublishingAnOutcome() throws Exception {
+        Pair tls = trustingEachOther();
+        Path work = directory.resolve("runner");
+        var runId = new RunId("run-torn-spool");
+        try (var dispatcher = new QualificationDispatcher(tls.dispatcher().sslContext(),
+                directory.resolve("receiver"), 0)) {
+            var client = durableClient(dispatcher, tls, "runner-1");
+            Session session = client.register();
+            Dispatch offered = dispatch(runId.value(), scenarioLasting(1, "1ms"), 60_000);
+            dispatcher.offer(offered);
+            assertThat(client.pollForWork(session.sessionId())).contains(offered);
+            var artifacts = RunArtifacts.claimDispatched(work, runId);
+            var identity = new DurableRunSpool.Identity(DurableRunSpool.runnerIdentity(work), runId.value(),
+                    "123e4567-e89b-12d3-a456-426614174002", ContentDigest.sha256Uri("torn-fixture"), 123456789L);
+            Path spoolPath = artifacts.journalPath().resolveSibling("spool.bin");
+            try (var spool = DurableRunSpool.create(spoolPath, identity)) {
+                new DurableRunDelivery(client, work).opened(identity, spoolPath);
+                spool.appendEvent(new RunEvent.NodeSkipped("NODE_SKIPPED", 1L, runId,
+                        new NodeId("fixture-node"), "fixture"));
+            }
+            Files.write(spoolPath, new byte[] {0, 0}, StandardOpenOption.APPEND);
+            byte[] tornSpool = Files.readAllBytes(spoolPath);
+
+            assertThat(durableAgent(client, work).takeOneDispatch(session.sessionId())).isEmpty();
+            var recovered = DurableRunSpool.recover(spoolPath);
+            assertThat(recovered.recoveryRequired()).isTrue();
+            assertThat(recovered.events()).isEqualTo(1L);
+            assertThat(Files.readAllBytes(spoolPath)).isEqualTo(tornSpool);
+            assertThat(checkpoint(artifacts.directory()).path("nextPosition").longValue()).isZero();
+            assertThat(dispatcher.durableJournalOf(runId.value())).isEmpty();
+            assertThat(dispatcher.durableTerminalOf(runId.value())).isNull();
         }
     }
 

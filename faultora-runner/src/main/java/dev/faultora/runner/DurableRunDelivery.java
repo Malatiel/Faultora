@@ -181,19 +181,26 @@ final class DurableRunDelivery {
         Attempt attempt = checkpoint.attempt();
         long from = checkpoint.nextPosition();
         while (from < terminal.finalPosition()) {
-            Progress progress = new Progress(attempt, from,
-                    spool.nextBatch(from, DurableDelivery.MAX_BATCH_EVENTS, DurableDelivery.MAX_BATCH_BYTES));
-            long end = progress.endPosition();
-            accept(path, client.acknowledgeProgress(sessionId, progress), new Ack(attempt, end, null));
-            from = end;
+            long batchStart = from;
+            var batch = spool.nextBatch(from, DurableDelivery.MAX_BATCH_EVENTS, DurableDelivery.MAX_BATCH_BYTES);
+            long batchEnd = batchStart + batch.size();
+            do {
+                int offset = Math.toIntExact(from - batchStart);
+                var progress = new Progress(attempt, from, batch.subList(offset, batch.size()));
+                Ack ack = client.acknowledgeProgress(sessionId, progress);
+                if (!attempt.equals(ack.attempt()) || ack.terminalDigest() != null
+                        || ack.nextPosition() <= from || ack.nextPosition() > batchEnd) {
+                    throw new IOException("DURABLE_DELIVERY_ACK_MISMATCH");
+                }
+                save(path, new Checkpoint(routeDigest, attempt, ack.nextPosition(), null));
+                from = ack.nextPosition();
+            } while (from < batchEnd);
         }
-        accept(path, client.acknowledgeTerminal(sessionId, terminal),
-                new Ack(attempt, terminal.finalPosition(), terminal.terminalDigest()));
-    }
-
-    private void accept(Path path, Ack actual, Ack expected) throws IOException {
-        if (!expected.equals(actual)) throw new IOException("DURABLE_DELIVERY_ACK_MISMATCH");
-        save(path, new Checkpoint(routeDigest, actual.attempt(), actual.nextPosition(), actual.terminalDigest()));
+        Ack expected = new Ack(attempt, terminal.finalPosition(), terminal.terminalDigest());
+        if (!expected.equals(client.acknowledgeTerminal(sessionId, terminal))) {
+            throw new IOException("DURABLE_DELIVERY_ACK_MISMATCH");
+        }
+        save(path, new Checkpoint(routeDigest, attempt, expected.nextPosition(), expected.terminalDigest()));
     }
 
     private static Attempt attempt(DurableRunSpool.Identity identity) {

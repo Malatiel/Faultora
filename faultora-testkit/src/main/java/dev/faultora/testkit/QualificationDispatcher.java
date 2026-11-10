@@ -32,6 +32,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiFunction;
 import java.util.function.UnaryOperator;
 
 /**
@@ -57,7 +58,8 @@ public final class QualificationDispatcher implements AutoCloseable {
     private final QualificationDeliveryStore delivery;
     private final ConcurrentMap<String, QualificationDeliveryStore.Peer> sessions = new ConcurrentHashMap<>();
     private final AtomicBoolean loseTerminalAck = new AtomicBoolean();
-    private final AtomicReference<UnaryOperator<DurableDelivery.Ack>> changeProgressAck = new AtomicReference<>();
+    private final AtomicReference<BiFunction<DurableDelivery.Progress, DurableDelivery.Ack, DurableDelivery.Ack>>
+            changeProgressAck = new AtomicReference<>();
     private final AtomicReference<Dispatch> pending = new AtomicReference<>();
     private final ConcurrentMap<String, List<String>> journals = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, String> outcomes = new ConcurrentHashMap<>();
@@ -163,6 +165,12 @@ public final class QualificationDispatcher implements AutoCloseable {
 
     /** Replace one progress ACK when qualifying a malformed or conflicting peer. */
     public void changeNextDurableProgressAck(UnaryOperator<DurableDelivery.Ack> change) {
+        changeProgressAck.set(change == null ? null : (progress, ack) -> change.apply(ack));
+    }
+
+    /** Observe one committed progress request and choose the ACK to return. */
+    public void interceptNextDurableProgressAck(
+            BiFunction<DurableDelivery.Progress, DurableDelivery.Ack, DurableDelivery.Ack> change) {
         changeProgressAck.set(change);
     }
 
@@ -247,7 +255,7 @@ public final class QualificationDispatcher implements AutoCloseable {
         deliver(exchange, DurableDelivery.Progress.class, (peer, progress) -> {
             var ack = delivery.progress(peer, progress);
             var change = changeProgressAck.getAndSet(null);
-            return change == null ? ack : change.apply(ack);
+            return change == null ? ack : change.apply(progress, ack);
         });
     }
 
