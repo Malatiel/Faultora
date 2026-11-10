@@ -734,9 +734,10 @@ the control plane, not for a health probe, not for a metrics scrape.
 Three properties are worth knowing before deploying one:
 
 - **A run is bounded by a lease the runner does not control.** It renews the
-  lease by asking; when there is nobody to ask, the permission runs out and the
-  run stops, rolls back its faults and runs cleanup, on the runner's own clock.
-  Losing contact cannot extend a run or leave a fault injected.
+  lease through the dispatcher. When the lease expires on the runner's clock,
+  the runner stops the run and starts cleanup and fault rollback. If the
+  runner process is killed, the operator may need to remove leftover
+  Toxiproxy toxics. [Faultora's fault model](docs/WHY.md) explains the limits.
 - **The policy a run executes under is signed and verified.** A runner will not
   take its permissions from whoever reached it, and its own configuration is a
   floor a dispatch can narrow and never widen.
