@@ -92,3 +92,82 @@ and retention require the later durable-delivery slices. Retain the working
 directory across process changes and size/monitor its volume accordingly;
 unacknowledged evidence currently requires operator management. Restart never
 extends a lease or authorizes repeating target actions.
+
+## Operating the work directory
+
+Give each runner its own persistent, operator-controlled `--work-dir`. Keep
+`runner-identity` and every `run-<digest>` directory together. A run directory
+can contain `run-owner`, `spool.bin`, `events.ndjson` and reports. These files
+preserve evidence and prevent the same dispatch ID from claiming the
+directory again. `health.json` defaults to this volume and describes the
+current process. Its presence alone says nothing about readiness.
+
+### Capacity and retention
+
+Budget up to 64 MiB per retained attempt for its spool, plus space for its
+journal mirror and reports. Measure their sizes on representative runs and
+leave headroom for new attempts and terminal writes. The spool limit is per
+attempt. Monitor both free bytes and inodes on the whole volume.
+
+For a read-only inventory on Linux, use the configured work directory.
+
+```bash
+df -h -- "$work"
+df -i -- "$work"
+du -sk -- "$work"
+find "$work" -mindepth 1 -maxdepth 1 -type d -name 'run-*' -print
+```
+
+Treat the inventory as a dry run for retention review. Age, an apparently
+idle health file and a dispatcher reply are insufficient evidence that an
+attempt can be removed. Retain active, interrupted and unconfirmed attempts.
+Deleting an attempt directory also removes its local duplicate-dispatch
+guard. Keep the live tree intact and apply retention to verified backup
+copies under your evidence policy. If the volume approaches capacity, pause
+new dispatches and add capacity while preserving the work directory.
+
+### Back up and rehearse a restore
+
+Follow the [runner drain procedure](UPGRADE_ROLLBACK.md#a-runner) and wait
+for the process to exit. Confirm no other runner can write the volume before
+copying it. Back up the entire tree, including identity and ownership files.
+Store the backup outside the runner volume with access restricted to the
+operator. Back up deployment configuration and keys separately.
+
+The following Linux Bash example uses GNU tools. Set `work` to the stopped
+runner's resolved directory and `backup` and `restore` to new, disjoint
+directories outside it. Put both under operator-only parent directories,
+since the copy preserves the source directory's modes. Use directories
+without nested mounts. Rehearse with a scratch restore before replacing
+any volume.
+
+```bash
+(
+  set -euo pipefail
+  umask 077
+  unexpected=$(find "$work" -xdev ! -type d ! -type f -print -quit)
+  test -z "$unexpected"
+  mkdir -m 700 -- "$backup"
+  cp -ax -- "$work/." "$backup/"
+  diff -qr -- "$work" "$backup"
+  mkdir -m 700 -- "$restore"
+  cp -ax -- "$backup/." "$restore/"
+  diff -qr -- "$backup" "$restore"
+)
+```
+
+Check ownership and permissions separately before using the restored volume.
+Keep the original stopped and dispatch paused. Restored ownership covers only
+attempts in the backup. Reconcile attempts admitted since the backup and
+ensure the dispatcher cannot offer their run IDs again. If you cannot
+establish that, keep the restored volume for inspection. Once those attempts
+are fenced off, start a single runner and check fresh readiness with
+`faultora health --file <status file> --require-registered` before resuming
+new dispatches.
+
+A restore preserves evidence and local ownership. A verified spool without
+a terminal is `RECOVERY_REQUIRED`. Reconcile target-side effects and fault
+cleanup before scheduling new work. In default protocol v1, collect
+undelivered results manually. For a support report, review the reduced bundle
+produced by `faultora diagnose --run <run directory> --output <zip>` before
+sharing it.
