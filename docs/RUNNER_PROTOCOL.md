@@ -24,6 +24,14 @@ type or meaning changes, and incompatible enum changes require a new negotiated
 major. The malformed-registration reason is introduced before this boundary is
 frozen and is a closed-enum change for older strict readers.
 
+The runner sends complete UTF-8 JSON object lines from the journal. A numeric
+progress ACK advances only through the acknowledged lines. An unfinished or
+malformed line blocks delivery from that point and leaves the valid prefix
+available. A successful run is reported as `PASSED` only after the complete
+journal has been acknowledged. If the mirror is incomplete or delivery stalls,
+the runner reports `broke` with the reason `journal delivery incomplete`.
+Version 1 keeps the cursor in memory during the run.
+
 Rejected alternatives: deriving transport version from YAML couples independent
 consumers; silently coercing malformed fields delays failures until dispatch;
 choosing the numerically highest version discards the runner's deployment-tested
@@ -71,6 +79,16 @@ the attempt and original route. On reconnect or restart it resumes delivery
 from the checkpoint. An attempt without a committed terminal stays available
 for recovery inspection. Replay submits records and results only, with no
 scenario execution or lease extension.
+
+The sender verifies the spool sequentially under a shared lock before sending
+any records. It then reads one batch at a time from the same file. A progress
+ACK must identify the same attempt, have no terminal digest and advance within
+the submitted batch. When it confirms only part of the batch, the sender saves
+that position and retries from the first unacknowledged record. It loads the
+next batch only after the current one is fully acknowledged. A terminal ACK
+must match the attempt, final position and terminal digest exactly.
+The batch limits apply to the sender. The qualification receiver keeps a
+bounded per-attempt state file for its restart checks.
 
 A checkpoint that cannot be verified against the spool or its configured
 route blocks recovery and new dispatches. The CLI reports

@@ -11,6 +11,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Reading a file somebody else is still writing.
@@ -48,6 +49,7 @@ class JournalTailTest {
         assertThat(first.lines())
                 .as("the half-written event is not a line yet")
                 .containsExactly("{\"eventType\":\"RUN_STARTED\"}");
+        assertThat(first.atEnd()).isFalse();
         tail.delivered(first, first.lines().size());
 
         // Nothing new is offered while the fragment is still a fragment.
@@ -58,6 +60,7 @@ class JournalTailTest {
         JournalTail.Batch second = tail.next();
 
         assertThat(second.fromPosition()).isEqualTo(1);
+        assertThat(second.atEnd()).isTrue();
         assertThat(second.lines())
                 .as("it arrives once, whole, when it is whole")
                 .containsExactly(
@@ -67,22 +70,90 @@ class JournalTailTest {
     @Test
     void whatHasBeenTakenIsNotTakenAgain() throws Exception {
         Path journal = directory.resolve("events.ndjson");
-        append(journal, "one\ntwo\n");
+        append(journal, "{\"n\":1}\n{\"n\":2}\n");
 
         JournalTail tail = new JournalTail(journal);
         JournalTail.Batch first = tail.next();
         tail.delivered(first, 2);
 
-        append(journal, "three\n");
+        append(journal, "{\"n\":3}\n");
         JournalTail.Batch second = tail.next();
         tail.delivered(second, 3);
 
-        assertThat(first.lines()).containsExactly("one", "two");
+        assertThat(first.lines()).containsExactly("{\"n\":1}", "{\"n\":2}");
         assertThat(second.fromPosition()).isEqualTo(2);
-        assertThat(second.lines()).containsExactly("three");
+        assertThat(second.lines()).containsExactly("{\"n\":3}");
         assertThat(tail.position()).isEqualTo(3);
         assertThat(tail.next().isEmpty())
                 .as("a journal nobody has added to has nothing to send").isTrue();
+    }
+
+    @Test
+    void aPartialAcknowledgmentConsumesOnlyItsUtf8Lines() throws Exception {
+        Path journal = directory.resolve("events.ndjson");
+        String first = "{\"text\":\"строка — 元帳\"}\r";
+        String second = "{\"text\":\"ещё одна\"}";
+        append(journal, first + "\n" + second + "\n");
+
+        JournalTail tail = new JournalTail(journal);
+        tail.delivered(tail.next(), 1);
+
+        assertThat(tail.next().fromPosition()).isEqualTo(1);
+        assertThat(tail.next().lines()).containsExactly(second);
+        tail.delivered(tail.next(), 2);
+        assertThat(tail.next().isEmpty()).isTrue();
+    }
+
+    @Test
+    void noProgressAndOutOfRangeAcknowledgmentsLeaveTheCursorInPlace() throws Exception {
+        Path journal = directory.resolve("events.ndjson");
+        append(journal, "{\"n\":1}\n{\"n\":2}\n");
+
+        JournalTail tail = new JournalTail(journal);
+        tail.delivered(tail.next(), 1);
+        JournalTail.Batch pending = tail.next();
+        tail.delivered(pending, 1);
+        assertThatThrownBy(() -> tail.delivered(pending, 0)).isInstanceOf(IOException.class);
+        assertThatThrownBy(() -> tail.delivered(pending, 3)).isInstanceOf(IOException.class);
+
+        assertThat(tail.next().fromPosition()).isEqualTo(1);
+        assertThat(tail.next().lines()).containsExactly("{\"n\":2}");
+    }
+
+    @Test
+    void aCompleteMalformedUtf8LineStopsDeliveryAtTheValidPrefix() throws Exception {
+        Path journal = directory.resolve("events.ndjson");
+        append(journal, "{\"n\":1}\n{\"text\":\"");
+        Files.write(journal, new byte[]{(byte) 0xc3, 0x28}, StandardOpenOption.APPEND);
+        append(journal, "\"}\n{\"n\":3}\n");
+
+        assertOnlyPrefixIsOffered(journal);
+    }
+
+    @Test
+    void extraJsonValuesOnOneLineStopDeliveryAtTheValidPrefix() throws Exception {
+        Path journal = directory.resolve("events.ndjson");
+        append(journal, "{\"n\":1}\n{\"n\":2} {}\n{\"n\":3}\n");
+
+        assertOnlyPrefixIsOffered(journal);
+    }
+
+    @Test
+    void aBlankLineStopsDeliveryAtTheValidPrefix() throws Exception {
+        Path journal = directory.resolve("events.ndjson");
+        append(journal, "{\"n\":1}\n\n{\"n\":3}\n");
+
+        assertOnlyPrefixIsOffered(journal);
+    }
+
+    private static void assertOnlyPrefixIsOffered(Path journal) throws IOException {
+        JournalTail tail = new JournalTail(journal);
+        JournalTail.Batch prefix = tail.next();
+        assertThat(prefix.lines()).containsExactly("{\"n\":1}");
+        assertThat(prefix.atEnd()).isFalse();
+        tail.delivered(prefix, 1);
+        assertThat(tail.next().fromPosition()).isEqualTo(1);
+        assertThat(tail.next().isEmpty()).isTrue();
     }
 
     @Test

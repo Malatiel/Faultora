@@ -23,8 +23,6 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
-import java.util.ArrayList;
-import java.util.List;
 
 /** Delivers committed facts from a closed spool. No execution or dispatch dependencies enter recovery. */
 final class DurableRunDelivery {
@@ -46,8 +44,6 @@ final class DurableRunDelivery {
             new Ack(attempt, nextPosition, terminalDigest);
         }
     }
-
-    private record Pending(Checkpoint checkpoint, List<String> lines, Terminal terminal) { }
 
     void opened(DurableRunSpool.Identity identity, Path spool) throws DeliveryStorageFailure {
         Path path = spool.resolveSibling(CHECKPOINT);
@@ -76,16 +72,24 @@ final class DurableRunDelivery {
     private void resume(String sessionId, Path checkpointPath) throws IOException, InterruptedException {
         try (FileChannel channel = openLock(checkpointPath); FileLock lock = tryLock(channel)) {
             if (lock == null) return;
-            Pending pending;
+            Checkpoint checkpoint;
             try {
-                pending = recover(checkpointPath);
+                checkpoint = recoverCheckpoint(checkpointPath);
             } catch (IOException unavailable) {
                 throw new DeliveryStorageFailure(unavailable);
             }
-            if (pending == null) return;
-            var checkpoint = pending.checkpoint();
-            send(sessionId, checkpointPath, checkpoint.attempt(), Math.toIntExact(checkpoint.nextPosition()),
-                    pending.lines(), pending.terminal());
+            try (var spool = openSpool(checkpointPath.resolveSibling("spool.bin"))) {
+                if (spool == null) return;
+                Terminal terminal;
+                try {
+                    terminal = pendingTerminal(checkpoint, spool.snapshot());
+                } catch (IOException unavailable) {
+                    throw new DeliveryStorageFailure(unavailable);
+                }
+                if (terminal != null) send(sessionId, checkpointPath, checkpoint, spool, terminal);
+            } catch (DurableRunSpool.Failure unavailable) {
+                throw new DeliveryStorageFailure(unavailable);
+            }
         }
     }
 
@@ -108,7 +112,7 @@ final class DurableRunDelivery {
         }
     }
 
-    private Pending recover(Path checkpointPath) throws IOException {
+    private Checkpoint recoverCheckpoint(Path checkpointPath) throws IOException {
         Checkpoint checkpoint;
         try (var input = Files.newInputStream(checkpointPath, LinkOption.NOFOLLOW_LINKS)) {
             checkpoint = DurableDelivery.decode(input.readNBytes(DurableDelivery.MAX_ACK_BYTES + 1),
@@ -131,15 +135,20 @@ final class DurableRunDelivery {
                 || !attempt.runId().equals(Files.readString(runOwner, StandardCharsets.US_ASCII))) {
             throw new IOException("DURABLE_CHECKPOINT_OWNER_MISMATCH");
         }
+        return checkpoint;
+    }
 
-        var lines = new ArrayList<String>();
-        DurableRunSpool.Snapshot spool;
+    private static DurableRunSpool.VerifiedReader openSpool(Path path) throws IOException {
         try {
-            spool = DurableRunSpool.recoverLines(checkpointPath.resolveSibling("spool.bin"), lines::add);
+            return DurableRunSpool.openVerified(path);
         } catch (DurableRunSpool.Failure failure) {
             if ("SPOOL_IN_USE".equals(failure.getMessage())) return null;
             throw failure;
         }
+    }
+
+    private static Terminal pendingTerminal(Checkpoint checkpoint, DurableRunSpool.Snapshot spool) throws IOException {
+        Attempt attempt = checkpoint.attempt();
         if (!attempt.equals(attempt(spool.identity())) || checkpoint.nextPosition() > spool.events()) {
             throw new IOException("DURABLE_CHECKPOINT_SPOOL_MISMATCH");
         }
@@ -150,8 +159,13 @@ final class DurableRunDelivery {
             return null;
         }
         var result = spool.terminal();
-        var terminal = Terminal.of(attempt, result.finalPosition(), result.status().name(),
-                result.cleanupConfirmed(), result.leaseExpired(), result.reasonCode());
+        Terminal terminal;
+        try {
+            terminal = Terminal.of(attempt, result.finalPosition(), result.status().name(),
+                    result.cleanupConfirmed(), result.leaseExpired(), result.reasonCode());
+        } catch (IllegalArgumentException invalid) {
+            throw new IOException("DURABLE_CHECKPOINT_SPOOL_MISMATCH");
+        }
         if (checkpoint.terminalDigest() != null) {
             if (!checkpoint.terminalDigest().equals(terminal.terminalDigest())
                     || checkpoint.nextPosition() != terminal.finalPosition()) {
@@ -159,32 +173,34 @@ final class DurableRunDelivery {
             }
             return null;
         }
-        return new Pending(checkpoint, lines, terminal);
+        return terminal;
     }
 
-    private void send(String sessionId, Path path, Attempt attempt, int from, List<String> lines, Terminal terminal)
-            throws IOException, InterruptedException {
-        while (from < lines.size()) {
-            int end = from;
-            int bytes = 0;
-            while (end < lines.size() && end - from < DurableDelivery.MAX_BATCH_EVENTS) {
-                int size = lines.get(end).getBytes(StandardCharsets.UTF_8).length;
-                if (size > DurableDelivery.MAX_BATCH_BYTES - bytes) break;
-                bytes += size;
-                end++;
-            }
-            if (end == from) throw new IOException("DURABLE_DELIVERY_MESSAGE_TOO_LARGE");
-            Progress progress = new Progress(attempt, from, lines.subList(from, end));
-            accept(path, client.acknowledgeProgress(sessionId, progress), new Ack(attempt, end, null));
-            from = end;
+    private void send(String sessionId, Path path, Checkpoint checkpoint,
+                      DurableRunSpool.VerifiedReader spool, Terminal terminal) throws IOException, InterruptedException {
+        Attempt attempt = checkpoint.attempt();
+        long from = checkpoint.nextPosition();
+        while (from < terminal.finalPosition()) {
+            long batchStart = from;
+            var batch = spool.nextBatch(from, DurableDelivery.MAX_BATCH_EVENTS, DurableDelivery.MAX_BATCH_BYTES);
+            long batchEnd = batchStart + batch.size();
+            do {
+                int offset = Math.toIntExact(from - batchStart);
+                var progress = new Progress(attempt, from, batch.subList(offset, batch.size()));
+                Ack ack = client.acknowledgeProgress(sessionId, progress);
+                if (!attempt.equals(ack.attempt()) || ack.terminalDigest() != null
+                        || ack.nextPosition() <= from || ack.nextPosition() > batchEnd) {
+                    throw new IOException("DURABLE_DELIVERY_ACK_MISMATCH");
+                }
+                save(path, new Checkpoint(routeDigest, attempt, ack.nextPosition(), null));
+                from = ack.nextPosition();
+            } while (from < batchEnd);
         }
-        accept(path, client.acknowledgeTerminal(sessionId, terminal),
-                new Ack(attempt, terminal.finalPosition(), terminal.terminalDigest()));
-    }
-
-    private void accept(Path path, Ack actual, Ack expected) throws IOException {
-        if (!expected.equals(actual)) throw new IOException("DURABLE_DELIVERY_ACK_MISMATCH");
-        save(path, new Checkpoint(routeDigest, actual.attempt(), actual.nextPosition(), actual.terminalDigest()));
+        Ack expected = new Ack(attempt, terminal.finalPosition(), terminal.terminalDigest());
+        if (!expected.equals(client.acknowledgeTerminal(sessionId, terminal))) {
+            throw new IOException("DURABLE_DELIVERY_ACK_MISMATCH");
+        }
+        save(path, new Checkpoint(routeDigest, attempt, expected.nextPosition(), expected.terminalDigest()));
     }
 
     private static Attempt attempt(DurableRunSpool.Identity identity) {

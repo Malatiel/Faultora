@@ -27,7 +27,9 @@ import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.UUID;
 
 /** Local committed evidence, independent of the live transport and without execution replay. */
@@ -113,12 +115,6 @@ public final class DurableRunSpool implements AutoCloseable {
 
     @FunctionalInterface
     public interface EventReader { void accept(RunEvent event) throws IOException; }
-
-    @FunctionalInterface
-    interface LineReader { void accept(String line) throws IOException; }
-
-    @FunctionalInterface
-    private interface RecordReader { void accept(RunEvent event, byte[] payload) throws IOException; }
 
     @FunctionalInterface
     interface Force { void force(FileChannel channel) throws IOException; }
@@ -233,34 +229,133 @@ public final class DurableRunSpool implements AutoCloseable {
 
     /** Read-only inspection of a closed spool. It never resumes a writer or invokes business operations. */
     public static Snapshot recover(Path path, EventReader reader) throws IOException {
-        return inspect(path, (event, payload) -> reader.accept(event));
+        return inspect(path, reader);
     }
 
-    /** Preserve the original committed event bytes across retries and process restarts. */
-    static Snapshot recoverLines(Path path, LineReader reader) throws IOException {
-        return inspect(path, (event, payload) -> reader.accept(new String(payload, StandardCharsets.UTF_8)));
+    private static Snapshot inspect(Path path, EventReader reader) throws IOException {
+        try (VerifiedReader verified = openVerified(path)) {
+            if (reader == null) return verified.snapshot();
+            verified.input.position(0);
+            return scan(verified.input, reader);
+        } catch (IOException | IllegalArgumentException malformed) {
+            throw fixed(malformed);
+        }
     }
 
-    private static Snapshot inspect(Path path, RecordReader reader) throws IOException {
-        noLinks(path);
-        try (FileChannel input = FileChannel.open(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
-            FileLock readLock;
-            try { readLock = input.tryLock(0, Long.MAX_VALUE, true); }
-            catch (OverlappingFileLockException inUse) { throw failure("SPOOL_IN_USE"); }
-            if (readLock == null) throw failure("SPOOL_IN_USE");
-            try (readLock) {
-                // Do not expose a prefix to a caller before ruling out later corruption.
+    /** Verify the whole closed spool before making any payload available for delivery. */
+    static VerifiedReader openVerified(Path path) throws IOException {
+        try {
+            noLinks(path);
+            var input = FileChannel.open(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+            try {
+                FileLock readLock;
+                try { readLock = input.tryLock(0, Long.MAX_VALUE, true); }
+                catch (OverlappingFileLockException inUse) { throw failure("SPOOL_IN_USE"); }
+                if (readLock == null) throw failure("SPOOL_IN_USE");
                 Snapshot verified = scan(input, null);
-                if (reader == null) return verified;
-                input.position(0);
-                return scan(input, reader);
+                input.position(MAGIC.length);
+                return new VerifiedReader(input, readLock, verified);
+            } catch (IOException | RuntimeException failed) {
+                try { input.close(); }
+                catch (IOException closeFailed) { failed.addSuppressed(closeFailed); }
+                throw failed;
             }
         } catch (IOException | IllegalArgumentException malformed) {
             throw fixed(malformed);
         }
     }
 
-    private static Snapshot scan(FileChannel input, RecordReader reader) throws IOException {
+    /** Forward-only delivery cursor over the same locked file verified by the first pass. */
+    static final class VerifiedReader implements AutoCloseable {
+        private final FileChannel input;
+        private final FileLock lock;
+        private final Snapshot snapshot;
+        private byte[] previous = new byte[32];
+        private long sequence;
+        private long position;
+
+        private VerifiedReader(FileChannel input, FileLock lock, Snapshot snapshot) {
+            this.input = input;
+            this.lock = lock;
+            this.snapshot = snapshot;
+        }
+
+        Snapshot snapshot() { return snapshot; }
+
+        List<String> nextBatch(long from, int maxEvents, int maxBytes) throws IOException {
+            if (maxEvents < 1 || maxBytes < 1) throw new IllegalArgumentException("Invalid spool batch limits");
+            if (from < position || from > snapshot.events()) throw failure("SPOOL_POSITION_INVALID");
+            try {
+                if (sequence == 0) advance(IDENTITY, readLength(input, Limits.defaults().maxRecordBytes()));
+                int maximum = snapshot.limits().maxRecordBytes();
+                while (position < from) advance(EVENT, readLength(input, maximum));
+
+                var lines = new ArrayList<String>();
+                int bytes = 0;
+                while (position < snapshot.events() && lines.size() < maxEvents && bytes < maxBytes) {
+                    long offset = input.position();
+                    int size = readLength(input, maximum);
+                    if (size > maxBytes - bytes) {
+                        input.position(offset);
+                        if (lines.isEmpty()) throw failure("SPOOL_BATCH_RECORD_TOO_LARGE");
+                        break;
+                    }
+                    byte[] payload = advance(EVENT, size);
+                    lines.add(new String(payload, StandardCharsets.UTF_8));
+                    bytes += size;
+                }
+                return lines;
+            } catch (IOException failed) {
+                throw fixed(failed);
+            }
+        }
+
+        private byte[] advance(int expectedKind, int size) throws IOException {
+            Frame frame = readFrame(input, size, sequence, previous);
+            if (frame == null || frame.kind() != expectedKind) throw failure("SPOOL_CORRUPT");
+            sequence++;
+            previous = frame.checksum();
+            if (expectedKind == EVENT) position++;
+            return frame.payload();
+        }
+
+        @Override public void close() throws IOException {
+            try {
+                try { lock.release(); }
+                finally { input.close(); }
+            } catch (IOException failed) {
+                throw fixed(failed);
+            }
+        }
+    }
+
+    private record Frame(int kind, byte[] payload, byte[] checksum) { }
+
+    private static int readLength(FileChannel input, int maximum) throws IOException {
+        ByteBuffer length = ByteBuffer.allocate(4);
+        if (!read(input, length)) return -1;
+        int size = length.flip().getInt();
+        if (size < 1 || size > maximum) throw failure("SPOOL_CORRUPT");
+        return size;
+    }
+
+    private static Frame readFrame(FileChannel input, int size, long sequence, byte[] previous) throws IOException {
+        if (size < 0 || input.size() - input.position() < size + OVERHEAD - 4) return null;
+        ByteBuffer frame = ByteBuffer.allocate(size + OVERHEAD - 4);
+        if (!read(input, frame)) return null;
+        frame.flip();
+        int kind = frame.get();
+        if (frame.getLong() != sequence) throw failure("SPOOL_CORRUPT");
+        byte[] payload = new byte[size]; frame.get(payload);
+        byte[] stored = new byte[32]; frame.get(stored);
+        if (frame.getInt() != COMMIT
+                || !MessageDigest.isEqual(stored, checksum(previous, kind, sequence, payload))) {
+            throw failure("SPOOL_CORRUPT");
+        }
+        return new Frame(kind, payload, stored);
+    }
+
+    private static Snapshot scan(FileChannel input, EventReader reader) throws IOException {
         if (input.size() > Limits.defaults().maxBytes()) throw failure("SPOOL_TOO_LARGE");
         ByteBuffer magic = ByteBuffer.allocate(MAGIC.length);
         if (!read(input, magic) || !Arrays.equals(magic.array(), MAGIC)) throw failure("SPOOL_CORRUPT");
@@ -273,21 +368,11 @@ public final class DurableRunSpool implements AutoCloseable {
         boolean tail = false;
         while (input.position() < input.size()) {
             if (terminal != null) throw failure("SPOOL_CORRUPT");
-            ByteBuffer length = ByteBuffer.allocate(4);
-            if (!read(input, length)) { tail = true; break; }
-            int size = length.flip().getInt();
             int maximum = descriptor == null ? Limits.defaults().maxRecordBytes() : descriptor.limits().maxRecordBytes();
-            if (size < 1 || size > maximum) throw failure("SPOOL_CORRUPT");
-            if (input.size() - input.position() < size + OVERHEAD - 4) { tail = true; break; }
-            ByteBuffer frame = ByteBuffer.allocate(size + OVERHEAD - 4);
-            if (!read(input, frame)) { tail = true; break; }
-            frame.flip();
-            int kind = frame.get();
-            if (frame.getLong() != sequence) throw failure("SPOOL_CORRUPT");
-            byte[] payload = new byte[size]; frame.get(payload);
-            byte[] stored = new byte[32]; frame.get(stored);
-            if (frame.getInt() != COMMIT) throw failure("SPOOL_CORRUPT");
-            if (!MessageDigest.isEqual(stored, checksum(previous, kind, sequence, payload))) throw failure("SPOOL_CORRUPT");
+            Frame frame = readFrame(input, readLength(input, maximum), sequence, previous);
+            if (frame == null) { tail = true; break; }
+            int kind = frame.kind();
+            byte[] payload = frame.payload();
             if (descriptor == null) {
                 if (kind != IDENTITY) throw failure("SPOOL_CORRUPT");
                 descriptor = decode(payload, Descriptor.class);
@@ -298,7 +383,7 @@ public final class DurableRunSpool implements AutoCloseable {
                 if (!descriptor.identity().runId().equals(event.runId().value()) || ++events > descriptor.limits().maxEvents()) {
                     throw failure("SPOOL_CORRUPT");
                 }
-                if (reader != null) reader.accept(event, payload);
+                if (reader != null) reader.accept(event);
             } else if (kind == TERMINAL) {
                 terminal = decode(payload, Terminal.class);
                 if (terminal.status() == null || terminal.finalPosition() != events
@@ -308,7 +393,7 @@ public final class DurableRunSpool implements AutoCloseable {
                 }
             } else throw failure("SPOOL_CORRUPT");
             sequence++;
-            previous = stored;
+            previous = frame.checksum();
             verified = input.position();
         }
         if (descriptor == null) throw failure("SPOOL_CORRUPT");
