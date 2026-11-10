@@ -10,7 +10,7 @@
     </parent>
     <artifactId>faultora-extension-process</artifactId>
     <name>Faultora :: Extension Child Lifecycle</name>
-    <description>Verified artifact staging and supervised extension protocol peers</description>
+    <description>Verified artifact staging, supervised extension peers and the assertion adapter</description>
     <dependencies>
         <dependency>
             <groupId>dev.faultora</groupId>
@@ -21,6 +21,10 @@
             <artifactId>faultora-extension-protocol</artifactId>
         </dependency>
         <dependency>
+            <groupId>dev.faultora</groupId>
+            <artifactId>faultora-spi</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
         </dependency>
@@ -29,4 +33,14 @@
             <artifactId>assertj-core</artifactId>
         </dependency>
     </dependencies>
+    <build>
+        <testResources>
+            <testResource>
+                <directory>../faultora-spi/src/test/resources</directory>
+                <includes>
+                    <include>extension-wire-v1/assertion-*.json</include>
+                </includes>
+            </testResource>
+        </testResources>
+    </build>
 </project>
