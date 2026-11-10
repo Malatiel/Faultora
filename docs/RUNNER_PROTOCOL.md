@@ -1,5 +1,24 @@
 # Runner protocol
 
+## Dispatch replay protection
+
+Both protocol versions require a nonblank nonce of at most 128 UTF-16 code
+units. The dispatcher must issue a fresh nonce for each new dispatch. The
+runner accepts issue times within five minutes of its clock, inclusive.
+
+After validation and compilation, the runner records hashes of the run ID
+and nonce in the work directory before starting target work. Either value
+matching a live entry is enough to refuse the dispatch. The record stays
+live through five minutes after the dispatch's issue time. It can stay live
+for ten minutes from admission if the issuer's clock is five minutes ahead.
+A persisted clock watermark keeps pruned dispatches expired if the runner
+clock moves backward.
+
+The ledger holds at most 4,096 live entries per work directory. A full,
+locked, damaged or inaccessible ledger prevents execution until admission
+can be verified. The run artifact ownership marker remains an independent
+guard for a run ID whose artifacts are still present.
+
 ## Version 1
 
 The transport version is the string `1`, independent of scenario YAML

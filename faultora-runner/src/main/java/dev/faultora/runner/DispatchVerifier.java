@@ -1,6 +1,7 @@
 package dev.faultora.runner;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.faultora.model.identifier.RunId;
 import dev.faultora.model.security.ContentDigest;
 import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.runner.protocol.Dispatch;
@@ -8,40 +9,30 @@ import dev.faultora.runner.protocol.EffectivePolicy;
 import dev.faultora.runner.protocol.Refusal;
 import dev.faultora.runner.protocol.SignedPolicy;
 
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.Predicate;
 
 /**
  * Everything a runner decides before it executes anything.
  * <p>
- * Five rules, and each of them can say no with a reason. They are here together
- * rather than scattered through the transport because a runner lives inside a
- * network the person reading the failure usually cannot reach: what refused,
- * and why, is the only thing they will have.
- * <p>
- * The order matters and is the cheapest-first order that never leaks: a replay
- * is rejected before its signature is checked, and a signature before the
- * documents are hashed, so a dispatch nobody should have sent costs the runner
- * as little as possible.
+ * Validates dispatch freshness, lease, policy and content before admission.
+ * Standalone callers use an in-memory replay window. DispatchedRun validates
+ * here and reserves the execution in its durable work-directory ledger.
  */
 public final class DispatchVerifier {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final int MAX_NONCE_LENGTH = 128;
+    private static final int MAX_REMEMBERED = 4096;
 
     private final LocalLimits limits;
     private final Predicate<SignedPolicy> signatureIsValid;
 
-    /**
-     * Run ids this runner has already accepted.
-     * <p>
-     * In memory, so a restarted runner will accept a replay of something it saw
-     * before restarting. ADR-021 states that rather than hiding it: closing it
-     * needs durable state whose own failure modes are worse than the window it
-     * closes, and a restart is not something an attacker outside the network
-     * can cause.
-     */
-    private final Set<String> accepted = ConcurrentHashMap.newKeySet();
+    private final List<Seen> accepted = new ArrayList<>();
+    private long highWater = Long.MIN_VALUE;
+
+    private record Seen(String runDigest, String nonceDigest, long issuedAt) { }
 
     /**
      * @param limits          what this deployment permits, whatever it is told
@@ -63,9 +54,25 @@ public final class DispatchVerifier {
      * @return the accepted run, or the reason there is none
      */
     public Verdict verify(Dispatch dispatch, long receivedAtMs) {
+        Verdict verdict = validate(dispatch, receivedAtMs);
+        if (!verdict.isAccepted()) return verdict;
+        return remember(dispatch, receivedAtMs, verdict);
+    }
+
+    Verdict validate(Dispatch dispatch, long receivedAtMs) {
         if (dispatch == null) {
             return Verdict.refused(Refusal.of(Refusal.Reason.REPLAYED_DISPATCH,
                     "there was no dispatch"));
+        }
+        try {
+            new RunId(dispatch.runId());
+        } catch (IllegalArgumentException | NullPointerException invalidIdentity) {
+            return Verdict.refused(Refusal.of(Refusal.Reason.REPLAYED_DISPATCH,
+                    "dispatch requires a valid run identity"));
+        }
+        if (dispatch.nonce() == null || dispatch.nonce().length() > MAX_NONCE_LENGTH || dispatch.nonce().isBlank()) {
+            return Verdict.refused(Refusal.of(Refusal.Reason.REPLAYED_DISPATCH,
+                    "dispatch requires a nonblank nonce of at most 128 characters"));
         }
         if (!dispatch.issuedNear(receivedAtMs)) {
             return Verdict.refused(Refusal.of(Refusal.Reason.REPLAYED_DISPATCH,
@@ -73,10 +80,6 @@ public final class DispatchVerifier {
                             + dispatch.issuedAtEpochMs() + " and it is now " + receivedAtMs
                             + " here; a dispatch is acted on within "
                             + Dispatch.CLOCK_SKEW_ALLOWANCE_MS + "ms of being issued"));
-        }
-        if (accepted.contains(dispatch.runId())) {
-            return Verdict.refused(Refusal.of(Refusal.Reason.REPLAYED_DISPATCH,
-                    "run '" + dispatch.runId() + "' has been dispatched here before"));
         }
         if (dispatch.lease() == null
                 || dispatch.lease().deadlineFrom(receivedAtMs) <= receivedAtMs) {
@@ -122,18 +125,30 @@ public final class DispatchVerifier {
                             + dispatch.catalogDigest()));
         }
 
-        // Claimed last, and only by a dispatch that will actually run. Marking
-        // it on arrival made every refusal burn the run id: a dispatch refused
-        // for a signature the operator then fixed would come back and be turned
-        // away as a replay, which is neither true nor useful. The add is still
-        // what decides between two identical dispatches racing each other —
-        // whoever claims it first is the one that runs.
-        if (!accepted.add(dispatch.runId())) {
-            return Verdict.refused(Refusal.of(Refusal.Reason.REPLAYED_DISPATCH,
-                    "run '" + dispatch.runId() + "' was claimed by another dispatch "
-                            + "of the same run"));
-        }
         return Verdict.accepted(limits.narrow(dispatched));
+    }
+
+    private synchronized Verdict remember(Dispatch dispatch, long receivedAtMs, Verdict verdict) {
+        highWater = Math.max(highWater, receivedAtMs);
+        if (!dispatch.issuedNear(highWater)) {
+            return Verdict.refused(Refusal.of(Refusal.Reason.REPLAYED_DISPATCH, "dispatch is outside the replay window"));
+        }
+        long skew = Dispatch.CLOCK_SKEW_ALLOWANCE_MS;
+        long oldest = highWater < Long.MIN_VALUE + skew ? Long.MIN_VALUE : highWater - skew;
+        accepted.removeIf(seen -> seen.issuedAt() < oldest);
+        String runDigest = ContentDigest.sha256Uri(dispatch.runId());
+        String nonceDigest = ContentDigest.sha256Uri(dispatch.nonce());
+        for (Seen seen : accepted) {
+            if (seen.runDigest().equals(runDigest) || seen.nonceDigest().equals(nonceDigest)) {
+                return Verdict.refused(Refusal.of(Refusal.Reason.REPLAYED_DISPATCH,
+                        "the run ID or nonce was dispatched here before"));
+            }
+        }
+        if (accepted.size() >= MAX_REMEMBERED) {
+            return Verdict.refused(Refusal.of(Refusal.Reason.MISSING_CAPABILITY, "dispatch replay window is full"));
+        }
+        accepted.add(new Seen(runDigest, nonceDigest, dispatch.issuedAtEpochMs()));
+        return verdict;
     }
 
     /**

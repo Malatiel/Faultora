@@ -16,8 +16,8 @@ evidence. This is an intentional change from truncating an existing journal.
 Runner journals live under `run-<sha256(run-id)>/events.ndjson` in the configured
 working directory. The dispatch ID never becomes a relative filesystem path.
 Existing ownership also prevents accidental overwrites after runner restart,
-independently of the in-memory replay cache. Every engine invocation owns a
-FaultSession; provider inject/rollback contexts carry `FaultContext.RUN_ID`.
+independently of the durable dispatch replay ledger. Every engine invocation
+owns a FaultSession. Provider inject and rollback contexts carry `FaultContext.RUN_ID`.
 Providers sharing external resources must respect that ownership themselves.
 
 `PreparedRun` is an in-memory, single-use object with a monotonic lifetime of at
