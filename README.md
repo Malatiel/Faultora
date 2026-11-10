@@ -32,138 +32,117 @@ Version 0.12.0 is a runnable technical preview. It targets local development
 and CI use on Java 21, and it can now run **inside a private network** as a
 runner that dials out for work.
 
+## First ten minutes
+
+You need Java 21, the OpenAPI description of a service, and the address of a
+test environment where it runs. Nothing is sent anywhere else.
+
+**1. Install.** Download `faultora-0.12.0.tar.gz` (or `.zip`) and `SHA256SUMS`
+from the [release](https://github.com/Malatiel/Faultora/releases/tag/v0.12.0),
+check them as [Installing the CLI](docs/INSTALLATION.md) shows, including who
+built them, extract the archive where you keep tools, and put its `bin` on
+your `PATH`:
+
+```bash
+mkdir -p ~/tools && tar xzf faultora-0.12.0.tar.gz -C ~/tools
+export PATH="$HOME/tools/faultora-0.12.0/bin:$PATH"
+faultora --version
+```
+
+On Windows, extract the `.zip` with `Expand-Archive`, add its `bin` to `PATH`
+(`$env:Path = "C:\tools\faultora-0.12.0\bin;$env:Path"`) and the command is
+the same; in PowerShell, join the continued lines below or end them with a
+backtick instead of `\`. Keep your scenarios and results in your own project,
+not in the installation, which an upgrade replaces.
+
+**2. Generate a starter scenario** from your description, in your project:
+
+```bash
+faultora init --from-openapi openapi.yaml --output my-checks
+```
+
+`init` writes `my-checks/scenario.yaml` with a step for every operation that
+can run with nothing filled in, lists the others as comments saying what they
+need, and prints the next commands.
+
+**3. Check it without contacting anything:**
+
+```bash
+faultora validate --scenario my-checks/scenario.yaml --openapi openapi.yaml
+faultora test --preview --scenario my-checks/scenario.yaml \
+  --openapi openapi.yaml --target https://staging.example.com
+```
+
+`validate` checks the documents; the preview compiles the plan against the
+execution policy and prints it as JSON, without a single request.
+
+**4. Run it:**
+
+```bash
+faultora test --scenario my-checks/scenario.yaml --openapi openapi.yaml \
+  --target https://staging.example.com --format console,html --output results
+```
+
+Exit code 0 means every assertion passed, 1 that the run found a failure, 2
+that the configuration was refused before anything ran, and 3 that the command
+itself could not do its job — for example because `results/` already holds an
+earlier run; give each run a new `--output` directory. The console shows each
+node; the output directory holds the HTML report and the journal. A service on
+localhost or another private address also needs `--allow-private`, and a step
+that deletes something needs `--allow-destructive`;
+[troubleshooting](docs/TROUBLESHOOTING.md) explains each refusal.
+
+**5. Check a promise, not just a response.** The starter only shows that
+operations answer. What Faultora is for is a business rule under the
+conditions that break it — for example, that two clients sending the same
+request at once create one thing, not two:
+
+```yaml
+execute:
+  - id: race
+    type: parallel
+    steps:
+      - id: first-client
+        operationId: create-order          # your create operation
+        inputs: {headers: {Idempotency-Key: same-key}, body: {item: book}}
+      - id: second-client
+        operationId: create-order
+        inputs: {headers: {Idempotency-Key: same-key}, body: {item: book}}
+  - id: read-back
+    operationId: list-orders               # an operation that shows the result
+    dependsOn: [race]
+
+assertions:
+  - id: exactly-one-order
+    assertionType: jsonpath
+    targetStep: read-back
+    params: {path: "@", count: 1}
+```
+
+Counting the whole list holds only where it starts empty; on a shared
+environment, read back what this run created — by the ID a client got back,
+or a list filtered by a value only this run used.
+[`fault-concurrent-duplicate.yaml`](examples/payment-service/scenarios/fault-concurrent-duplicate.yaml)
+is the complete version of this check, with injected latency widening the
+race; the [examples guide](examples/README.md) shows retries, eventual
+consistency, events and faults the same way, and the
+[scenario reference](docs/SCENARIO_REFERENCE.md) lists every field.
+
+**Or let an AI assistant do it.** Faultora's MCP server lets an assistant
+inspect your description, write and prepare scenarios, and run them once you
+sign an approval; [using Faultora with an AI assistant](docs/AI_ASSISTANTS.md)
+shows how to connect one.
+
 ## What 0.12.0 includes
 
-Scenario execution:
-
-- a frozen document format, `faultora.dev/v1`: within 1.x it may only gain
-  something an earlier 1.x would have ignored, and the rule is enforced by a
-  committed snapshot rather than promised in a document;
-- `faultora migrate` moves documents written against the preview version, which
-  is still read — with a warning, never an error — until 2.0;
-- OpenAPI 3.x and AsyncAPI 3.0 import, together in one run;
-- versioned YAML scenarios with runtime inputs (`--input key=value`);
-- HTTP GET, POST, PUT, PATCH, DELETE, HEAD, and OPTIONS operations;
-- step output binding: later steps reference earlier responses through
-  `{{steps.<name>.body...}}` templates;
-- bounded parallel groups for genuinely concurrent requests;
-- repeat groups: a fixed count or a literal item list, with `{{repeat.index}}`
-  and `{{repeat.item}}` bound per iteration;
-- eventually (poll-until) groups that converge on asynchronous state and fail
-  with a spent budget instead of hanging;
-- request values generated from the operation's schema, deterministically from
-  the run seed, with explicit inputs applied over them;
-- retry policies with exponential backoff and deterministic seed-derived
-  jitter;
-- sequential operation and wait steps with explicit dependencies;
-- per-step, per-group, and scenario-wide deadlines, bounded by the
-  execution policy's wall-clock budget;
-- Kafka operations: publish a command, observe the events it caused, within a
-  window bounded below by the run's own start and above by a wait the execution
-  policy caps;
-- database observations: read-only queries an operator declares in an
-  observation catalog, parameterized, bounded at the driver, and named by a
-  scenario the way any other operation is;
-- status, header, response-schema, JSONPath, and duration assertions;
-- event assertions: count, uniqueness, correlation continuity, and ordered or
-  unordered sequences;
-- tabular assertions: row count, row value, numeric balance, and uniqueness —
-  the ledger invariant among them;
-- assertion parameters are expressions, so an assertion compares a value one
-  step produced against a value another one did. That is what makes a
-  cross-component invariant expressible without a compound assertion type;
-- console, JSON, HTML, and JUnit reports; the HTML report can be filtered by
-  node, fault and status offline, and loads or runs nothing but its own code;
-- per-run budgets that hold while the run is running: one deadline across
-  retries, polls and redirects, a finite cleanup budget, outgoing HTTP and
-  Kafka payload limits, and connector attempts counted against `maxRequests`;
-- `test --preview` shows the compiled plan without contacting a target, and
-  `--diagnostics=json` gives scripts one versioned result per command;
-- `validate` imports the catalogs a run would use, so a catalog `test` would
-  refuse is refused before anything runs, and importer warnings — a skipped
-  server, a deprecated version — are reported instead of dropped;
-- `init` writes a starter scenario that runs as generated, and a first run
-  against localhost, or with an ID left out, says which flag or input to add;
-  [troubleshooting](docs/TROUBLESHOOTING.md) walks through each failure class;
-- ZIP and tar.gz archives with Windows and Linux launchers, using an existing
-  Java; see [Installing the CLI](docs/INSTALLATION.md);
-- a [paired qualification](examples/payment-service/qualification/README.md)
-  example: one frozen scenario run against a healthy and a broken payment
-  service, telling them apart without revealing which is which.
-
-Fault injection:
-
-- in-process faults with no external dependencies: `http-latency`,
-  `http-error`, and `http-response-loss`, with a hard-expiry watchdog and
-  guaranteed exactly-once rollback;
-- real network faults through a [Toxiproxy](https://github.com/Shopify/toxiproxy)
-  instance (`--toxiproxy-url`): `network-latency`, `network-timeout`,
-  `network-reset`, and `network-bandwidth`;
-- `expectError` steps for requests that are supposed to fail under a fault;
-- fault windows and fault-to-node attribution in console and HTML reports.
-
-Local tool integration:
-
-- [MCP stdio](docs/MCP.md) for capabilities, operator-declared catalog inspection
-  and scenario preparation. Optional execution requires a separate operator
-  signature on the exact preparation; owned runs support cancellation and
-  bounded structural report export. Results name each assertion by node ID,
-  type and outcome, including checks that were skipped or never evaluated,
-  and a refused preparation names the field to fix.
-
-Operations and support:
-
-- `faultora diagnose` writes a bundle to attach to a bug report: the run's
-  journal reduced to identifiers, counts, outcomes and digests, and nothing
-  else from the run directory ([troubleshooting](docs/TROUBLESHOOTING.md));
-- `FAULTORA_LOG_FORMAT=json` writes structured logs a collector can read,
-  naming the run and node and holding no payload;
-- an [upgrade and rollback runbook](docs/UPGRADE_ROLLBACK.md) and a measured
-  [capacity baseline](docs/CAPACITY.md).
-
-Private-network execution:
-
-- `faultora runner` — the same binary serving a control plane from inside a
-  network nothing can reach into, dialling out for work over mutually
-  authenticated TLS;
-- runs bounded by a lease the runner renews by asking, so losing contact stops
-  a run and rolls back its faults rather than extending either;
-- every event and the final result committed to a local spool before they are
-  sent, so a disk failure cannot report a passing run
-  ([runner spool](docs/RUNNER_SPOOL.md));
-- a signed execution and evidence policy, verified against a key the operator
-  configures, narrowed by limits the deployment states and a dispatch can never
-  widen;
-- `faultora health` — a status file and a command to read it, for a platform
-  probing a process that has no port;
-- a distroless image, Compose and Kubernetes examples, and an offline
-  installation bundle in [deploy/](deploy/README.md).
-
-Security posture:
-
-- SSRF protection with DNS resolution and address pinning;
-- bounded HTTP response streaming;
-- policy-bounded in-memory evidence for assertions;
-- header filtering, content-type allowlists, body limits, and JSON redaction;
-- manual redirect handling with cross-origin credential stripping;
-- environment-backed bearer-token resolution;
-- extension trust decided before any plugin code runs: built-ins are an exact
-  class inventory, and a third-party plugin needs a valid manifest;
-- results, journals, reports and diagnostics export fixed error text and
-  structural facts, never values the evidence policy withholds;
-- release files and runner images carry a GitHub attestation, and the
-  installation commands check who built a download, not only that it arrived
-  intact; a dependency finding at CVSS 7.0 or above blocks a release.
-
-The in-process fault provider acts only on Faultora's own outbound requests.
-It never touches the target system, its infrastructure, or other traffic, so
-no extra privileges are needed. Network faults require a Toxiproxy you already
-operate on the traffic path.
-
-Distributed workers, Kubernetes orchestration, and the web interface are not
-part of this release. Scenarios that request unsupported execution features are
-rejected during validation or plan compilation rather than being silently
-accepted.
+In short: OpenAPI, AsyncAPI and read-only database catalogs; HTTP and Kafka
+operations; sequential, parallel, repeat and eventually blocks with retries
+and deadlines; in-process and Toxiproxy faults with bounded rollback;
+contract, schema, event and tabular assertions whose parameters compare one
+step's result with another's; console, JSON, HTML and JUnit reports; a
+diagnostic bundle for bug reports; an MCP server for AI assistants; and a
+runner for private networks. [What Faultora includes](docs/FEATURES.md) lists
+all of it, with its limits.
 
 ## Requirements
 
@@ -210,7 +189,11 @@ java -jar "faultora-${FAULTORA_VERSION}.jar" --version
 On macOS, use `shasum -a 256 -c` instead of `sha256sum --check --strict`.
 Every release also includes a CycloneDX SBOM and the Apache 2.0 license.
 
-## Build
+## Build from source
+
+[Contributing](https://github.com/Malatiel/Faultora/blob/main/CONTRIBUTING.md)
+covers setting up a checkout and the focused tests to run while changing it.
+The whole build is:
 
 ```bash
 ./mvnw verify -B
@@ -232,14 +215,23 @@ The regular CI build can run without repository secrets. Configure the
 Release publication always requires this secret and fails closed when it is
 missing.
 
-## Quick start
+## Running the bundled examples
+
+The commands in this and the following sections use `faultora` on your `PATH`,
+as in the first ten minutes; from a source checkout, use
+`java -jar faultora-cli/target/faultora-0.12.0.jar` instead. Paths such as
+`examples/payment-service/...` are relative to the extracted archive or the
+repository root. The archive carries the example descriptions and scenarios,
+so `validate` and `test --preview` work from it as shown; the example
+services a real run talks to are started from a source checkout, as the
+[examples guide](examples/README.md) explains.
 
 Check the executable and validate the example scenario:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.12.0.jar --version
+faultora --version
 
-java -jar faultora-cli/target/faultora-0.12.0.jar \
+faultora \
   validate \
   --scenario examples/payment-service/scenarios/passing.yaml
 ```
@@ -247,7 +239,7 @@ java -jar faultora-cli/target/faultora-0.12.0.jar \
 Generate a starter scenario from an OpenAPI document:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.12.0.jar \
+faultora \
   init \
   --from-openapi examples/payment-service/openapi.yaml \
   --output ./generated
@@ -256,7 +248,7 @@ java -jar faultora-cli/target/faultora-0.12.0.jar \
 Run a scenario against an API:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.12.0.jar \
+faultora \
   test \
   --scenario examples/payment-service/scenarios/passing.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -286,7 +278,7 @@ With `test --preview`, the preview is nested in the same result. See the
 Add `--preview` to `test` to inspect the compiled plan without running it:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.12.0.jar \
+faultora \
   test --preview \
   --scenario examples/payment-service/scenarios/passing.yaml \
   --openapi examples/payment-service/openapi.yaml
@@ -343,7 +335,7 @@ race window, then asserts the business invariant that exactly one payment
 exists:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.12.0.jar \
+faultora \
   test \
   --scenario examples/payment-service/scenarios/fault-concurrent-duplicate.yaml \
   --openapi examples/payment-service/openapi.yaml \
@@ -457,7 +449,7 @@ An AsyncAPI 3.0 description brings Kafka channels into the same catalog as the
 HTTP operations, and `--openapi` and `--asyncapi` can be given together:
 
 ```bash
-java -jar faultora-cli/target/faultora-0.12.0.jar \
+faultora \
   test \
   --scenario examples/payment-worker/scenarios/duplicate-delivery.yaml \
   --asyncapi examples/payment-worker/asyncapi.yaml \
@@ -560,7 +552,7 @@ observations:
 ```
 
 ```bash
-java -jar faultora-cli/target/faultora-0.12.0.jar \
+faultora \
   test \
   --scenario examples/payment-recovery/scenarios/settlement-invariant.yaml \
   --openapi examples/payment-recovery/openapi.yaml \
@@ -697,7 +689,7 @@ handle is mapped to an environment variable with the `FAULTORA_SECRET_` prefix:
 ```bash
 export FAULTORA_SECRET_PAYMENTS_API='replace-with-a-real-token'
 
-java -jar faultora-cli/target/faultora-0.12.0.jar \
+faultora \
   test \
   --scenario scenario.yaml \
   --openapi openapi.yaml \
@@ -763,7 +755,7 @@ A container image, Compose and Kubernetes examples, and an offline installation
 bundle are in [deploy/](deploy/README.md), which also says which of their
 claims are exercised by tests and which are documentation.
 
-The control plane that dispatches to a runner is 2.0. What 0.9 ships is the
+The control plane that dispatches to a runner is 2.0. What ships now is the
 runner and the protocol it speaks; the counterpart in this repository is
 qualification scaffolding and is named so.
 

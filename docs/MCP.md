@@ -1,5 +1,9 @@
 # Prepare and execute over MCP stdio
 
+This is the reference for every tool, field and limit. To connect an assistant
+and get to a first approved run, start with
+[using Faultora with an AI assistant](AI_ASSISTANTS.md).
+
 Start the packaged CLI as a subprocess:
 
 ```sh
@@ -113,11 +117,13 @@ not protect against that agent. Moving the file to another directory or hiding
 its name provides no independent authority.
 
 For independent approval, run the agent under a separate unprivileged OS identity
-and keep signing under an operator identity or on another device. The agent must
-also be unable to alter the verification configuration, runtime/classpath or MCP
-process. The operator reviews the scenario, catalog, exact digest and run identity
-and returns only the resulting signed token. This is a deployment prerequisite;
-the current launcher does not establish that OS separation for you.
+and keep signing under an operator identity or on another device. Protect the
+MCP client launch settings, verification configuration, runtime/classpath and
+MCP process from changes by the agent. Approval governs admission to that MCP
+server. To require approval for all traffic to test targets, use OS and network
+controls to restrict access from other tools and processes the agent can use.
+The operator reviews the scenario, catalog, exact digest and run identity and
+returns only the resulting signed token.
 
 The current approval command reads a PKCS#8 DER file. Hardware keys and remote
 signers are not directly supported. A future external signer must implement the
@@ -152,8 +158,10 @@ Four additional tools are advertised only in this execution profile:
   and approval remain current. A started preparation cannot be replayed.
 - get_run takes runId. It returns RUNNING/CANCELLING until execution, declared
   cleanup, fault rollback and journal/report finalization finish. Terminal status
-  includes assertion outcome counts and cleanupConfirmed. Execution or mandatory
-  journal failure reports ERROR and does not claim confirmed cleanup. Failure to
+  includes assertion outcome counts when a run summary is available, along with
+  cleanupConfirmed. Execution or mandatory journal failure reports ERROR with
+  cleanupConfirmed=false. A failure before summary creation, such as
+  EXECUTION_FAILED, returns a code in place of the assertion summary. Failure to
   write the optional report preserves the completed execution status and cleanup
   result, with reportStatus=UNAVAILABLE, reportErrorCode=REPORT_WRITE_FAILED and
   an empty artifactIds list. A written report has reportStatus=AVAILABLE.
@@ -182,6 +190,7 @@ Keep secrets out of scenario identifiers, which can appear in results.
 CLI reports use fixed assertion verdict text. Both CLI and MCP withhold
 scenario author `message`, provider prose and comparison values. The MCP
 assertion entries use the identifier and outcome to point back to the scenario.
+An outcome can reveal whether a body or header met the assertion's condition.
 
 Execution uses the same RunEvidence policy as CLI: body/header assertions can
 compare permitted evidence in memory, credentials remain withheld, and reports

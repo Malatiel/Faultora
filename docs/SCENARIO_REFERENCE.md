@@ -12,6 +12,28 @@ Faultora rejects unsupported versions, missing required fields, duplicate step
 IDs, unknown references, dependency cycles, and execution features that are not
 available in 0.12.0.
 
+A [JSON Schema](schema/scenario-v1.schema.json) lets editors and AI
+assistants check scenario fields, types and basic limits while editing.
+For a released CLI, use the copy under `docs/schema/` in its release archive
+when available. The URL below follows `main` and can describe a newer build
+than the one you installed. To use it with the YAML language server, put this
+comment at the top of the scenario.
+
+```text
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Malatiel/Faultora/main/docs/schema/scenario-v1.schema.json
+```
+
+The schema covers `faultora.dev/v1`. To update a deprecated
+`faultora.dev/v1alpha1` document, see [`faultora migrate`](#compatibility).
+Write YAML values with the declared types, such as `count: 3` and
+`labels: {tier: "1"}`. For unused list sections, omit the key or use an
+empty list (`setup: []`). The parser accepts some implicit conversions
+that the schema flags.
+
+`faultora validate` checks the scenario and supplied catalog documents.
+`faultora test --preview` also checks whether the scenario can be planned
+against the catalog and execution policy.
+
 ## Compatibility
 
 `faultora.dev/v1` is **frozen**. Within 1.x the only change permitted is an
@@ -546,7 +568,7 @@ Operation steps in `setup` and `execute` may declare a retry policy:
 |---|---:|---|
 | `maxAttempts` | yes | Total attempts including the first, 1–10. |
 | `backoffMs` | no | Base delay before the first retry. |
-| `backoffMultiplier` | no | Exponential growth factor, at least 1. |
+| `backoffMultiplier` | yes | Exponential growth factor, at least 1. |
 | `maxBackoffMs` | no | Upper bound applied to each delay; `0` means unbounded. |
 
 Semantics:

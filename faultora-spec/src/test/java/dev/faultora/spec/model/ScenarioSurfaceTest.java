@@ -54,7 +54,8 @@ class ScenarioSurfaceTest {
                         ADR-022.
 
                         If this addition was decided, update \
-                        faultora-spec/src/test/resources%s and say so in the changelog. \
+                        faultora-spec/src/test/resources%s and \
+                        docs/schema/scenario-v1.schema.json, and say so in the changelog. \
                         If it was not, this is the test doing its job.""".formatted(SNAPSHOT))
                 .isEqualTo(committedSurface());
     }

@@ -42,11 +42,12 @@ Use a small synthetic reproduction. Do not attach a whole run directory, raw
 With a CLI that provides `diagnose`, create a reduced bundle:
 
 ```sh
-faultora diagnose --run results/run --output faultora-diagnostics.zip
+faultora diagnose --run results --output faultora-diagnostics.zip
 ```
 
-Here `faultora` is the archive's launcher; the equivalent is
-`java -jar <path-to-faultora.jar> diagnose --run results/run --output faultora-diagnostics.zip`.
+Here `faultora` is the archive's launcher and `results` the directory the
+run's `--output` named; the equivalent is
+`java -jar <path-to-faultora.jar> diagnose --run results --output faultora-diagnostics.zip`.
 See [diagnostic bundle details](docs/TROUBLESHOOTING.md#reporting-a-problem).
 The bundle withholds free text and unknown fields but retains identifiers,
 counts, outcomes and digests. Inspect its contents before choosing to attach

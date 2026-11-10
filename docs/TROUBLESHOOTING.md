@@ -7,7 +7,8 @@ something failed, 2 means the configuration was refused before anything ran,
 3 means the command itself could not do its job.
 
 A path that works as generated, for an API with an OpenAPI description
-(`faultora` stands for `java -jar faultora-<version>.jar`):
+(`faultora` is the launcher in the release archive's `bin`, on your `PATH` as the
+README's first ten minutes set it up, or `java -jar faultora-<version>.jar`):
 
 ```bash
 faultora init --from-openapi openapi.yaml --output faultora
@@ -101,10 +102,11 @@ therefore fails the pull request rather than the first deployment that runs it.
 
 ## Reporting a problem
 
-Attach a diagnostic bundle rather than the run directory:
+Attach a diagnostic bundle rather than the run directory — the one the run's
+`--output` named:
 
 ```bash
-java -jar faultora.jar diagnose --run results/run --output faultora-diagnostics.zip
+faultora diagnose --run results --output faultora-diagnostics.zip
 ```
 
 It holds the run's journal with each event reduced to identifiers, counts,

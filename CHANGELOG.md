@@ -2,6 +2,33 @@
 
 All notable changes to Faultora are documented in this file.
 
+## Unreleased
+
+### Added
+
+- **Using Faultora with an AI assistant**, `docs/AI_ASSISTANTS.md`: generating
+  the approval key, an operator configuration, connecting Claude Code, the
+  Codex CLI or another MCP client, the approval loop, how to read
+  per-assertion results, the mistakes an assistant made in a trial, and a
+  brief to hand it. The README and the MCP reference point to it.
+- **A JSON Schema of `faultora.dev/v1`**, `docs/schema/scenario-v1.schema.json`,
+  also in the release archive, for editors and AI assistants to check
+  scenario fields, types and basic limits. Tests compare it with the frozen
+  model surface, check bundled and documented scenarios, and verify that
+  both the schema and Faultora reject representative malformed scenarios.
+  `faultora test --preview` checks the scenario against its catalog and
+  execution policy.
+
+### Changed
+
+- **The README starts with the first ten minutes.** Right after what Faultora
+  is for, it installs the release archive, generates a starter scenario from
+  your own OpenAPI document, validates and previews it, runs it, and shows
+  the shape of a first business check. Its commands use the archive's
+  `bin/faultora` launcher instead of a source build's path, and the full list
+  of capabilities moved to `docs/FEATURES.md`. The path is exercised end to
+  end from the packaged archive against the example payment service.
+
 ## 0.12.0 — 2026-11-09
 
 Results an operator, a bug report and an AI assistant can act on: MCP names
