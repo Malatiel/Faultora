@@ -72,6 +72,12 @@ from the checkpoint. An attempt without a committed terminal stays available
 for recovery inspection. Replay submits records and results only, with no
 scenario execution or lease extension.
 
+The sender verifies the spool sequentially under a shared lock before sending
+any records. It then reads one batch at a time from the same file. The exact
+ACK must be validated and the checkpoint saved before the sender loads the
+next batch. The batch limits apply to the sender. The qualification receiver
+keeps a bounded per-attempt state file for its restart checks.
+
 A checkpoint that cannot be verified against the spool or its configured
 route blocks recovery and new dispatches. The CLI reports
 `DURABLE_DELIVERY_STORAGE_UNAVAILABLE` and asks the operator to reconcile

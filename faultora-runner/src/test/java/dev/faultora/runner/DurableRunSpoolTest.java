@@ -1,8 +1,11 @@
 package dev.faultora.runner;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.faultora.engine.run.RunResult;
 import dev.faultora.model.events.RunEvent;
+import dev.faultora.model.identifier.NodeId;
 import dev.faultora.model.identifier.RunId;
+import dev.faultora.runner.protocol.DurableDelivery;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -57,6 +60,55 @@ class DurableRunSpoolTest {
         assertThat(recovered.uncommittedTail()).isFalse();
         assertThat(recovered.verifiedBytes()).isEqualTo(Files.size(file));
         assertThatThrownBy(() -> DurableRunSpool.create(file, identity())).isInstanceOf(IOException.class);
+    }
+
+    @Test void verifiedBatchesAcceptTheExactUtf8LimitAndLeaveTheNextRecordUnread() throws Exception {
+        Path file = directory.resolve("batch.bin");
+        var mapper = new ObjectMapper();
+        var node = new NodeId("fixture-node");
+        var empty = new RunEvent.NodeSkipped("NODE_SKIPPED", 11, RUN, node, "");
+        int bytes = DurableDelivery.MAX_BATCH_BYTES / 2 - mapper.writeValueAsBytes(empty).length;
+        var large = new RunEvent.NodeSkipped("NODE_SKIPPED", 11, RUN, node,
+                "é".repeat(bytes / 2) + "x".repeat(bytes % 2));
+        assertThat(mapper.writeValueAsBytes(large)).hasSize(DurableDelivery.MAX_BATCH_BYTES / 2);
+
+        try (var spool = DurableRunSpool.create(file, identity())) {
+            spool.appendEvent(large);
+            spool.appendEvent(large);
+            spool.appendEvent(event());
+            spool.commitTerminal(RunResult.Status.PASSED, true, false);
+        }
+
+        String largeLine = mapper.writeValueAsString(large);
+        int maxBytes = DurableDelivery.MAX_BATCH_BYTES;
+        int maxEvents = DurableDelivery.MAX_BATCH_EVENTS;
+        try (var reader = DurableRunSpool.openVerified(file)) {
+            assertThat(reader.snapshot().terminal().finalPosition()).isEqualTo(3);
+            assertThatThrownBy(() -> reader.nextBatch(0, maxEvents, maxBytes / 2 - 1))
+                    .hasMessage("SPOOL_BATCH_RECORD_TOO_LARGE");
+            assertThat(reader.nextBatch(0, maxEvents, maxBytes)).containsExactly(largeLine, largeLine);
+            assertThat(reader.nextBatch(2, maxEvents, maxBytes)).containsExactly(mapper.writeValueAsString(event()));
+            assertThat(reader.nextBatch(3, maxEvents, maxBytes)).isEmpty();
+        }
+        try (var restarted = DurableRunSpool.openVerified(file)) {
+            assertThat(restarted.nextBatch(1, maxEvents, maxBytes / 2 + 1)).containsExactly(largeLine);
+            assertThat(restarted.nextBatch(2, maxEvents, maxBytes)).containsExactly(mapper.writeValueAsString(event()));
+        }
+    }
+
+    @Test void corruptionAfterTheFirstBatchRefusesToOpenTheDeliveryReader() throws Exception {
+        Path file = directory.resolve("late-corruption.bin");
+        try (var spool = DurableRunSpool.create(file, identity())) {
+            for (int index = 0; index <= DurableDelivery.MAX_BATCH_EVENTS; index++) {
+                spool.appendEvent(event());
+            }
+            spool.commitTerminal(RunResult.Status.PASSED, true, false);
+        }
+        try (var channel = FileChannel.open(file, StandardOpenOption.WRITE)) {
+            channel.position(channel.size() - 1);
+            channel.write(ByteBuffer.wrap(new byte[]{0}));
+        }
+        assertThatThrownBy(() -> DurableRunSpool.openVerified(file)).hasMessage("SPOOL_CORRUPT");
     }
 
     @Test void quotaReservesAnInfrastructureTerminalAndCancelsBusiness() throws Exception {
