@@ -24,10 +24,10 @@
   },
   "$defs": {
     "duration": {
-      "description": "A whole number of milliseconds, optionally suffixed with ms, s or m.",
+      "description": "A positive whole number of milliseconds, optionally suffixed with ms, s or m.",
       "oneOf": [
-        {"type": "string", "pattern": "^\\s*[0-9]+\\s*(ms|s|m|MS|S|M)?\\s*$"},
-        {"type": "integer", "minimum": 0}
+        {"type": "string", "pattern": "^\\s*\\+?0*[1-9][0-9]*([mM][sS]|[sSmM])?\\s*$"},
+        {"type": "integer", "minimum": 1}
       ]
     },
     "metadata": {
@@ -66,8 +66,8 @@
         "retry": {"$ref": "#/$defs/retry"},
         "expectError": {"type": "boolean"},
         "steps": {"type": "array", "items": {"$ref": "#/$defs/step"}, "description": "Children of a parallel, repeat or eventually group."},
-        "count": {"type": "integer", "minimum": 1, "description": "Iterations of a fixed repeat group."},
-        "forEach": {"type": "array", "description": "Items of a data-driven repeat group, one iteration each."},
+        "count": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Iterations of a fixed repeat group."},
+        "forEach": {"type": "array", "minItems": 1, "maxItems": 100, "description": "Items of a data-driven repeat group, one iteration each."},
         "interval": {"$ref": "#/$defs/duration"},
         "until": {"type": "array", "items": {"$ref": "#/$defs/condition"}, "description": "Conditions an eventually group polls for."},
         "generate": {"$ref": "#/$defs/generate"},
@@ -76,6 +76,7 @@
     },
     "retry": {
       "type": "object",
+      "required": ["maxAttempts", "backoffMultiplier"],
       "additionalProperties": false,
       "properties": {
         "maxAttempts": {"type": "integer", "minimum": 1, "maximum": 10},
@@ -105,7 +106,7 @@
     },
     "fault": {
       "type": "object",
-      "required": ["id", "faultType"],
+      "required": ["id", "faultType", "duration"],
       "additionalProperties": false,
       "properties": {
         "id": {"type": "string", "minLength": 1},

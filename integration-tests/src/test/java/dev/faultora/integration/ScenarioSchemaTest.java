@@ -8,12 +8,17 @@ import dev.faultora.model.catalog.DataSchema;
 import dev.faultora.model.identifier.SchemaId;
 import dev.faultora.schema.SchemaCatalog;
 import dev.faultora.schema.SchemaValidator;
+import dev.faultora.spec.model.ScenarioDocument;
+import dev.faultora.spec.parser.ParseResult;
+import dev.faultora.spec.parser.ScenarioParser;
+import dev.faultora.spec.validator.ScenarioValidator;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,18 +29,16 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
+import static java.util.Map.entry;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * The published JSON Schema for {@code faultora.dev/v1} says what Faultora
- * reads, so an editor or an AI assistant that trusts it writes documents
- * Faultora accepts.
+ * Checks the published schema's frozen fields and compares representative
+ * documents with Faultora's parser and structural validator.
  * <p>
- * Its fields are held to the frozen surface snapshot the model is checked
- * against, so a field added to the format fails here until the schema says
- * so too. Every example scenario and every complete scenario the guides show
- * must satisfy it, and documents Faultora refuses — an unknown field, a
- * misspelt section, a wrong type — must not.
+ * The catalog validator covers the constraints exercised here. It does not
+ * apply schemas under {@code additionalProperties}, so references are also
+ * checked directly, including those used for named inputs.
  */
 class ScenarioSchemaTest {
     private static final Path ROOT = Path.of(System.getProperty("faultora.projectRoot"));
@@ -74,15 +77,38 @@ class ScenarioSchemaTest {
     }
 
     @Test
-    void everyExampleAndDocumentedScenarioSatisfiesTheSchema() throws Exception {
-        Map<String, String> documents = new LinkedHashMap<>();
-        try (Stream<Path> files = Files.walk(ROOT.resolve("examples"))) {
-            files.filter(path -> path.toString().endsWith(".yaml") && path.getParent().endsWith("scenarios"))
-                    .sorted().forEach(path -> documents.put(ROOT.relativize(path).toString(), read(path)));
+    void everySchemaReferenceResolves() {
+        JsonNode schema = schema();
+        List<String> references = schema.findValuesAsText("$ref");
+        assertThat(references).isNotEmpty();
+        for (String reference : references) {
+            assertThat(reference).startsWith("#/");
+            assertThat(schema.at(reference.substring(1)).isObject()).as("schema reference %s", reference).isTrue();
         }
+    }
+
+    @Test
+    void everyExampleAndDocumentedScenarioSatisfiesTheSchema() throws Exception {
+        Map<String, String> examples = new LinkedHashMap<>();
+        try (Stream<Path> files = Files.walk(ROOT.resolve("examples"))) {
+            for (Path path : files.filter(Files::isRegularFile)
+                    .filter(file -> file.toString().endsWith(".yaml") || file.toString().endsWith(".yml"))
+                    .sorted().toList()) {
+                String yaml = read(path);
+                JsonNode document = parse(yaml);
+                if (document != null && "Scenario".equals(document.path("kind").asText())) {
+                    examples.put(ROOT.relativize(path).toString(), yaml);
+                }
+            }
+        }
+        assertThat(examples).containsKey(Path.of("examples/payment-service/qualification/scenario.yaml").toString());
+        examples.forEach(ScenarioSchemaTest::assertAccepted);
+
+        Map<String, String> documented = new LinkedHashMap<>();
         List<Path> guides = new ArrayList<>(List.of(ROOT.resolve("README.md")));
-        try (Stream<Path> docs = Files.list(ROOT.resolve("docs"))) {
-            docs.filter(path -> path.toString().endsWith(".md")).sorted().forEach(guides::add);
+        try (Stream<Path> docs = Files.walk(ROOT.resolve("docs"))) {
+            docs.filter(Files::isRegularFile).filter(path -> path.toString().endsWith(".md"))
+                    .sorted().forEach(guides::add);
         }
         for (Path guide : guides) {
             Matcher block = YAML_BLOCK.matcher(read(guide));
@@ -90,14 +116,12 @@ class ScenarioSchemaTest {
                 String yaml = block.group(1);
                 if (yaml.contains("apiVersion: faultora.dev/v1\n") && yaml.contains("\nexecute:")
                         && yaml.contains("\nmetadata:")) {
-                    documents.put(ROOT.relativize(guide) + " block " + index, yaml);
+                    documented.put(ROOT.relativize(guide) + " block " + index, yaml);
                 }
             }
         }
-        assertThat(documents).as("scenarios found to check").hasSizeGreaterThan(15);
-
-        documents.forEach((where, yaml) ->
-                assertThat(violations(parse(yaml))).as("schema violations in %s", where).isEmpty());
+        assertThat(documented).as("complete scenarios found in the documentation").hasSizeGreaterThanOrEqualTo(2);
+        documented.forEach(ScenarioSchemaTest::assertAccepted);
     }
 
     @Test
@@ -109,23 +133,66 @@ class ScenarioSchemaTest {
                 execute:
                   - id: read
                     operationId: read
-                    retry: {maxAttempts: 2}
+                    retry: {maxAttempts: 2, backoffMultiplier: 1}
                 """;
-        assertThat(violations(parse(valid))).as("the base document is valid").isEmpty();
+        assertAccepted("the base document", valid);
+        assertRejected("retry without a multiplier", valid.replace(", backoffMultiplier: 1", ""));
+        assertRejected("retry without attempts", valid.replace("maxAttempts: 2, ", ""));
+        assertAccepted("a mixed-case duration suffix", valid + "timeout: 10Ms\n");
 
-        Map<String, String> refused = Map.of(
-                "an unknown top-level section", valid + "steps: []\n",
-                "the with: key the retry guide once named", valid.replace("operationId: read\n",
-                        "operationId: read\n    with: {key: one}\n"),
-                "dependsOn as a string", valid.replace("operationId: read\n", "operationId: read\n    dependsOn: other\n"),
-                "an empty execute", valid.substring(0, valid.indexOf("execute:")) + "execute: []\n",
-                "no metadata name", valid.replace("{name: refused}", "{description: none}"),
-                "another kind", valid.replace("kind: Scenario", "kind: Catalog"),
-                "zero retry attempts", valid.replace("maxAttempts: 2", "maxAttempts: 0"),
-                "an unknown step type", valid.replace("operationId: read\n", "operationId: read\n    type: loop\n"),
-                "a malformed duration", valid + "timeout: 5 minutes\n");
-        refused.forEach((what, yaml) ->
-                assertThat(violations(parse(yaml))).as("the schema refuses %s", what).isNotEmpty());
+        String repeat = """
+                apiVersion: faultora.dev/v1
+                kind: Scenario
+                metadata: {name: repeat}
+                execute:
+                  - id: batch
+                    type: repeat
+                    count: 100
+                    steps:
+                      - id: read
+                        operationId: read
+                """;
+        assertAccepted("100 repeat iterations", repeat);
+        String forEachAtLimit = "forEach: [" + String.join(", ", Collections.nCopies(100, "1")) + "]";
+        assertAccepted("100 repeat input items", repeat.replace("count: 100", forEachAtLimit));
+
+        Map<String, String> refused = Map.ofEntries(
+                entry("an unknown top-level section", valid + "steps: []\n"),
+                entry("the with: key the retry guide once named", valid.replace("operationId: read\n",
+                        "operationId: read\n    with: {key: one}\n")),
+                entry("dependsOn as a string", valid.replace("operationId: read\n",
+                        "operationId: read\n    dependsOn: other\n")),
+                entry("an empty execute", valid.substring(0, valid.indexOf("execute:")) + "execute: []\n"),
+                entry("no metadata name", valid.replace("{name: refused}", "{description: none}")),
+                entry("another kind", valid.replace("kind: Scenario", "kind: Catalog")),
+                entry("zero retry attempts", valid.replace("maxAttempts: 2", "maxAttempts: 0")),
+                entry("an unknown step type", valid.replace("operationId: read\n", "operationId: read\n    type: loop\n")),
+                entry("a malformed duration", valid + "timeout: 5 minutes\n"),
+                entry("a space before the duration suffix", valid + "timeout: 10 ms\n"),
+                entry("a zero duration as a number", valid + "timeout: 0\n"),
+                entry("a zero duration with a suffix", valid + "timeout: 0s\n"),
+                entry("a fault without duration", valid + "faults: [{id: delay, faultType: http-latency}]\n"),
+                entry("too many repeat iterations", repeat.replace("count: 100", "count: 101")),
+                entry("an empty repeat input list", repeat.replace("count: 100", "forEach: []")),
+                entry("too many repeat input items", repeat.replace("count: 100",
+                        forEachAtLimit.replace("]", ", 1]"))));
+        refused.forEach(ScenarioSchemaTest::assertRejected);
+    }
+
+    private static void assertAccepted(String what, String yaml) {
+        ParseResult<ScenarioDocument> result = parseAndValidate(yaml);
+        assertThat(result.isSuccess()).as("Faultora accepts %s: %s", what, result.diagnostics()).isTrue();
+        assertThat(violations(parse(yaml))).as("schema violations in %s", what).isEmpty();
+    }
+
+    private static void assertRejected(String what, String yaml) {
+        assertThat(parseAndValidate(yaml).errors()).as("Faultora refuses %s", what).isNotEmpty();
+        assertThat(violations(parse(yaml))).as("the schema refuses %s", what).isNotEmpty();
+    }
+
+    private static ParseResult<ScenarioDocument> parseAndValidate(String yaml) {
+        ParseResult<ScenarioDocument> parsed = new ScenarioParser().parse(yaml);
+        return parsed.isSuccess() ? new ScenarioValidator().validate(parsed.document()) : parsed;
     }
 
     private static List<SchemaValidator.Violation> violations(JsonNode document) {
