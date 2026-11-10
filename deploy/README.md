@@ -91,12 +91,13 @@ SIGTERM stops the runner asking for new work and then waits up to
 what it found. A run that ends tidily and tells nobody has failed just as
 surely as one that ran too long.
 
-It is a bound and not a guarantee. A run longer than the grace is cut off, and
-**a journal the runner still holds when the process stops is not re-delivered
-when it starts again** — it is on disk, and collecting it is a person with
-shell access rather than the protocol. Set the platform's termination grace at
-or above `--shutdown-grace`, and keep the working directory on something that
-outlives the container.
+A run longer than the grace is cut off. **Protocol v1 leaves an undelivered
+journal on disk after restart.** An operator with shell access can collect it.
+Set the platform's termination grace at or above `--shutdown-grace`, and
+keep the working directory on storage that outlives the container.
+
+See [Operating the work directory](../docs/RUNNER_SPOOL.md#operating-the-work-directory)
+for capacity, retention, backup and restore procedures.
 
 ## The examples here
 

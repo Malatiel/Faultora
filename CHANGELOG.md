@@ -6,6 +6,10 @@ All notable changes to Faultora are documented in this file.
 
 ### Added
 
+- **Runner work directory operations** explain how to size and inventory the
+  volume, keep local run ownership intact, and verify an offline backup and
+  restore.
+
 - **Using Faultora with an AI assistant**, `docs/AI_ASSISTANTS.md`: generating
   the approval key, an operator configuration, connecting Claude Code, the
   Codex CLI or another MCP client, the approval loop, how to read
