@@ -98,6 +98,9 @@ public final class DispatchedRun {
      */
     public interface WhileRunning {
 
+        /** Establish delivery ownership before the engine can invoke a target operation. */
+        default void spoolOpened(DurableRunSpool.Identity identity, Path spoolPath) throws java.io.IOException { }
+
         /**
          * @param lease       the run's permission, which something has to keep
          *                    renewing or the run will stop
@@ -234,6 +237,7 @@ public final class DispatchedRun {
         Outcome outcome;
         boolean restoreInterrupt = false;
         try (DurableRunSpool spool = spools.create(journalPath.resolveSibling("spool.bin"), identity)) {
+            whileRunning.spoolOpened(identity, spool.path());
             boolean cleanupConfirmed = false;
             try (LeaseWatch lease = new LeaseWatch(dispatch.lease(), receivedAt, cancellation);
                  RunJournal journal = new SpoolingRunJournal(journalPath, spool, cancellation)) {
@@ -263,6 +267,8 @@ public final class DispatchedRun {
         whileRunning.terminalCommitted();
         return outcome;
     }
+
+    Path workingDirectory() { return workingDirectory; }
 
     /** Binds the complete dispatch and the locally narrowed policy; only the digest is retained. */
     static String dispatchFingerprint(Dispatch dispatch, String preparationDigest) throws java.io.IOException {

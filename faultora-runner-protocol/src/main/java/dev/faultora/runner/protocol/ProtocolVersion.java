@@ -29,7 +29,10 @@ public final class ProtocolVersion {
     /** The version this build speaks. */
     public static final String CURRENT = "1";
 
-    /** Every version this build can speak, newest first. */
+    /** Opt-in version for receivers that persist before acknowledging. */
+    public static final String DURABLE_DELIVERY = "2";
+
+    /** Versions spoken by default. Durable delivery must be configured explicitly. */
     public static final List<String> SUPPORTED = List.of(CURRENT);
 
     private ProtocolVersion() {
@@ -45,11 +48,15 @@ public final class ProtocolVersion {
      *         the one that can be upgraded on purpose
      */
     public static String negotiate(List<String> offered) {
+        return negotiate(offered, SUPPORTED);
+    }
+
+    static String negotiate(List<String> offered, List<String> supported) {
         if (offered == null) {
             return null;
         }
         for (String candidate : offered) {
-            if (SUPPORTED.contains(candidate)) {
+            if (supported.contains(candidate)) {
                 return candidate;
             }
         }

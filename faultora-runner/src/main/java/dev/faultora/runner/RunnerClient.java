@@ -1,13 +1,16 @@
 package dev.faultora.runner;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.faultora.model.security.ContentDigest;
 import dev.faultora.runner.protocol.Dispatch;
+import dev.faultora.runner.protocol.DurableDelivery;
 import dev.faultora.runner.protocol.Lease;
 import dev.faultora.runner.protocol.Progress;
 import dev.faultora.runner.protocol.ProtocolVersion;
 import dev.faultora.runner.protocol.Registration;
 import dev.faultora.runner.protocol.Session;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -18,6 +21,9 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * The runner's side of the wire: it dials out, and everything travels on
@@ -37,6 +43,7 @@ public final class RunnerClient {
 
     /** How long the runner waits for work before asking again. */
     public static final Duration POLL = Duration.ofSeconds(30);
+    private static final Duration ACK_TIMEOUT = Duration.ofSeconds(30);
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -45,6 +52,7 @@ public final class RunnerClient {
     private final String runnerId;
     private final String agentVersion;
     private final Set<String> capabilities;
+    private final boolean durableDelivery;
 
     public RunnerClient(
             URI controlPlane,
@@ -53,11 +61,21 @@ public final class RunnerClient {
             String agentVersion,
             Set<String> capabilities
     ) {
+        this(controlPlane, tls, runnerId, agentVersion, capabilities, false);
+    }
+
+    public RunnerClient(URI controlPlane, TlsMaterial tls, String runnerId, String agentVersion,
+                        Set<String> capabilities, boolean durableDelivery) {
+        if (durableDelivery && (!"https".equalsIgnoreCase(controlPlane.getScheme())
+                || controlPlane.getHost() == null || controlPlane.getUserInfo() != null)) {
+            throw new IllegalArgumentException("Durable delivery requires an HTTPS dispatcher without user info");
+        }
         this.controlPlane = controlPlane;
         this.tls = tls;
         this.runnerId = runnerId;
         this.agentVersion = agentVersion;
         this.capabilities = Set.copyOf(capabilities);
+        this.durableDelivery = durableDelivery;
     }
 
     /**
@@ -69,11 +87,65 @@ public final class RunnerClient {
      * connection that fails later with a parse error.
      */
     public Session register() throws IOException, InterruptedException {
+        String required = durableDelivery ? ProtocolVersion.DURABLE_DELIVERY : ProtocolVersion.CURRENT;
         Registration registration = new Registration(
-                runnerId, agentVersion, ProtocolVersion.SUPPORTED, capabilities);
+                runnerId, agentVersion, List.of(required), capabilities);
         HttpResponse<String> response = send("/runner/register",
                 MAPPER.writeValueAsString(registration), Duration.ofSeconds(15));
-        return MAPPER.readValue(response.body(), Session.class);
+        Session session = MAPPER.readValue(response.body(), Session.class);
+        if (session == null || (session.isAccepted() && (response.statusCode() != 200
+                || !required.equals(session.protocolVersion())
+                || session.sessionId() == null || session.sessionId().isBlank()))) {
+            throw new IOException("RUNNER_SESSION_PROTOCOL_MISMATCH");
+        }
+        return session;
+    }
+
+    boolean durableDelivery() { return durableDelivery; }
+
+    String deliveryRouteDigest() {
+        return ContentDigest.sha256Uri(controlPlane.resolve("/runner/register").toASCIIString() + "\n" + runnerId);
+    }
+
+    DurableDelivery.Ack acknowledgeProgress(String sessionId, DurableDelivery.Progress progress)
+            throws IOException, InterruptedException {
+        return deliver("/runner/v2/progress", sessionId, progress);
+    }
+
+    DurableDelivery.Ack acknowledgeTerminal(String sessionId, DurableDelivery.Terminal terminal)
+            throws IOException, InterruptedException {
+        return deliver("/runner/v2/result", sessionId, terminal);
+    }
+
+    private DurableDelivery.Ack deliver(String endpoint, String sessionId, Object message)
+            throws IOException, InterruptedException {
+        if (!durableDelivery) throw new IOException("DURABLE_DELIVERY_NOT_CONFIGURED");
+        String payload = MAPPER.writeValueAsString(message);
+        if (payload.getBytes(StandardCharsets.UTF_8).length > DurableDelivery.MAX_REQUEST_BYTES) {
+            throw new IOException("DURABLE_DELIVERY_MESSAGE_TOO_LARGE");
+        }
+        var body = new ByteArrayOutputStream();
+        var response = client().sendAsync(request(endpoint + "?session=" + encoded(sessionId), payload, ACK_TIMEOUT),
+                info -> HttpResponse.BodySubscribers.ofByteArrayConsumer(chunk -> chunk.ifPresent(bytes -> {
+                    if (bytes.length > DurableDelivery.MAX_ACK_BYTES - body.size()) {
+                        throw new IllegalArgumentException("DURABLE_DELIVERY_ACK_TOO_LARGE");
+                    }
+                    body.writeBytes(bytes);
+                })));
+        try {
+            if (response.get(ACK_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS).statusCode() != 200) {
+                throw new IOException("DURABLE_DELIVERY_REFUSED");
+            }
+        } catch (TimeoutException timedOut) {
+            response.cancel(true);
+            throw new IOException("DURABLE_DELIVERY_ACK_TIMEOUT");
+        } catch (InterruptedException stopped) {
+            response.cancel(true);
+            throw stopped;
+        } catch (ExecutionException unavailable) {
+            throw new IOException("DURABLE_DELIVERY_UNAVAILABLE");
+        }
+        return DurableDelivery.decode(body.toByteArray(), DurableDelivery.Ack.class, DurableDelivery.MAX_ACK_BYTES);
     }
 
     /**
@@ -86,6 +158,10 @@ public final class RunnerClient {
             throws IOException, InterruptedException {
         HttpResponse<String> response = send(
                 "/runner/work?session=" + encoded(sessionId), null, POLL.plusSeconds(5));
+        if (durableDelivery && response.statusCode() != 204
+                && (response.statusCode() != 200 || response.body().isBlank())) {
+            throw new IOException("DURABLE_DELIVERY_WORK_REFUSED");
+        }
         if (response.statusCode() == 204 || response.body() == null
                 || response.body().isBlank()) {
             return Optional.empty();
@@ -165,10 +241,17 @@ public final class RunnerClient {
      */
     private HttpResponse<String> send(String path, String body, Duration timeout)
             throws IOException, InterruptedException {
-        HttpClient http = HttpClient.newBuilder()
+        return client().send(request(path, body, timeout), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpClient client() {
+        return HttpClient.newBuilder()
                 .sslContext(tls.sslContext())
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
+    }
+
+    private HttpRequest request(String path, String body, Duration timeout) {
         HttpRequest.Builder request = HttpRequest
                 .newBuilder(controlPlane.resolve(path))
                 .timeout(timeout);
@@ -178,6 +261,6 @@ public final class RunnerClient {
             request.header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
         }
-        return http.send(request.build(), HttpResponse.BodyHandlers.ofString());
+        return request.build();
     }
 }

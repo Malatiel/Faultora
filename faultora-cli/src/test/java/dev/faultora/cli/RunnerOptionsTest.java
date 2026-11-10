@@ -32,6 +32,18 @@ class RunnerOptionsTest {
     }
 
     @Test
+    void durableDeliveryRequiresExplicitOptInAndAnAuthenticatedDispatcher() {
+        assertThat(parse().durableDelivery()).isFalse();
+        assertThat(parse("--durable-delivery").durableDelivery()).isTrue();
+        assertThatThrownBy(() -> parse("--durable-delivery", "--dispatcher", "http://control.example.invalid"))
+                .isInstanceOf(CliException.class)
+                .hasMessageContaining("--durable-delivery requires an HTTPS dispatcher");
+        assertThatThrownBy(() -> parse("--durable-delivery", "--dispatcher", "https://user@control.example.invalid"))
+                .isInstanceOf(CliException.class)
+                .hasMessageNotContaining("user@");
+    }
+
+    @Test
     void aRunnerBreaksNothingUntilSomebodySaysItMay() {
         // The asymmetry that matters. Empty means "any" for targets and
         // environments, and "none" for faults — because listing no targets is

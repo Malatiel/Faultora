@@ -1,28 +1,39 @@
 package dev.faultora.runner;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sun.net.httpserver.HttpServer;
+import dev.faultora.engine.run.RunResult;
+import dev.faultora.model.identifier.RunId;
 import dev.faultora.model.catalog.SafetyClassification;
 import dev.faultora.model.identifier.TargetId;
 import dev.faultora.model.security.ContentDigest;
 import dev.faultora.model.security.ExtensionPolicy;
 import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.runner.protocol.Dispatch;
+import dev.faultora.runner.protocol.DispatchedDocument;
+import dev.faultora.runner.protocol.DurableDelivery;
 import dev.faultora.runner.protocol.EffectivePolicy;
 import dev.faultora.runner.protocol.Lease;
 import dev.faultora.runner.protocol.Session;
 import dev.faultora.runner.protocol.SignedPolicy;
+import dev.faultora.runtime.RunArtifacts;
 import dev.faultora.testkit.Certificates;
 import dev.faultora.testkit.QualificationDispatcher;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * M4-04: a run that outlives its first lease, and one that outlives its
@@ -309,6 +320,222 @@ class RemoteRunQualificationTest {
                     .as("what the run learned while nobody was listening")
                     .isEqualTo(journal);
         }
+    }
+
+    @Test
+    void terminalAckLostAfterCommitIsReplayedAfterBothSidesRestart() throws Exception {
+        Pair tls = trustingEachOther();
+        Path receiver = directory.resolve("receiver");
+        Path work = directory.resolve("runner");
+        String runId = "run-durable-mutation";
+        Path run = RunArtifacts.dispatchedDirectory(work, new RunId(runId));
+        var mutations = new AtomicInteger();
+        var target = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        target.createContext("/change", exchange -> {
+            if (!exchange.getRequestMethod().equals("POST")) {
+                exchange.sendResponseHeaders(405, -1);
+            } else {
+                mutations.incrementAndGet();
+                exchange.sendResponseHeaders(204, -1);
+            }
+            exchange.close();
+        });
+        target.start();
+        try {
+            Dispatch offered = mutatingDispatch(runId, target.getAddress().getPort());
+            int port;
+            DurableDelivery.Terminal terminal;
+            List<String> journal;
+            try (var dispatcher = new QualificationDispatcher(tls.dispatcher().sslContext(), receiver, 0)) {
+                port = dispatcher.port();
+                RunnerClient client = durableClient(dispatcher, tls, "runner-1");
+                Session session = client.register();
+                dispatcher.offer(offered);
+                dispatcher.loseNextDurableTerminalAck();
+                assertThatThrownBy(() -> durableAgent(client, work).takeOneDispatch(session.sessionId()))
+                        .isInstanceOf(IOException.class);
+                terminal = dispatcher.durableTerminalOf(runId);
+                journal = dispatcher.durableJournalOf(runId);
+                assertThat(terminal.status()).isEqualTo(RunResult.Status.PASSED.name());
+                assertThat(terminal.cleanupConfirmed()).isTrue();
+                assertThat(journal).isNotEmpty().hasSize((int) terminal.finalPosition());
+                assertThat(checkpoint(run).path("nextPosition").longValue()).isEqualTo(terminal.finalPosition());
+                assertThat(checkpoint(run).path("terminalDigest").isNull()).isTrue();
+                assertThat(mutations).hasValue(1);
+            }
+
+            // A mirror that cannot be read must not suppress replay of committed spool records.
+            Files.move(run.resolve("events.ndjson"), run.resolve("withheld-mirror.ndjson"));
+            try (var dispatcher = new QualificationDispatcher(tls.dispatcher().sslContext(), receiver, port)) {
+                RunnerClient client = durableClient(dispatcher, tls, "runner-1");
+                Session session = client.register();
+                RunnerAgent restarted = durableAgent(client, work);
+                assertThat(restarted.takeOneDispatch(session.sessionId())).isEmpty();
+                assertThat(checkpoint(run).path("terminalDigest").textValue()).isEqualTo(terminal.terminalDigest());
+                assertThat(dispatcher.durableTerminalOf(runId)).isEqualTo(terminal);
+                assertThat(dispatcher.durableJournalOf(runId)).containsExactlyElementsOf(journal);
+
+                dispatcher.offer(offered);
+                assertThatThrownBy(() -> durableAgent(client, directory.resolve("empty-runner"))
+                        .takeOneDispatch(session.sessionId())).hasMessage("DURABLE_DELIVERY_WORK_REFUSED");
+                assertThat(dispatcher.durableTerminalOf(runId)).isEqualTo(terminal);
+                assertThat(mutations).hasValue(1);
+            }
+        } finally {
+            target.stop(0);
+        }
+    }
+
+    @Test
+    void wrongAckCannotAdvanceCheckpointAndBrokenStorageStopsAdmission() throws Exception {
+        Pair tls = trustingEachOther();
+        Path work = directory.resolve("runner");
+        String runId = "run-wrong-ack";
+        Path run = RunArtifacts.dispatchedDirectory(work, new RunId(runId));
+        try (var dispatcher = new QualificationDispatcher(tls.dispatcher().sslContext(),
+                directory.resolve("receiver"), 0)) {
+            var client = durableClient(dispatcher, tls, "runner-1");
+            Session first = client.register();
+            dispatcher.offer(dispatch(runId, scenarioLasting(1, "1ms"), 60_000));
+            dispatcher.changeNextDurableProgressAck(ack -> {
+                var identity = ack.attempt();
+                var other = new DurableDelivery.Attempt(identity.runnerId(), identity.runId(),
+                        "123e4567-e89b-12d3-a456-426614174000", identity.dispatchDigest());
+                return new DurableDelivery.Ack(other, ack.nextPosition(), ack.terminalDigest());
+            });
+            RunnerAgent runner = durableAgent(client, work);
+            assertThatThrownBy(() -> runner.takeOneDispatch(first.sessionId()))
+                    .hasMessage("DURABLE_DELIVERY_ACK_MISMATCH");
+            assertThat(checkpoint(run).path("nextPosition").longValue()).isZero();
+            List<String> committed = dispatcher.durableJournalOf(runId);
+            assertThat(committed).isNotEmpty();
+
+            Session reconnected = client.register();
+            assertThat(runner.takeOneDispatch(reconnected.sessionId())).isEmpty();
+            assertThat(dispatcher.durableJournalOf(runId)).containsExactlyElementsOf(committed);
+            assertThat(checkpoint(run).path("terminalDigest").textValue())
+                    .isEqualTo(dispatcher.durableTerminalOf(runId).terminalDigest());
+
+            var invalid = (com.fasterxml.jackson.databind.node.ObjectNode) checkpoint(run);
+            invalid.put("nextPosition", DurableDelivery.MAX_ATTEMPT_EVENTS);
+            MAPPER.writeValue(run.resolve("delivery-ack.json").toFile(), invalid);
+            var pending = dispatch("run-still-pending", scenarioLasting(1, "1ms"), 60_000);
+            dispatcher.offer(pending);
+            Session restart = client.register();
+            assertThatThrownBy(() -> durableAgent(client, work).takeOneDispatch(restart.sessionId()))
+                    .isInstanceOf(RunnerAgent.DeliveryStorageFailure.class)
+                    .hasMessage("DURABLE_DELIVERY_STORAGE_UNAVAILABLE");
+            assertThat(client.pollForWork(restart.sessionId())).contains(pending);
+
+            Path newWork = directory.resolve("new-runner");
+            var neverStarted = dispatch("run-storage-before-invocation", scenarioLasting(1, "1ms"), 60_000);
+            Path newRun = RunArtifacts.dispatchedDirectory(newWork, new RunId(neverStarted.runId()));
+            dispatcher.offer(neverStarted);
+            assertThatThrownBy(() -> durableAgent(client, newWork).takeOneDispatch(restart.sessionId(), id -> {
+                try {
+                    Files.createDirectories(newRun.resolve("delivery-ack.json"));
+                } catch (IOException failed) {
+                    throw new java.io.UncheckedIOException(failed);
+                }
+            })).isInstanceOf(RunnerAgent.DeliveryStorageFailure.class);
+            assertThat(newRun.resolve("events.ndjson")).doesNotExist();
+            assertThat(DurableRunSpool.recover(newRun.resolve("spool.bin")).recoveryRequired()).isTrue();
+        }
+    }
+
+    @Test
+    void durableReceiverFencesOffersAndRejectsForeignOrCorruptState() throws Exception {
+        Pair tls = trustingEachOther();
+        String runId = "run-durable-fence";
+        Path receiver = directory.resolve("receiver");
+        Dispatch offered = dispatch(runId, scenarioLasting(1, "1ms"), 60_000);
+        try (var dispatcher = new QualificationDispatcher(tls.dispatcher().sslContext(), receiver, 0)) {
+            var legacy = new RunnerClient(URI.create(dispatcher.address()), tls.runner(),
+                    "runner-legacy", "0.12.0", Set.of("http"));
+            assertThat(legacy.register().isAccepted()).isFalse();
+
+            var owner = durableClient(dispatcher, tls, "runner-1");
+            Session session = owner.register();
+            dispatcher.offer(offered);
+            assertThat(owner.pollForWork(session.sessionId())).contains(offered);
+            dispatcher.offer(offered);
+            assertThatThrownBy(() -> owner.pollForWork(session.sessionId()))
+                    .hasMessage("DURABLE_DELIVERY_WORK_REFUSED");
+
+            var attempt = new DurableDelivery.Attempt("123e4567-e89b-12d3-a456-426614174000", runId,
+                    "123e4567-e89b-12d3-a456-426614174001", ContentDigest.sha256Uri("dispatch"));
+            String event = "{\"eventType\":\"RUN_STARTED\",\"runId\":\"" + runId + "\"}";
+            var progress = new DurableDelivery.Progress(attempt, 0, List.of(event));
+            var foreign = durableClient(dispatcher, tls, "runner-other");
+            Session foreignSession = foreign.register();
+            assertThatThrownBy(() -> foreign.acknowledgeProgress(foreignSession.sessionId(), progress))
+                    .hasMessage("DURABLE_DELIVERY_REFUSED");
+            assertThat(dispatcher.durableJournalOf(runId)).isEmpty();
+
+            var terminal = DurableDelivery.Terminal.of(attempt, 1, "PASSED", true, false, "NONE");
+            assertThatThrownBy(() -> owner.acknowledgeTerminal(session.sessionId(), terminal))
+                    .hasMessage("DURABLE_DELIVERY_REFUSED");
+            owner.acknowledgeProgress(session.sessionId(), progress);
+            owner.acknowledgeTerminal(session.sessionId(), terminal);
+            var conflict = DurableDelivery.Terminal.of(attempt, 1, "FAILED", true, false, "NONE");
+            assertThatThrownBy(() -> owner.acknowledgeTerminal(session.sessionId(), conflict))
+                    .hasMessage("DURABLE_DELIVERY_REFUSED");
+            assertThat(dispatcher.durableTerminalOf(runId)).isEqualTo(terminal);
+
+            Path file = receiver.resolve(ContentDigest.sha256Hex(runId) + ".json");
+            String state = Files.readString(file);
+            assertThat(state).contains("RUN_STARTED");
+            Files.writeString(file, state.replace("RUN_STARTED", "RUN_STOPPED"));
+            assertThatThrownBy(() -> owner.acknowledgeTerminal(session.sessionId(), terminal))
+                    .hasMessage("DURABLE_DELIVERY_REFUSED");
+            assertThatThrownBy(() -> dispatcher.durableJournalOf(runId))
+                    .hasMessage("DURABLE_RECEIVER_STORAGE_CORRUPT");
+        }
+    }
+
+    private static com.fasterxml.jackson.databind.JsonNode checkpoint(Path run) throws IOException {
+        return MAPPER.readTree(run.resolve("delivery-ack.json").toFile());
+    }
+
+    private static RunnerClient durableClient(QualificationDispatcher dispatcher, Pair tls, String name) {
+        return new RunnerClient(URI.create(dispatcher.address()), tls.runner(), name, "0.12.0", Set.of("http"), true);
+    }
+
+    private static RunnerAgent durableAgent(RunnerClient client, Path work) {
+        var limits = new LocalLimits(Set.of(), Set.of(SafetyClassification.MUTATING, SafetyClassification.READ_ONLY), Set.of(),
+                Set.of(), 4, 600_000, 1000, 1_048_576, null);
+        var runs = new DispatchedRun(new DispatchVerifier(limits, policy -> "trusted".equals(policy.keyId())),
+                work, handle -> null, true);
+        return new RunnerAgent(client, runs, Map.of(), EXTENSIONS);
+    }
+
+    private static Dispatch mutatingDispatch(String runId, int port) throws IOException {
+        String scenario = """
+                apiVersion: faultora.dev/v1
+                kind: Scenario
+                metadata: {name: durable-mutation}
+                execute:
+                  - id: mutation
+                    operationId: perform-mutation
+                """;
+        String api = """
+                openapi: 3.0.3
+                info: {title: Synthetic, version: '1'}
+                paths:
+                  /change:
+                    post:
+                      operationId: perform-mutation
+                      responses:
+                        '204': {description: Mutation performed}
+                """;
+        var policy = new TargetPolicy(Set.of(new TargetId("default")), Set.of(SafetyClassification.MUTATING),
+                500, 2, 300_000, 1024, Set.of(), Set.of());
+        var documents = List.of(new DispatchedDocument("openapi", api));
+        long now = System.currentTimeMillis();
+        return new Dispatch(runId, now, "nonce", scenario, documents, Map.of(),
+                Map.of("", "http://127.0.0.1:" + port), Dispatch.Credentials.none(), 11L,
+                new SignedPolicy(MAPPER.writeValueAsString(EffectivePolicy.of(policy)), "trusted", "c2ln"),
+                new Lease(now, 60_000, 10_000), ContentDigest.sha256Uri(scenario), Dispatch.digestOfDocuments(documents));
     }
 
     private static void sleep(long ms) {
