@@ -20,19 +20,25 @@ class FaultSessionTest {
     @Test
     void identicalFaultHandlesInDifferentRunsKeepSeparateCleanupOwnership() {
         var rolledBack = new CopyOnWriteArrayList<String>();
+        var activations = new java.util.concurrent.ConcurrentHashMap<String, String>();
         FaultProvider shared = new FaultProvider() {
             public Set<String> capabilities() {
                 return Set.of("stub-fault");
             }
 
             public ActiveFault inject(String type, Map<String, Object> params, FaultContext context) {
-                assertThat(context.config()).containsKey(FaultContext.RUN_ID);
+                var runId = (String) context.config().get(FaultContext.RUN_ID);
+                var activationId = (String) context.config().get(FaultContext.ACTIVATION_ID);
+                assertThat(activationId).isNotBlank();
+                activations.put(runId, activationId);
                 return new ActiveFault("same-handle", type, context.targetScope(),
                         System.currentTimeMillis(), context.hardExpiryMs(), "rollback");
             }
 
             public void rollback(ActiveFault fault, FaultContext context) {
-                rolledBack.add((String) context.config().get(FaultContext.RUN_ID));
+                var runId = (String) context.config().get(FaultContext.RUN_ID);
+                assertThat(context.config().get(FaultContext.ACTIVATION_ID)).isEqualTo(activations.get(runId));
+                rolledBack.add(runId);
             }
         };
         try (var first = new FaultSession((fault, status) -> { },
@@ -46,6 +52,7 @@ class FaultSessionTest {
             assertThat(second.pendingCount()).isEqualTo(1);
         }
         assertThat(rolledBack).containsExactly("first", "second");
+        assertThat(activations.values()).doesNotHaveDuplicates();
     }
 
     static final class CountingProvider implements FaultProvider {

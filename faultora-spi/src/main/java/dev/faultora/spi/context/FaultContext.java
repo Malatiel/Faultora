@@ -16,4 +16,7 @@ public record FaultContext(
 ) {
     /** Owning run identity, independent of its generation seed. */
     public static final String RUN_ID = "runId";
+
+    /** Opaque identity assigned before activation and reused during rollback. */
+    public static final String ACTIVATION_ID = "activationId";
 }

@@ -8,7 +8,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 
+import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executors;
@@ -103,7 +105,9 @@ public final class FaultSession implements AutoCloseable {
     ) {
         requireOpen();
         long hardExpiryMs = System.currentTimeMillis() + durationMs;
-        FaultContext context = new FaultContext(targetScope, hardExpiryMs, ownership);
+        var activation = new HashMap<>(ownership);
+        activation.put(FaultContext.ACTIVATION_ID, UUID.randomUUID().toString());
+        FaultContext context = new FaultContext(targetScope, hardExpiryMs, Map.copyOf(activation));
         ActiveFault fault = provider.inject(faultType, params, context);
 
         FaultRecord record = new FaultRecord(provider, fault, context);
