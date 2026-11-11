@@ -95,6 +95,17 @@ class EventAssertionsTest {
     }
 
     @Test
+    void withheldKeysLeaveCountsAvailableAndKeyAssertionsIndeterminate() {
+        var evidence = ObservedEvidence.observing().withheldKey();
+
+        assertThat(count.evaluate("event-count", Map.of("equals", 1), evidence, CONTEXT)
+                .outcome()).isEqualTo(AssertionResult.Outcome.PASS);
+        var result = unique.evaluate("event-unique", Map.of("by", "key"), evidence, CONTEXT);
+        assertThat(result.outcome()).isEqualTo(AssertionResult.Outcome.INDETERMINATE);
+        assertThat(result.message()).contains("budget withheld the message key");
+    }
+
+    @Test
     void aWithheldPayloadMakesTheCheckIndeterminateRatherThanFailed() {
         // The evidence policy decides what is stored. An assertion that cannot
         // see the value it checks has not found a defect.

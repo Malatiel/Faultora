@@ -86,7 +86,11 @@ public final class StepOutputBinder {
         List<MessageEvidence> messages = MessageEvidence.observedIn(protocolEvidence);
         Map<String, Object> bindable = new LinkedHashMap<>(protocolEvidence);
         TableEvidence table = TableEvidence.observedIn(protocolEvidence);
-        if (table != null) {
+        if (table != null && evidence.tableRowsWithheldByBudget()) {
+            bindable.put(TableEvidence.OBSERVED, new TableEvidence(
+                    table.columns(), List.of(), table.truncated(), true, table.redactedColumns()));
+            bindable.put("rowCount", table.rowCount());
+        } else if (table != null) {
             bindable.put(TableEvidence.OBSERVED, new TableEvidence(table.columns(), table.rows().stream()
                     .map(row -> {
                         Map<String, Object> readable = new LinkedHashMap<>(row);
@@ -96,15 +100,15 @@ public final class StepOutputBinder {
         }
         MessageEvidence published = MessageEvidence.publishedIn(protocolEvidence);
         if (published != null) {
-            bindable.put(MessageEvidence.PUBLISHED, readableMessage(published));
+            bindable.put(MessageEvidence.PUBLISHED, boundMessage(readableMessage(published)));
         }
         if (!messages.isEmpty()) {
             bindable.put(MessageEvidence.OBSERVED, messages.stream()
-                    .map(StepOutputBinder::withoutPayload).toList());
+                    .map(StepOutputBinder::withoutPayload).map(StepOutputBinder::boundMessage).toList());
         }
         ObjectNode protocol = MAPPER.valueToTree(bindable);
         if (!messages.isEmpty()) {
-            protocol.set("message", MAPPER.valueToTree(readableMessage(messages.get(0))));
+            protocol.set("message", boundMessage(readableMessage(messages.get(0))));
         }
         output.set("protocol", protocol);
     }
@@ -114,10 +118,16 @@ public final class StepOutputBinder {
         return new MessageEvidence(
                 message.topic(), message.partition(), message.offset(),
                 message.timestampMs(), message.key(), message.headers(),
-                null, message.digest(), false, message.headersCaptured(), message.withheldHeaders());
+                null, message.digest(), false, message.headersCaptured(), message.withheldHeaders(), message.keyWithheld());
     }
 
     private static MessageEvidence readableMessage(MessageEvidence message) {
         return message.payloadComplete() ? message : withoutPayload(message);
+    }
+
+    private static ObjectNode boundMessage(MessageEvidence message) {
+        ObjectNode output = MAPPER.valueToTree(message);
+        if (message.keyWithheld()) output.remove("key");
+        return output;
     }
 }

@@ -1,6 +1,9 @@
 package dev.faultora.integration;
 
 import com.sun.net.httpserver.HttpServer;
+import dev.faultora.engine.evidence.EvidenceBudget;
+import dev.faultora.engine.journal.RunEventReader;
+import dev.faultora.model.events.RunEvent;
 import org.junit.jupiter.api.Test;
 
 import java.io.OutputStream;
@@ -51,8 +54,8 @@ class CapacityBaseline {
         Files.createDirectories(runs);
         List<String> rows = new ArrayList<>();
         rows.add("| Requests | Body | Wall time | Max heap before GC | Max heap after GC | Heap used at exit "
-                + "| GCs | Output on disk |");
-        rows.add("|---:|---:|---:|---:|---:|---:|---:|---:|");
+                + "| GCs | Output on disk | Captured bodies | Withheld captures |");
+        rows.add("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
         for (int bodyBytes : BODY_BYTES) {
             HttpServer server = server(bodyBytes);
             try {
@@ -119,9 +122,26 @@ class CapacityBaseline {
         try (Stream<Path> files = Files.walk(output)) {
             outputBytes = files.filter(Files::isRegularFile).mapToLong(file -> file.toFile().length()).sum();
         }
+        long attempted = 0;
+        long captured = 0;
+        long withheld = 0;
+        try (var journal = Files.newBufferedReader(output.resolve("events.ndjson"))) {
+            String line;
+            while ((line = journal.readLine()) != null) {
+                switch (RunEventReader.readLine(line).orElseThrow()) {
+                    case RunEvent.OperationAttempted ignored -> attempted++;
+                    case RunEvent.EvidenceCaptured capture -> captured += capture.sizeBytes();
+                    case RunEvent.EvidenceBudgetExceeded ignored -> withheld++;
+                    default -> { }
+                }
+            }
+        }
+        assertThat(attempted).isEqualTo(requests);
+        assertThat(captured).isLessThanOrEqualTo(EvidenceBudget.DEFAULT_BYTES);
+        if ((long) requests * bodyBytes > EvidenceBudget.DEFAULT_BYTES) assertThat(withheld).isPositive();
         return "| " + requests + " | " + kib(bodyBytes) + " | " + wallMs + " ms | " + before + " MiB | "
                 + after + " MiB | " + exitUsedKb / 1024 + " MiB | " + collections + " | "
-                + outputBytes / 1024 + " KiB |";
+                + kib(outputBytes) + " | " + kib(captured) + " | " + withheld + " |";
     }
 
     private static void deleteRecursively(Path path) throws Exception {
@@ -135,7 +155,7 @@ class CapacityBaseline {
         }
     }
 
-    private static String kib(int bytes) {
+    private static String kib(long bytes) {
         return bytes / 1024 + " KiB";
     }
 

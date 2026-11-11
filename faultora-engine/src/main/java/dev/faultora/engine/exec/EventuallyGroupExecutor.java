@@ -95,7 +95,7 @@ public final class EventuallyGroupExecutor {
         while (attempt < group.maxPolls() && !context.cancelled() && !context.deadline().expired()) {
             attempt++;
 
-            evidence = new NodeEvidence(context.connectorContext().evidencePolicy());
+            evidence = new NodeEvidence(context.connectorContext().evidencePolicy(), context.evidenceBudget());
             OperationResult result = invoker.invoke(child, context, inputs);
             if (result.error() != null && "REQUEST_BUDGET_EXCEEDED".equals(result.error().code())) {
                 return failed(context, groupId, child, result.error(), System.currentTimeMillis() - groupStart);

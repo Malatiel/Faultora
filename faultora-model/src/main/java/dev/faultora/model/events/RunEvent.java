@@ -34,6 +34,7 @@ import java.util.Map;
         @JsonSubTypes.Type(value = RunEvent.FaultRolledBack.class, name = "FAULT_ROLLED_BACK"),
         @JsonSubTypes.Type(value = RunEvent.AssertionEvaluated.class, name = "ASSERTION_EVALUATED"),
         @JsonSubTypes.Type(value = RunEvent.EvidenceCaptured.class, name = "EVIDENCE_CAPTURED"),
+        @JsonSubTypes.Type(value = RunEvent.EvidenceBudgetExceeded.class, name = "EVIDENCE_BUDGET_EXCEEDED"),
         @JsonSubTypes.Type(value = RunEvent.CleanupStarted.class, name = "CLEANUP_STARTED"),
         @JsonSubTypes.Type(value = RunEvent.CleanupCompleted.class, name = "CLEANUP_COMPLETED")
 })
@@ -376,6 +377,14 @@ public sealed interface RunEvent {
     ) implements RunEvent {
         public EvidenceCaptured {
             eventType = "EVIDENCE_CAPTURED";
+        }
+    }
+
+    /** The run-wide limit withheld evidence for a node. */
+    record EvidenceBudgetExceeded(String eventType, long timestamp, RunId runId, NodeId nodeId)
+            implements RunEvent {
+        public EvidenceBudgetExceeded {
+            eventType = "EVIDENCE_BUDGET_EXCEEDED";
         }
     }
 

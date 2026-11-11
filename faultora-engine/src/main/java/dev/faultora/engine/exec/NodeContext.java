@@ -1,5 +1,6 @@
 package dev.faultora.engine.exec;
 
+import dev.faultora.engine.evidence.EvidenceBudget;
 import dev.faultora.engine.evidence.NodeEvidence;
 import dev.faultora.engine.fault.FaultSession;
 import dev.faultora.engine.plan.ExecutionPlan;
@@ -25,6 +26,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * @param cancellation     cooperative cancellation flag for the whole run
  * @param deadline         monotonic parent budget shared across attempts and children
  * @param requestBudget    shared connector-attempt budget, including a cleanup reserve
+ * @param evidenceBudget   shared run-wide allowance for retained content
  */
 public record NodeContext(
         ExecutionPlan plan,
@@ -35,8 +37,17 @@ public record NodeContext(
         dev.faultora.schema.SchemaCatalog schemas,
         AtomicBoolean cancellation,
         Deadline deadline,
-        RequestBudget requestBudget
+        RequestBudget requestBudget,
+        EvidenceBudget evidenceBudget
 ) {
+    public NodeContext(ExecutionPlan plan, JournalWriter journal, ConnectorContext connectorContext,
+                       Map<NodeId, NodeEvidence> evidence, FaultSession faults,
+                       dev.faultora.schema.SchemaCatalog schemas, AtomicBoolean cancellation, Deadline deadline,
+                       RequestBudget requestBudget) {
+        this(plan, journal, connectorContext, evidence, faults, schemas, cancellation, deadline,
+                requestBudget, EvidenceBudget.forContext(connectorContext));
+    }
+
     public NodeContext(ExecutionPlan plan, JournalWriter journal, ConnectorContext connectorContext,
                        Map<NodeId, NodeEvidence> evidence, FaultSession faults,
                        dev.faultora.schema.SchemaCatalog schemas, AtomicBoolean cancellation, Deadline deadline) {
@@ -57,12 +68,12 @@ public record NodeContext(
 
     public NodeContext withDeadline(Deadline otherDeadline) {
         return new NodeContext(plan, journal, connectorContext, evidence, faults,
-                schemas, cancellation, otherDeadline, requestBudget);
+                schemas, cancellation, otherDeadline, requestBudget, evidenceBudget);
     }
 
     public NodeContext forCleanup() {
         return new NodeContext(plan, journal, connectorContext, evidence, faults,
-                schemas, cancellation, deadline, requestBudget.forCleanup());
+                schemas, cancellation, deadline, requestBudget.forCleanup(), evidenceBudget);
     }
 
     /**
@@ -72,7 +83,8 @@ public record NodeContext(
      */
     public NodeContext withEvidence(Map<NodeId, NodeEvidence> otherEvidence) {
         return new NodeContext(
-                plan, journal, connectorContext, otherEvidence, faults, schemas, cancellation, deadline, requestBudget);
+                plan, journal, connectorContext, otherEvidence, faults, schemas, cancellation, deadline,
+                requestBudget, evidenceBudget);
     }
 
     /**
@@ -85,7 +97,8 @@ public record NodeContext(
      */
     public NodeContext withCancellation(AtomicBoolean otherCancellation) {
         return new NodeContext(
-                plan, journal, connectorContext, evidence, faults, schemas, otherCancellation, deadline, requestBudget);
+                plan, journal, connectorContext, evidence, faults, schemas, otherCancellation, deadline,
+                requestBudget, evidenceBudget);
     }
 
     public boolean cancelled() {

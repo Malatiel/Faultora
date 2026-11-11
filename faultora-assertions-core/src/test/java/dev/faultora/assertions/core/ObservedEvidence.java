@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /** Evidence from a step that observed messages, for the event assertions. */
 class ObservedEvidence implements EvidenceView {
@@ -49,6 +50,12 @@ class ObservedEvidence implements EvidenceView {
         messages.add(new MessageEvidence(
                 "payment-events", 0, messages.size(), System.currentTimeMillis(),
                 key, Map.of(), null, "sha256:withheld"));
+        return this;
+    }
+
+    ObservedEvidence withheldKey() {
+        messages.add(new MessageEvidence("payment-events", 0, messages.size(), System.currentTimeMillis(),
+                null, Map.of(), null, "sha256:withheld", false, false, Set.of(), true));
         return this;
     }
 

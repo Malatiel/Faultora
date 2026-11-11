@@ -37,6 +37,9 @@ every permitted event subtype and every result status, compare actual NDJSON and
 JSON report serialization, and prove reader compatibility separately. Updating a
 fixture to silence a failure without documenting compatibility is not permitted.
 
+`EVIDENCE_BUDGET_EXCEEDED` is an additive event with the affected `nodeId`.
+It identifies a capture limited by the run budget and carries no evidence content.
+
 The journal records coordinates and digests, never payloads or credentials.
 `MESSAGE_PUBLISHED.key` remains present and null in exported events. Error and
 assertion diagnostics must pass the existing evidence export policy before they

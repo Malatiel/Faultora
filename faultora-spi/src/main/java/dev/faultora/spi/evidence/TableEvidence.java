@@ -1,6 +1,7 @@
 package dev.faultora.spi.evidence;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -56,7 +57,8 @@ public record TableEvidence(
 
     public TableEvidence {
         columns = columns == null ? List.of() : List.copyOf(columns);
-        rows = rows == null ? List.of() : copyRows(rows);
+        rows = rows == null ? List.of() : valuesWithheld
+                ? Collections.nCopies(rows.size(), Map.of()) : copyRows(rows);
         redactedColumns = redactedColumns == null ? Set.of() : redactedColumns.stream()
                 .map(name -> name.toLowerCase(Locale.ROOT)).collect(java.util.stream.Collectors.toUnmodifiableSet());
     }

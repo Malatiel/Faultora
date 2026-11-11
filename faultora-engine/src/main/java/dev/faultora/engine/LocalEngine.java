@@ -1,5 +1,6 @@
 package dev.faultora.engine;
 
+import dev.faultora.engine.evidence.EvidenceBudget;
 import dev.faultora.engine.evidence.NodeEvidence;
 import dev.faultora.engine.exec.Deadline;
 import dev.faultora.engine.exec.EventuallyGroupExecutor;
@@ -11,6 +12,7 @@ import dev.faultora.engine.exec.NodeResults;
 import dev.faultora.engine.exec.OperationInvoker;
 import dev.faultora.engine.exec.ParallelGroupExecutor;
 import dev.faultora.engine.exec.RepeatGroupExecutor;
+import dev.faultora.engine.exec.RequestBudget;
 import dev.faultora.engine.exec.StepOutputBinder;
 import dev.faultora.engine.fault.FaultSession;
 import dev.faultora.engine.journal.RunJournal;
@@ -31,6 +33,7 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -152,8 +155,9 @@ public class LocalEngine {
     ) {
         long startTime = System.currentTimeMillis();
         Deadline runDeadline = deadlines.apply(runTimeout(plan));
+        EvidenceBudget evidenceBudget = EvidenceBudget.forContext(connectorContext);
         RunId runId = plan.runId();
-        JournalWriter writer = new JournalWriter(journal, runId);
+        JournalWriter writer = new JournalWriter(journal, runId, cancellation);
 
         writer.runStarted(plan.scenarioDigest(), plan.catalogDigest(), plan.seed());
 
@@ -162,6 +166,14 @@ public class LocalEngine {
         Tally tally = new Tally();
 
         List<PlanNode> nodes = plan.topologicalOrder();
+        // Step outputs are bound at producer completion and then owned by the expression
+        // context. Only a targeted assertion reads the direct node evidence afterward.
+        Map<NodeId, NodeId> lastEvidenceConsumers = new LinkedHashMap<>();
+        for (PlanNode node : nodes) {
+            if (node instanceof PlanNode.AssertionNode assertion && assertion.targetNode() != null) {
+                lastEvidenceConsumers.put(assertion.targetNode(), assertion.nodeId());
+            }
+        }
 
         // Fault rollback is guaranteed by the session: fault-stop nodes,
         // the hard-expiry watchdog, and the end-of-run sweep in close().
@@ -177,7 +189,7 @@ public class LocalEngine {
         NodeContext nodeContext = new NodeContext(
                 plan, writer, connectorContext, evidence, faultSession,
                 new dev.faultora.schema.SchemaCatalog(plan.catalog().schemas()),
-                cancellation, runDeadline);
+                cancellation, runDeadline, RequestBudget.forPlan(plan), evidenceBudget);
 
         // Step outputs accumulate into the expression context as nodes finish.
         ExpressionContext currentContext = context;
@@ -208,11 +220,12 @@ public class LocalEngine {
                     nodeResults.put(node.nodeId(), new RunResult.NodeResult(
                             node.nodeId(), NodeResults.typeOf(node), RunResult.Status.SKIPPED,
                             -1, 0, List.of(), null));
+                    releaseConsumedEvidence(node, lastEvidenceConsumers, evidence);
                     continue;
                 }
 
                 currentContext = runNode(
-                        node, nodeContext, currentContext, nodeResults, evidence);
+                        node, nodeContext, currentContext, nodeResults, evidence, lastEvidenceConsumers);
                 tally.record(nodeResults.get(node.nodeId()));
             }
 
@@ -272,11 +285,13 @@ public class LocalEngine {
             NodeContext nodeContext,
             ExpressionContext currentContext,
             Map<NodeId, RunResult.NodeResult> nodeResults,
-            Map<NodeId, NodeEvidence> evidence
+            Map<NodeId, NodeEvidence> evidence,
+            Map<NodeId, NodeId> lastEvidenceConsumers
     ) {
         ExpressionContext context = currentContext;
         final ExpressionContext entryContext = currentContext;
         RunResult.NodeResult result;
+        Collection<NodeId> childIds = List.of();
 
         switch (node) {
             case PlanNode.ParallelNode parallel -> {
@@ -285,6 +300,7 @@ public class LocalEngine {
                                 parallelGroups.execute(parallel, nodeContext, entryContext));
                 result = outcome.group();
                 nodeResults.putAll(outcome.children());
+                childIds = outcome.children().keySet();
                 // Children are bound in declaration order once the whole group
                 // finished; they never observe each other's outputs.
                 context = bindChildren(parallel.children(), outcome, evidence, context);
@@ -295,6 +311,7 @@ public class LocalEngine {
                                 repeatGroups.execute(repeat, nodeContext, entryContext));
                 result = outcome.group();
                 nodeResults.putAll(outcome.children());
+                childIds = outcome.children().keySet();
                 // The last completed iteration is what later steps observe.
                 context = bindChildren(repeat.children(), outcome, evidence, context);
             }
@@ -304,6 +321,7 @@ public class LocalEngine {
                                 eventuallyGroups.execute(eventually, nodeContext, entryContext));
                 result = outcome.group();
                 nodeResults.putAll(outcome.children());
+                childIds = outcome.children().keySet();
                 context = bindChildren(
                         List.of(eventually.child()), outcome, evidence, context);
             }
@@ -314,7 +332,19 @@ public class LocalEngine {
         }
 
         nodeResults.put(node.nodeId(), result);
+        if (!lastEvidenceConsumers.containsKey(node.nodeId())) evidence.remove(node.nodeId());
+        for (NodeId childId : childIds) {
+            if (!lastEvidenceConsumers.containsKey(childId)) evidence.remove(childId);
+        }
+        releaseConsumedEvidence(node, lastEvidenceConsumers, evidence);
         return context;
+    }
+
+    private static void releaseConsumedEvidence(PlanNode node, Map<NodeId, NodeId> lastConsumers,
+                                                Map<NodeId, NodeEvidence> evidence) {
+        if (node instanceof PlanNode.AssertionNode assertion && node.nodeId().equals(lastConsumers.get(assertion.targetNode()))) {
+            evidence.remove(assertion.targetNode());
+        }
     }
 
     /**
@@ -371,6 +401,7 @@ public class LocalEngine {
 
         for (PlanNode cleanupNode : cleanupNodes) {
             RunResult.NodeResult result = nodeExecutor.execute(cleanupNode, nodeContext, context);
+            nodeContext.evidence().remove(cleanupNode.nodeId());
             nodeResults.put(cleanupNode.nodeId(), result);
             if (result.status() == RunResult.Status.PASSED) {
                 succeeded++;

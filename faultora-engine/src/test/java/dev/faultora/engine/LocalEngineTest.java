@@ -1,5 +1,6 @@
 package dev.faultora.engine;
 
+import dev.faultora.engine.evidence.EvidenceBudget;
 import dev.faultora.engine.exec.RetryBackoff;
 import dev.faultora.schema.GenerationStrategy;
 import dev.faultora.engine.journal.RunJournal;
@@ -19,6 +20,7 @@ import dev.faultora.spi.contract.Connector;
 import dev.faultora.spi.context.AssertionContext;
 import dev.faultora.spi.context.ConnectorContext;
 import dev.faultora.spi.context.EvidenceView;
+import dev.faultora.spi.evidence.TableEvidence;
 import dev.faultora.spi.result.AssertionResult;
 import dev.faultora.spi.result.OperationResult;
 import org.junit.jupiter.api.BeforeEach;
@@ -780,6 +782,110 @@ class LocalEngineTest {
             assertThat(readInputs.get("body"))
                     .isEqualTo(Map.of("copyOf", "pay-1"));
         }
+    }
+
+    @Test
+    void evidenceExhaustionPreservesEarlierAssertionsAndBoundOutputs() throws Exception {
+        CapturingConnector connector = new CapturingConnector();
+        AssertionProvider body = new AssertionProvider() {
+            public String type() { return "body"; }
+
+            public AssertionResult evaluate(String type, Map<String, Object> params,
+                                            EvidenceView evidence, AssertionContext context) {
+                return evidence.bodyComplete() ? AssertionResult.pass("Body available")
+                        : AssertionResult.indeterminate("Body withheld");
+            }
+        };
+        NodeId first = new NodeId("first");
+        NodeId second = new NodeId("second");
+        NodeId firstAssertion = new NodeId("assert-first");
+        NodeId secondAssertion = new NodeId("assert-second");
+        ExecutionPlan plan = planWithNodes("run-evidence-limit",
+                new PlanNode.OperationNode(first, new OperationId("create-payment"), findOp("create-payment"),
+                        Map.of(), "first", List.of(), SafetyClassification.MUTATING, 0, 0),
+                new PlanNode.OperationNode(second, new OperationId("create-payment"), findOp("create-payment"),
+                        Map.of(), null, List.of(first), SafetyClassification.MUTATING, 0, 0),
+                new PlanNode.AssertionNode(firstAssertion, "body", Map.of(), first, null,
+                        List.of(first, second), SafetyClassification.READ_ONLY),
+                new PlanNode.AssertionNode(secondAssertion, "body", Map.of(), second, null,
+                        List.of(second, firstAssertion), SafetyClassification.READ_ONLY),
+                new PlanNode.OperationNode(new NodeId("use-output"), new OperationId("get-payment"),
+                        findOp("get-payment"), Map.of("paymentId", "{{steps.first.body.id}}"),
+                        null, List.of(firstAssertion), SafetyClassification.READ_ONLY, 0, 0));
+        LocalEngine engine = new LocalEngine(Map.of("http", connector), Map.of("body", body));
+
+        try (RunJournal journal = new RunJournal(tempDir.resolve("evidence-limit.ndjson"), true)) {
+            RunResult result = engine.execute(plan, journal, exprContext, oneBodyBudget(), new AtomicBoolean(false));
+
+            assertThat(result.nodeResults().get(firstAssertion).status()).isEqualTo(RunResult.Status.PASSED);
+            assertThat(result.nodeResults().get(secondAssertion).assertions()).singleElement()
+                    .extracting(AssertionResult::outcome).isEqualTo(AssertionResult.Outcome.INDETERMINATE);
+            assertThat(connector.captured.get("get-payment")).containsEntry("paymentId", "pay-1");
+            assertThat(journal.events()).anyMatch(event -> event instanceof RunEvent.EvidenceBudgetExceeded denied
+                    && denied.nodeId().equals(second));
+        }
+    }
+
+    @Test
+    void parallelChildrenShareTheOneBodyBudget() throws Exception {
+        ExecutionPlan plan = planWithNodes("run-parallel-evidence-limit",
+                new PlanNode.ParallelNode(new NodeId("race"),
+                        List.of(childOp("first", "create-payment"), childOp("second", "create-payment")),
+                        List.of(), SafetyClassification.MUTATING, 0));
+        LocalEngine engine = new LocalEngine(Map.of("http", new ConcurrencyTrackingConnector(100)), Map.of());
+
+        try (RunJournal journal = new RunJournal(tempDir.resolve("parallel-evidence-limit.ndjson"), true)) {
+            RunResult result = engine.execute(plan, journal, exprContext, oneBodyBudget(), new AtomicBoolean(false));
+
+            assertThat(result.status()).isEqualTo(RunResult.Status.PASSED);
+            assertThat(journal.events()).filteredOn(RunEvent.EvidenceCaptured.class::isInstance).hasSize(1);
+            assertThat(journal.events()).filteredOn(RunEvent.EvidenceBudgetExceeded.class::isInstance).hasSize(1);
+        }
+    }
+
+    @Test
+    void policyOnlyTablePlaceholdersRemainBoundWhenTheRunBudgetAdmitsThem() throws Exception {
+        var connector = new CapturingConnector() {
+            @Override
+            public OperationResult execute(PreparedTarget preparedTarget, OperationDefinition operation,
+                                           Map<String, Object> inputs, ConnectorContext context) {
+                if (!operation.id().value().equals("create-payment")) {
+                    return super.execute(preparedTarget, operation, inputs, context);
+                }
+                var table = new TableEvidence(List.of("name"), List.of(Map.of(), Map.of()), false, true);
+                return OperationResult.success(200, Map.of(), null, 1,
+                        Map.of(TableEvidence.OBSERVED, table, "rowCount", table.rowCount()));
+            }
+        };
+        ExecutionPlan plan = planWithNodes("run-table-evidence",
+                new PlanNode.OperationNode(new NodeId("read-table"), new OperationId("create-payment"),
+                        findOp("create-payment"), Map.of(), "observed", List.of(), SafetyClassification.MUTATING, 0, 0),
+                new PlanNode.OperationNode(new NodeId("use-table"), new OperationId("get-payment"),
+                        findOp("get-payment"), Map.of(
+                                "placeholders", "{{length(steps.observed.protocol.rows.rows)}}",
+                                "count", "{{steps.observed.protocol.rowCount}}"),
+                        null, List.of(new NodeId("read-table")), SafetyClassification.READ_ONLY, 0, 0));
+        LocalEngine engine = new LocalEngine(Map.of("http", connector), Map.of());
+
+        for (int limit : new int[]{7, 6}) {
+            ConnectorContext context = new ConnectorContext(EvidencePolicy.MINIMAL, handle -> null,
+                    5000, 30000, 60000, Map.of(EvidenceBudget.MAX_RUN_EVIDENCE_BYTES, limit));
+            try (RunJournal journal = new RunJournal(tempDir.resolve("table-" + limit + ".ndjson"), true)) {
+                RunResult result = engine.execute(plan, journal, exprContext, context, new AtomicBoolean(false));
+
+                assertThat(result.status()).isEqualTo(RunResult.Status.PASSED);
+                assertThat(connector.captured.get("get-payment")).containsEntry("count", 2)
+                        .containsEntry("placeholders", limit == 7 ? 2L : 0L);
+                assertThat(journal.events()).filteredOn(RunEvent.EvidenceBudgetExceeded.class::isInstance)
+                        .hasSize(limit == 7 ? 0 : 1);
+            }
+        }
+    }
+
+    private static ConnectorContext oneBodyBudget() {
+        EvidencePolicy capture = new EvidencePolicy(true, false, Set.of(), 1024, 0, List.of(), Set.of(), "session");
+        return new ConnectorContext(capture, handle -> null, 5000, 30000, 60000,
+                Map.of(EvidenceBudget.MAX_RUN_EVIDENCE_BYTES, "{\"id\":\"pay-1\",\"status\":\"ok\"}".length()));
     }
 
     @Test
