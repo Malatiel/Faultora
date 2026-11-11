@@ -17,7 +17,7 @@ From the source repository root, build with `./mvnw package -DskipTests`
 (`.\mvnw.cmd package -DskipTests` on Windows). In one terminal:
 
 ```sh
-jshell --class-path "examples/catalog-service/target/catalog-service-0.12.0.jar:faultora-cli/target/faultora-0.12.0.jar"
+jshell --class-path "examples/catalog-service/target/catalog-service-0.13.0.jar:faultora-cli/target/faultora-0.13.0.jar"
 ```
 
 On Windows, use `;` between the two JAR paths. In JShell:
@@ -30,16 +30,16 @@ api.start(8081);
 Keep JShell open. In another terminal, from the same repository root:
 
 ```sh
-java -jar faultora-cli/target/faultora-0.12.0.jar validate \
+java -jar faultora-cli/target/faultora-0.13.0.jar validate \
   --scenario examples/catalog-service/scenarios/contract.yaml \
   --openapi examples/catalog-service/openapi.yaml
 
-java -jar faultora-cli/target/faultora-0.12.0.jar test --preview \
+java -jar faultora-cli/target/faultora-0.13.0.jar test --preview \
   --scenario examples/catalog-service/scenarios/contract.yaml \
   --openapi examples/catalog-service/openapi.yaml \
   --target http://127.0.0.1:8081 --allow-private --allow-destructive
 
-java -jar faultora-cli/target/faultora-0.12.0.jar test \
+java -jar faultora-cli/target/faultora-0.13.0.jar test \
   --scenario examples/catalog-service/scenarios/contract.yaml \
   --openapi examples/catalog-service/openapi.yaml \
   --target http://127.0.0.1:8081 --allow-private --allow-destructive \
