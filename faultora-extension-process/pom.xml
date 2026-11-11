@@ -25,6 +25,10 @@
             <artifactId>faultora-spi</artifactId>
         </dependency>
         <dependency>
+            <groupId>com.fasterxml.jackson.dataformat</groupId>
+            <artifactId>jackson-dataformat-yaml</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
         </dependency>
@@ -39,6 +43,7 @@
                 <directory>../faultora-spi/src/test/resources</directory>
                 <includes>
                     <include>extension-wire-v1/assertion-*.json</include>
+                    <include>extension-wire-v1/import-*.json</include>
                 </includes>
             </testResource>
         </testResources>

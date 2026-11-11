@@ -47,6 +47,7 @@ public final class ExtensionProcess implements AutoCloseable {
     private final String session;
     private final AtomicBoolean pending = new AtomicBoolean();
     private ExtensionCodec codec = new ExtensionCodec(JsonFrameCodec.MAX_FRAME_BYTES);
+    private int frameLimit = JsonFrameCodec.MAX_FRAME_BYTES;
     private volatile boolean closed;
     private long nextId = 1;
 
@@ -70,6 +71,11 @@ public final class ExtensionProcess implements AutoCloseable {
     static ExtensionProcess startAssertion(StagedArtifact artifact, List<Path> runtimeClasspath,
                                            Declaration declaration, Duration lifetime) throws IOException, InterruptedException {
         return launch(artifact, VerifiedJvmMain.ASSERTION_MODE, runtimeClasspath, declaration, lifetime);
+    }
+
+    static ExtensionProcess startImporter(StagedArtifact artifact, List<Path> runtimeClasspath,
+                                          Declaration declaration, Duration lifetime) throws IOException, InterruptedException {
+        return launch(artifact, VerifiedJvmMain.IMPORTER_MODE, runtimeClasspath, declaration, lifetime);
     }
 
     private static ExtensionProcess launch(StagedArtifact artifact, String entrypoint, List<Path> runtimeClasspath,
@@ -107,6 +113,7 @@ public final class ExtensionProcess implements AutoCloseable {
 
     public long pid() { return child.process().pid(); }
     public boolean isAlive() { return child.process().isAlive(); }
+    int frameLimit() { return frameLimit; }
     /** Direct child exit only; not process-tree containment or target-side cleanup. */
     public boolean directProcessExitConfirmed() { return child.directProcessExitConfirmed(); }
 
@@ -139,7 +146,8 @@ public final class ExtensionProcess implements AutoCloseable {
         JsonNode maximum = selected.get("maxFrameBytes");
         require(maximum.isIntegralNumber() && maximum.canConvertToInt()
                 && maximum.asInt() >= 1024 && maximum.asInt() <= JsonFrameCodec.MAX_FRAME_BYTES, "LIMIT_MISMATCH");
-        codec = new ExtensionCodec(maximum.asInt());
+        frameLimit = maximum.asInt();
+        codec = new ExtensionCodec(frameLimit);
         require(beforeDeadline(started, budget), "DEADLINE_EXCEEDED");
     }
 

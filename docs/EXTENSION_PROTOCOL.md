@@ -5,9 +5,9 @@
 This is the normative data contract for the process-boundary slice of
 [ADR-023](adr/ADR-023-extension-isolation.md). The fixtures, a **test-only**
 conformance probe and the bounded `faultora-extension-protocol` codec exist.
-The child lifecycle library includes an assertion adapter. The CLI and
-runner still refuse policies that require process isolation. Importer and
-renderer adapters and resource, network and real credential controls remain pending.
+The child lifecycle library includes assertion and source importer adapters.
+The CLI and runner still refuse policies that require process isolation.
+The renderer adapter and resource, network and real credential controls remain pending.
 
 Only `AssertionProvider`, `SourceImporter` and `ReportRenderer` cross this
 boundary. Connectors, fault providers and secret resolvers do not. There is no
@@ -153,10 +153,9 @@ data: apply the existing EvidenceExport projection before persistence/export.
 An import context contains `sourceType`, `maxRefDepth`, `maxDocSizeBytes` and
 `config`; `maxRefDepth` is an integer in 0..64. It carries neither the parent's
 workspaceRoot nor allowed domains, sockets or a resolver. The 1.0 profile
-accepts self-contained documents only;
-the importer adapter must refuse external references, rather than fetching
-files or URLs implicitly. Host-approved reference preparation, if needed,
-belongs to the later importer adapter and must preserve this data-only profile.
+accepts self-contained YAML or JSON documents. The importer adapter admits
+fragment references and refuses external reference targets. It also refuses
+YAML aliases, merge keys, explicit tags, duplicate keys and trailing documents.
 The bootstrap constructs a private local context with no external-reference
 domains. `maxDocSizeBytes` cannot exceed the negotiated frame ceiling. It
 limits the UTF-8 bytes of `sourceContent` after parsing its JSON string, not
@@ -216,9 +215,9 @@ by the caller, which must discard the channel after a refusal and enforce I/O
 deadlines. Handshake state, provider payloads, process start/stop and policy
 enforcement are not implemented by the codec.
 
-Tests compare assertion payloads with the wire fixtures and exercise the
-adapter with a real child. The remaining slices cover the importer and
-renderer adapters, resource, network and real credential controls, and packaged
+Tests compare assertion and import payloads with the wire fixtures and
+exercise both adapters with a real child. The remaining slices cover the
+renderer adapter, resource, network and real credential controls, and packaged
 plugin qualification. Existing ADR-023 policy refusals remain in effect.
 
 ## Child lifecycle implementation
@@ -240,6 +239,16 @@ projects protocol-specific Java values to plain JSON before calling the
 adapter. The adapter bounds tree construction before encoding the frame
 and returns the verdict with fixed diagnostic text. A malformed or
 mismatched reply closes the peer and yields `INDETERMINATE`.
+
+`ExtensionSourceImporter` selects one declared source type and loads one
+artifact-local `SourceImporter`. The parent validates the source against the
+UTF-8 byte ceiling before sending it. The child receives the staged directory
+as its workspace and an empty set of reference domains. It returns a typed
+catalog or import errors, together with warnings and metadata. The parent
+checks the result shape, and a refused or malformed response yields an
+import failure with a fixed diagnostic and no catalog. Ordinary importer
+messages remain untrusted data for the caller. Before compilation, the
+caller validates catalog semantics and applies destination and operation policy.
 
 For a synthetic assertion fixture, the caller can supply the declared handle
 IDs and an explicit allowlist at startup. Each set holds up to 32 IDs. IDs
