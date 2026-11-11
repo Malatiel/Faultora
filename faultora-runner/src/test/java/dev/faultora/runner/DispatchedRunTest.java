@@ -6,6 +6,7 @@ import dev.faultora.connector.kafka.KafkaConnector;
 import dev.faultora.connector.jdbc.JdbcConnector;
 import dev.faultora.engine.exec.TargetResolver;
 import dev.faultora.model.catalog.SafetyClassification;
+import dev.faultora.model.identifier.RunId;
 import dev.faultora.model.identifier.TargetId;
 import dev.faultora.model.security.ContentDigest;
 import dev.faultora.model.security.ExtensionPolicy;
@@ -16,6 +17,7 @@ import dev.faultora.runner.protocol.EffectivePolicy;
 import dev.faultora.runner.protocol.Lease;
 import dev.faultora.runner.protocol.Refusal;
 import dev.faultora.runner.protocol.SignedPolicy;
+import dev.faultora.runtime.RunArtifacts;
 import dev.faultora.runtime.RunEvidence;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -112,6 +114,29 @@ class DispatchedRunTest {
             }
         }
         return scenario.toString();
+    }
+
+    @Test
+    void lowStorageRefusesBeforeExecutionAndDoesNotConsumeTheDispatch() {
+        var usable = new java.util.concurrent.atomic.AtomicLong(0);
+        var storage = new WorkDirectoryBudget(workingDirectory, WorkDirectoryBudget.DEFAULTS, path -> usable.get());
+        var runner = new DispatchedRun(new DispatchVerifier(LIMITS, policy -> true), workingDirectory,
+                handle -> { throw new AssertionError("Secret resolution before admission"); }, true,
+                DurableRunSpool::create, storage);
+        var runId = new RunId("run-storage-refused");
+        var dispatch = dispatchOf(runId.value(), scenarioOfWaits(1, "1ms"),
+                new Lease(System.currentTimeMillis(), 60_000, 10_000));
+        var outcome = runner.execute(dispatch, Map.of(), EXTENSIONS,
+                (lease, journal) -> { throw new AssertionError("Execution started before admission"); });
+
+        assertThat(outcome.refusal().reason()).isEqualTo(Refusal.Reason.MISSING_CAPABILITY);
+        assertThat(outcome.refusal().detail()).contains("WORK_DIRECTORY_STORAGE_FULL");
+        assertThat(RunArtifacts.dispatchedDirectory(workingDirectory, runId)).doesNotExist();
+
+        usable.set(Long.MAX_VALUE);
+        assertThat(runner.execute(dispatch, Map.of(), EXTENSIONS).completed()).isTrue();
+        assertThat(runner.execute(dispatch, Map.of(), EXTENSIONS).refusal().reason())
+                .isEqualTo(Refusal.Reason.REPLAYED_DISPATCH);
     }
 
     @Test

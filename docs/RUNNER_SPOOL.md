@@ -139,6 +139,19 @@ journal mirror and reports. Measure their sizes on representative runs and
 leave headroom for new attempts and terminal writes. The spool limit is per
 attempt. Monitor both free bytes and inodes on the whole volume.
 
+Before claiming a run directory, the runner checks its work directory under
+a short exclusive lock. The default admission limits are 8 GiB of reserved
+space, 64 attempts with journal payloads and 512 owned run directories.
+Each unretired attempt reserves at least 129 MiB for its spool, mirror and
+metadata. The budget also accounts for
+the runner's shared files and replay ledger. Larger existing run artifacts
+count at their current size. The runner checks the volume's usable space
+for the unwritten reservations and filesystem headroom. At the default
+reservation size, the byte budget can block admission after 63 retained
+attempts. A capacity refusal leaves the dispatch ID and nonce unreserved
+locally. Delivery and inspection of previously committed results remain
+available.
+
 For a read-only inventory on Linux, use the configured work directory.
 
 ```bash
@@ -151,10 +164,34 @@ find "$work" -mindepth 1 -maxdepth 1 -type d -name 'run-*' -print
 Treat the inventory as a dry run for retention review. Age, an apparently
 idle health file and a dispatcher reply are insufficient evidence that an
 attempt can be removed. Retain active, interrupted and unconfirmed attempts.
-Deleting an attempt directory also removes its local duplicate-dispatch
-guard. Keep the live tree intact and apply retention to verified backup
-copies under your evidence policy. If the volume approaches capacity, pause
-new dispatches and add capacity while preserving the work directory.
+In durable mode, `RunnerAgent.inspectRetention` checks a specific run against
+an operator-supplied acknowledgement cutoff. It verifies the closed spool,
+owner, dispatcher route, exact terminal acknowledgement and cleanup
+obligations. A candidate includes the verified terminal and the local
+checkpoint timestamp. Use the read-only result as evidence when reviewing
+retention.
+
+### Retire an acknowledged journal
+
+Drain the runner and verify an offline backup under your evidence retention
+policy. Use the same runner arguments with `--durable-delivery`. Replace
+`--once` with `--retire-acknowledged <run-id>` and
+`--acknowledged-before <ISO-8601 timestamp>`. The command operates on local
+files. The dispatcher URL and runner ID identify the route in the
+acknowledgement, and the checkpoint timestamp must precede the cutoff.
+
+The command verifies the spool, its owner, the exact terminal ACK and cleanup
+before writing and forcing `retention-receipt.json`. It then removes the
+spool and its NDJSON mirror. The receipt, checkpoint and owner marker remain
+available for restart, result inspection and duplicate-dispatch checks. After
+an interruption, rerun the same retirement command. Ordinary restart
+validates receipts and leaves interrupted removals for an explicit retry.
+
+A verified retired attempt uses its actual file sizes in the byte budget and
+frees a journal slot. Its owner marker still uses one of the 512 owned
+directory slots. Keep active, interrupted and unacknowledged attempts for
+delivery or reconciliation. If the directory cap approaches, plan an
+operator-controlled work directory transition with the dispatcher.
 
 ### Back up and rehearse a restore
 

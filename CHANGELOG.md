@@ -6,6 +6,11 @@ All notable changes to Faultora are documented in this file.
 
 ### Added
 
+- **Runner admission checks its storage budget.** The runner checks retained
+  attempts and available space before reserving a dispatch. In durable mode,
+  operators can retire an acknowledged journal. The runner preserves a
+  verified terminal receipt and ownership before reclaiming journal space.
+
 - **Runner work directory operations** explain how to size and inventory the
   volume, keep local run ownership intact, and verify an offline backup and
   restore.
@@ -24,6 +29,11 @@ All notable changes to Faultora are documented in this file.
   execution policy.
 
 ### Changed
+
+- **Run evidence and journal sizes are bounded.** The engine shares an
+  evidence allowance across all steps in a run and records when the allowance
+  limits a capture. Later assertions and expressions retain access to the
+  evidence admitted for their inputs.
 
 - **The README starts with the first ten minutes.** Right after what Faultora
   is for, it installs the release archive, generates a starter scenario from

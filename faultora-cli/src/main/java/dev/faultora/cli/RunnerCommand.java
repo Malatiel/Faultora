@@ -94,6 +94,8 @@ final class RunnerCommand implements Command {
                 new ExtensionPolicy(
                         Set.copyOf(options.allowedExtensions()), false, 0, Set.of(), Set.of()));
 
+        if (options.retirement() != null) return retire(agent, options.retirement());
+
         announce(options);
         try (RunnerHealth health = RunnerHealth.reporting(
                 options.healthFile(), options.runnerId())) {
@@ -101,6 +103,23 @@ final class RunnerCommand implements Command {
         } catch (java.io.IOException cannotReport) {
             err.println("The working directory is not writable: " + cannotReport.getMessage());
             return FaultoraCli.EXIT_INVALID_CONFIG;
+        }
+    }
+
+    private int retire(RunnerAgent agent, RunnerOptions.Retirement request) {
+        try {
+            var result = agent.retireAcknowledgedRun(request.runId(), request.acknowledgedBefore());
+            if (result.isEmpty()) {
+                err.println("Run is not eligible for retirement");
+                return FaultoraCli.EXIT_RUNNER_FAILURE;
+            }
+            var terminal = result.orElseThrow().terminal();
+            out.println("Retired journal payload. Terminal status " + terminal.status()
+                    + " at position " + terminal.finalPosition());
+            return FaultoraCli.EXIT_PASS;
+        } catch (java.io.IOException unavailable) {
+            err.println("Runner retirement could not be completed");
+            return FaultoraCli.EXIT_RUNNER_FAILURE;
         }
     }
 
@@ -373,5 +392,7 @@ final class RunnerCommand implements Command {
         out.println("                              flight to finish and report (default 30s)");
         out.println("  --once                      Take one dispatch and stop");
         out.println("  --durable-delivery          Require protocol 2 for acknowledged delivery");
+        out.println("  --retire-acknowledged <id>  Retire the spool and mirror of one acknowledged run");
+        out.println("  --acknowledged-before <ts>  Required ISO-8601 cutoff for retirement");
     }
 }

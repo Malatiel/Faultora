@@ -1,6 +1,7 @@
 package dev.faultora.cli;
 
 import dev.faultora.model.catalog.SafetyClassification;
+import dev.faultora.model.identifier.RunId;
 import dev.faultora.model.security.EvidencePolicy;
 import dev.faultora.runner.LocalLimits;
 import dev.faultora.runtime.RunEvidence;
@@ -8,6 +9,8 @@ import dev.faultora.spec.parser.DurationSyntax;
 
 import java.net.URI;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -55,6 +58,7 @@ import java.util.Set;
  *                           finish and report before the process goes
  * @param once               take one dispatch and stop, rather than serving
  * @param durableDelivery    require a protocol 2 dispatcher
+ * @param retirement         explicit local retirement request, or null to serve
  * @param helpRequested      whether the operator asked for help instead
  */
 record RunnerOptions(
@@ -73,8 +77,11 @@ record RunnerOptions(
         long shutdownGraceMs,
         boolean once,
         boolean durableDelivery,
+        Retirement retirement,
         boolean helpRequested
 ) {
+    record Retirement(RunId runId, Instant acknowledgedBefore) { }
+
     /** Where journals go when the operator names nowhere. */
     static final Path DEFAULT_WORK_DIRECTORY = Path.of("faultora-runner-work");
 
@@ -130,6 +137,8 @@ record RunnerOptions(
         long shutdownGraceMs = DEFAULT_SHUTDOWN_GRACE_MS;
         boolean once = false;
         boolean durableDelivery = false;
+        RunId retireRun = null;
+        Instant acknowledgedBefore = null;
 
         EvidencePolicy keeps = RunEvidence.defaultPolicy();
         boolean captureBodies = keeps.captureBodies();
@@ -180,10 +189,26 @@ record RunnerOptions(
                         shutdownGraceMs = duration(value(remaining, option), option);
                 case "--once" -> once = true;
                 case "--durable-delivery" -> durableDelivery = true;
+                case "--retire-acknowledged" -> {
+                    if (retireRun != null) throw duplicateRetirementOption(option);
+                    retireRun = retirementRunId(value(remaining, option));
+                }
+                case "--acknowledged-before" -> {
+                    if (acknowledgedBefore != null) throw duplicateRetirementOption(option);
+                    acknowledgedBefore = retirementCutoff(value(remaining, option));
+                }
                 default -> throw new CliException(
                         "Unknown option: " + option, FaultoraCli.EXIT_INVALID_CONFIG);
             }
         }
+
+        if ((retireRun == null) != (acknowledgedBefore == null)
+                || (retireRun != null && (!durableDelivery || once))) {
+            throw new CliException(
+                    "Retirement requires --durable-delivery, --retire-acknowledged and --acknowledged-before, without --once",
+                    FaultoraCli.EXIT_INVALID_CONFIG);
+        }
+        Retirement retirement = retireRun == null ? null : new Retirement(retireRun, acknowledgedBefore);
 
         require(dispatcherUrl, "--dispatcher", "the address this runner dials out to");
         if (durableDelivery && (!"https".equalsIgnoreCase(dispatcherUrl.getScheme())
@@ -220,14 +245,34 @@ record RunnerOptions(
                                 keeps.contentTypeAllowlist(), keeps.retentionClass())),
                 toxiproxyUrl, List.copyOf(allowedExtensions),
                 healthFile == null ? workDirectory.resolve("health.json") : healthFile,
-                shutdownGraceMs, once, durableDelivery, false);
+                shutdownGraceMs, once, durableDelivery, retirement, false);
     }
 
     private static RunnerOptions help() {
         return new RunnerOptions(null, null, null, null, Map.of(), DEFAULT_WORK_DIRECTORY,
                 null, false, null, null, List.of(),
                 DEFAULT_WORK_DIRECTORY.resolve("health.json"),
-                DEFAULT_SHUTDOWN_GRACE_MS, false, false, true);
+                DEFAULT_SHUTDOWN_GRACE_MS, false, false, null, true);
+    }
+
+    private static RunId retirementRunId(String value) {
+        try {
+            return new RunId(value);
+        } catch (IllegalArgumentException invalid) {
+            throw new CliException("--retire-acknowledged requires a valid run ID", FaultoraCli.EXIT_INVALID_CONFIG);
+        }
+    }
+
+    private static CliException duplicateRetirementOption(String option) {
+        return new CliException(option + " may be supplied once", FaultoraCli.EXIT_INVALID_CONFIG);
+    }
+
+    private static Instant retirementCutoff(String value) {
+        try {
+            return Instant.parse(value);
+        } catch (DateTimeParseException invalid) {
+            throw new CliException("--acknowledged-before requires an ISO-8601 timestamp", FaultoraCli.EXIT_INVALID_CONFIG);
+        }
     }
 
     /**

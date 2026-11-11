@@ -58,6 +58,7 @@ public final class DispatchedRun {
     private final boolean allowPrivate;
     private final SpoolFactory spools;
     private final ReplayProtection replayProtection;
+    private final WorkDirectoryBudget storageBudget;
 
     @FunctionalInterface
     interface SpoolFactory {
@@ -85,12 +86,19 @@ public final class DispatchedRun {
     DispatchedRun(DispatchVerifier verifier, Path workingDirectory,
                   Function<String, dev.faultora.model.security.SecretHandle> secrets,
                   boolean allowPrivate, SpoolFactory spools) {
+        this(verifier, workingDirectory, secrets, allowPrivate, spools, new WorkDirectoryBudget(workingDirectory));
+    }
+
+    DispatchedRun(DispatchVerifier verifier, Path workingDirectory,
+                  Function<String, dev.faultora.model.security.SecretHandle> secrets,
+                  boolean allowPrivate, SpoolFactory spools, WorkDirectoryBudget storageBudget) {
         this.verifier = verifier;
         this.workingDirectory = workingDirectory;
         this.secrets = secrets;
         this.allowPrivate = allowPrivate;
         this.spools = spools;
         this.replayProtection = new ReplayProtection(workingDirectory);
+        this.storageBudget = storageBudget;
     }
 
     /**
@@ -213,29 +221,26 @@ public final class DispatchedRun {
         }
 
         long admittedAt = Math.max(receivedAt, System.currentTimeMillis());
-        if (dispatch.lease().deadlineFrom(receivedAt) <= admittedAt) {
-            return Outcome.refused(Refusal.of(Refusal.Reason.LEASE_EXPIRED,
-                    "dispatch lease expired during preparation"));
-        }
-        try {
-            if (!replayProtection.claim(dispatch, admittedAt)) {
-                return Outcome.refused(Refusal.of(Refusal.Reason.REPLAYED_DISPATCH,
-                        "dispatch is outside the replay window or its run ID or nonce was already admitted"));
-            }
-        } catch (IOException unavailable) {
-            throw new StartupFailure("dispatch replay protection is unavailable", unavailable);
-        }
+        long leaseDeadline = dispatch.lease().deadlineFrom(receivedAt);
+        if (leaseDeadline <= admittedAt) return preparationLeaseExpired();
 
         Path journalPath;
         try {
-            journalPath = RunArtifacts.claimDispatched(workingDirectory, request.runId()).journalPath();
+            var artifacts = storageBudget.claim(request.runId(), () -> {
+                long now = Math.max(admittedAt, System.currentTimeMillis());
+                return leaseDeadline > now && reserveReplay(dispatch, now);
+            });
+            if (artifacts.isEmpty()) {
+                if (leaseDeadline <= System.currentTimeMillis()) return preparationLeaseExpired();
+                return Outcome.refused(Refusal.of(Refusal.Reason.REPLAYED_DISPATCH,
+                        "dispatch is outside the replay window or its run ID or nonce was already admitted"));
+            }
+            journalPath = artifacts.orElseThrow().journalPath();
         } catch (RunArtifacts.AlreadyOwned alreadyRun) {
             return Outcome.refused(Refusal.of(Refusal.Reason.REPLAYED_DISPATCH,
                     "run artifacts are already owned; dispatch with a fresh run ID"));
-        } catch (Exception noWhereToWrite) {
-            throw new StartupFailure(
-                    "the working directory is not writable: " + workingDirectory,
-                    noWhereToWrite);
+        } catch (WorkDirectoryBudget.Failure unavailable) {
+            throw new StartupFailure(unavailable.getMessage(), unavailable);
         }
 
         AtomicBoolean cancellation = new AtomicBoolean(false);
@@ -244,7 +249,7 @@ public final class DispatchedRun {
         PreparedRun sealed = PreparedRun.prepare(request, settings, java.time.Duration.ofMinutes(5));
         var identity = new DurableRunSpool.Identity(DurableRunSpool.runnerIdentity(workingDirectory),
                 dispatch.runId(), java.util.UUID.randomUUID().toString(), dispatchFingerprint(dispatch, sealed.preparationDigest()),
-                dispatch.lease().deadlineFrom(receivedAt));
+                leaseDeadline);
         Outcome outcome;
         boolean restoreInterrupt = false;
         var obligations = new FaultObligations(journalPath.getParent(), identity.attemptId());
@@ -283,6 +288,18 @@ public final class DispatchedRun {
     }
 
     Path workingDirectory() { return workingDirectory; }
+
+    private boolean reserveReplay(Dispatch dispatch, long now) {
+        try {
+            return replayProtection.claim(dispatch, now);
+        } catch (IOException unavailable) {
+            throw new StartupFailure("dispatch replay protection is unavailable", unavailable);
+        }
+    }
+
+    private static Outcome preparationLeaseExpired() {
+        return Outcome.refused(Refusal.of(Refusal.Reason.LEASE_EXPIRED, "dispatch lease expired during preparation"));
+    }
 
     public record FaultRecovery(String activationId, long hardExpiryMs, boolean expiryConfirmed) { }
 
