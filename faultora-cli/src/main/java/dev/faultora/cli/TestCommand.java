@@ -17,6 +17,7 @@ import dev.faultora.runtime.RunPreparation;
 import dev.faultora.runtime.PreparedRun;
 import dev.faultora.runtime.RunArtifacts;
 import dev.faultora.runtime.RuntimeCapabilities;
+import dev.faultora.runtime.IsolatedAssertion;
 import dev.faultora.runtime.PlanPreview;
 import dev.faultora.runtime.CatalogAssembly;
 import dev.faultora.spec.model.ScenarioDocument;
@@ -148,7 +149,7 @@ public class TestCommand implements Command {
             ConnectorContext connectorContext = RunPolicies.connectorContext(
                     options, targetPolicy, new EnvironmentSecretResolver());
             PreparedRun.Settings settings = new PreparedRun.Settings(expressionContext, connectorContext,
-                    options.allowPrivate(), RunPolicies.faultTypes(options));
+                    options.allowPrivate(), RunPolicies.faultTypes(options), options.isolatedAssertion());
             PreparedRun sealed = PreparedRun.prepare(request, settings, java.time.Duration.ofMinutes(5));
 
             failureStage = CliDiagnostic.Code.ARTIFACT_WRITE_FAILED;
@@ -187,6 +188,10 @@ public class TestCommand implements Command {
                 case ERROR, CANCELLED, SKIPPED -> FaultoraCli.EXIT_RUNNER_FAILURE;
             };
 
+        } catch (IsolatedAssertion.Refused refused) {
+            output.error(CliDiagnostic.Code.CAPABILITY_UNAVAILABLE, null, null);
+            output.err().println(refused.getMessage());
+            return FaultoraCli.EXIT_INVALID_CONFIG;
         } catch (RunArtifacts.AlreadyOwned owned) {
             output.error(CliDiagnostic.Code.ARTIFACT_WRITE_FAILED, null, null);
             output.err().println("Output already contains run artifacts; choose a new --output directory");
@@ -372,6 +377,8 @@ public class TestCommand implements Command {
         output.out().println("      --auth-secret-id <id>  Secret handle ID for Authorization header (resolved from env)");
         output.out().println("      --toxiproxy-url <url>  Toxiproxy admin endpoint; enables network-* fault types");
         output.out().println("      --allow-extension <class>  Permit a non-built-in extension (repeatable)");
+        output.out().println("      --isolated-assertion <type> <sha256:digest> <jar>");
+        output.out().println("                                 Run one approved assertion provider in a child JVM");
         output.out().println("  -i, --input <key=value>    Value for a declared scenario input (repeatable)");
         output.out().println("  -h, --help                 Show this help");
         output.out().println();

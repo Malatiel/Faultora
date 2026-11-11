@@ -245,9 +245,28 @@ extra YAML documents, malformed metadata, and nesting deeper than 16 levels
 are refused before provider initialization. A development provider's manifest
 is read from its own directory, never inherited from a parent classloader.
 Inspection failures name the provider and reason without echoing manifest
-contents. These checks do not sandbox an allowed in-process plugin;
-policies requiring process isolation or resource controls are still refused
-until ADR-023's isolation slice is implemented.
+contents. An allowed in-process plugin shares the process's authority.
+Policies requiring process isolation or resource controls are still refused.
+
+### Separate JVM assertions
+
+With the packaged CLI, `faultora test --isolated-assertion <type> <sha256:digest> <jar>`
+approves one assertion provider for the run. Supply the SHA-256 of a reviewed
+JAR with a compatible plugin manifest and an assertion service declaration.
+Admission requires empty capability declarations and a type distinct from the
+built-ins. The option is available for execution and conflicts with
+`--preview` and `--allow-extension`.
+
+The CLI stages and verifies the JAR before opening target connections. The
+child verifies the staged bytes again and receives assertion parameters and
+policy-filtered evidence over the extension protocol. The child starts with
+an empty environment apart from the Windows system root when required.
+Calls and queue waits are each limited to five seconds. The child has a
+five-minute lifetime and is closed at the end of the run.
+
+Use an operator-reviewed extension. The child runs with the account's
+filesystem and network permissions. Operating system isolation and resource
+policy enforcement remain open under [ADR-023](adr/ADR-023-extension-isolation.md).
 
 **In-process artifact trust boundary.** Operators must restrict write access
 to the runtime, bootstrap classpath, and plugin directories to the operator

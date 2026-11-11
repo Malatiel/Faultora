@@ -10,6 +10,7 @@ import dev.faultora.faults.local.FaultInjectingConnector;
 import dev.faultora.faults.local.LocalFaultProvider;
 import dev.faultora.model.security.ExtensionPolicy;
 import dev.faultora.net.HostPolicy;
+import dev.faultora.spi.contract.AssertionProvider;
 import dev.faultora.spi.contract.Connector;
 import dev.faultora.spi.contract.FaultProvider;
 
@@ -83,10 +84,25 @@ public final class RunEnvironment implements AutoCloseable {
     }
 
     static RunEnvironment open(
+            ExecutionPlan plan, Map<String, FaultProvider> faultProviders, ExtensionPolicy extensions,
+            boolean allowPrivate, IsolatedAssertion isolatedAssertion
+    ) {
+        return open(plan, faultProviders, extensions, protocol -> openConnector(protocol, allowPrivate),
+                isolatedAssertion);
+    }
+
+    static RunEnvironment open(
             ExecutionPlan plan,
             Map<String, FaultProvider> faultProviders,
             ExtensionPolicy extensions,
             Function<String, Connector> openConnector
+    ) {
+        return open(plan, faultProviders, extensions, openConnector, null);
+    }
+
+    private static RunEnvironment open(
+            ExecutionPlan plan, Map<String, FaultProvider> faultProviders, ExtensionPolicy extensions,
+            Function<String, Connector> openConnector, IsolatedAssertion isolatedAssertion
     ) {
         // Before anything is opened: a policy describing a control this build
         // does not have must stop the run rather than let it proceed looking
@@ -98,6 +114,17 @@ public final class RunEnvironment implements AutoCloseable {
         Map<String, Connector> connectors = new LinkedHashMap<>();
 
         try {
+            Map<String, AssertionProvider> assertions = null;
+            if (isolatedAssertion != null) {
+                if (extensions != null && !extensions.allowedExtensions().isEmpty()) {
+                    throw new IsolatedAssertion.Refused("Isolated assertions cannot be combined with classpath extensions");
+                }
+                assertions = ExtensionRegistry.assertionProviders(extensions);
+                if (assertions.containsKey(isolatedAssertion.type())) {
+                    throw new IsolatedAssertion.Refused("The isolated assertion type is already provided by Faultora");
+                }
+                assertions.put(isolatedAssertion.type(), isolatedAssertion.open(opened));
+            }
             Connector http = openConnector.apply("http");
             opened.add(http);
             LocalFaultProvider localFaults = (LocalFaultProvider) faultProviders.get("local");
@@ -114,7 +141,8 @@ public final class RunEnvironment implements AutoCloseable {
 
             return new RunEnvironment(
                     new LocalEngine(connectors,
-                            ExtensionRegistry.assertionProviders(extensions), faultProviders),
+                            assertions == null ? ExtensionRegistry.assertionProviders(extensions) : assertions,
+                            faultProviders),
                     opened);
         } catch (RuntimeException | Error openingFailure) {
             for (AutoCloseable client : opened.reversed()) {
@@ -158,7 +186,7 @@ public final class RunEnvironment implements AutoCloseable {
     public void close() {
         // Every client is closed, and one that refuses does not stop the rest:
         // a leaked broker connection is worse than a noisy shutdown.
-        for (AutoCloseable client : opened) {
+        for (AutoCloseable client : opened.reversed()) {
             try {
                 client.close();
             } catch (Exception alreadyGone) {

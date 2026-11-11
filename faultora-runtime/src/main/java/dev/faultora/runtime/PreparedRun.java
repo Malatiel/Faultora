@@ -38,7 +38,12 @@ public final class PreparedRun {
     /** Secret values and resolver implementation are deliberately outside the fingerprint. */
     public record Settings(
             ExpressionContext bindings, ConnectorContext connectors,
-            boolean allowPrivate, Set<String> faultTypes) {
+            boolean allowPrivate, Set<String> faultTypes, IsolatedAssertion isolatedAssertion) {
+        public Settings(ExpressionContext bindings, ConnectorContext connectors,
+                        boolean allowPrivate, Set<String> faultTypes) {
+            this(bindings, connectors, allowPrivate, faultTypes, null);
+        }
+
         public Settings {
             faultTypes = Set.copyOf(faultTypes);
         }
@@ -150,7 +155,7 @@ public final class PreparedRun {
             throw new Refused(Refusal.ALREADY_EXECUTED);
         }
         try (RunEnvironment environment = RunEnvironment.open(result.compilation().plan(),
-                faultProviders, request.extensions(), settings.allowPrivate())) {
+                faultProviders, request.extensions(), settings.allowPrivate(), settings.isolatedAssertion())) {
             Settings execution = snapshot(settings);
             return environment.engine().execute(result.compilation().plan(), journal,
                     execution.bindings(), execution.connectors(), cancellation);
@@ -164,7 +169,7 @@ public final class PreparedRun {
         return new Settings(settings.bindings().snapshot(), new ConnectorContext(
                 connectors.evidencePolicy(), connectors.secretResolver(),
                 connectors.connectTimeoutMs(), connectors.requestTimeoutMs(), connectors.totalTimeoutMs(),
-                config), settings.allowPrivate(), settings.faultTypes());
+                config), settings.allowPrivate(), settings.faultTypes(), settings.isolatedAssertion());
     }
 
     private static String fingerprint(RunPreparation.Request request, Settings settings, String catalogDigest) {
@@ -181,6 +186,11 @@ public final class PreparedRun {
         policy.put("totalTimeoutMs", settings.connectors().totalTimeoutMs());
         policy.put("allowPrivate", settings.allowPrivate());
         policy.set("faultTypes", MAPPER.valueToTree(new java.util.TreeSet<>(settings.faultTypes())));
+        if (settings.isolatedAssertion() != null) {
+            var assertion = policy.putObject("isolatedAssertion");
+            assertion.put("type", settings.isolatedAssertion().type());
+            assertion.put("digest", settings.isolatedAssertion().digest());
+        }
         try {
             return ContentDigest.sha256Uri("faultora.prepared.v2\n" + MAPPER.writeValueAsString(tree));
         } catch (com.fasterxml.jackson.core.JsonProcessingException invalid) {

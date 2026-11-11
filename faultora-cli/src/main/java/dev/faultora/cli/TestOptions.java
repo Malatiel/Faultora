@@ -1,5 +1,7 @@
 package dev.faultora.cli;
 
+import dev.faultora.runtime.IsolatedAssertion;
+
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -33,6 +35,7 @@ import java.util.Map;
  * @param toxiproxyUrl  Toxiproxy admin endpoint enabling network faults, or null
  * @param inputs        values for declared scenario inputs
  * @param allowedExtensions classes of non-built-in extensions this run permits
+ * @param isolatedAssertion a digest-approved assertion extension, or null
  * @param helpRequested whether the user asked for help instead of a run
  * @param preview      whether to describe the plan without executing it
  */
@@ -54,6 +57,7 @@ record TestOptions(
         String toxiproxyUrl,
         Map<String, Object> inputs,
         List<String> allowedExtensions,
+        IsolatedAssertion isolatedAssertion,
         boolean helpRequested,
         boolean preview
 ) {
@@ -83,6 +87,7 @@ record TestOptions(
         String toxiproxyUrl = null;
         Map<String, Object> inputs = new LinkedHashMap<>();
         List<String> allowedExtensions = new ArrayList<>();
+        IsolatedAssertion isolatedAssertion = null;
 
         Iterator<String> it = args.iterator();
         while (it.hasNext()) {
@@ -114,6 +119,21 @@ record TestOptions(
                 case "--toxiproxy-url" -> toxiproxyUrl = requireNext(it, "--toxiproxy-url");
                 case "--allow-extension" ->
                         allowedExtensions.add(requireNext(it, "--allow-extension"));
+                case "--isolated-assertion" -> {
+                    if (isolatedAssertion != null) {
+                        throw new CliException("--isolated-assertion may be used once",
+                                FaultoraCli.EXIT_INVALID_CONFIG);
+                    }
+                    String type = requireNext(it, arg);
+                    String digest = requireNext(it, arg);
+                    String jar = requireNext(it, arg);
+                    try {
+                        isolatedAssertion = new IsolatedAssertion(type, digest, Path.of(jar));
+                    } catch (IllegalArgumentException invalid) {
+                        throw new CliException("--isolated-assertion requires a type, SHA-256 digest and JAR",
+                                FaultoraCli.EXIT_INVALID_CONFIG);
+                    }
+                }
                 case "--input", "-i" -> {
                     String pair = requireNext(it, "--input");
                     int separator = pair.indexOf('=');
@@ -140,12 +160,16 @@ record TestOptions(
             throw new CliException("--format requires at least one format",
                     FaultoraCli.EXIT_INVALID_CONFIG);
         }
+        if (isolatedAssertion != null && (preview || !allowedExtensions.isEmpty())) {
+            throw new CliException("--isolated-assertion cannot be combined with --preview or --allow-extension",
+                    FaultoraCli.EXIT_INVALID_CONFIG);
+        }
 
         return new TestOptions(
                 scenarioPath, openApiPath, asyncApiPath, observationsPath,
                 databaseUser, databaseSecretId, targetUrl, Map.copyOf(targetUrls), formats,
                 outputDir, seed, allowPrivate, allowDestructive, authSecretId, toxiproxyUrl,
-                Map.copyOf(inputs), List.copyOf(allowedExtensions), false, preview);
+                Map.copyOf(inputs), List.copyOf(allowedExtensions), isolatedAssertion, false, preview);
     }
 
     /**
@@ -166,7 +190,7 @@ record TestOptions(
     private static TestOptions help() {
         return new TestOptions(
                 null, null, null, null, null, null, DEFAULT_TARGET_URL, Map.of(), List.of(), Path.of("."),
-                0, false, false, null, null, Map.of(), List.of(), true, false);
+                0, false, false, null, null, Map.of(), List.of(), null, true, false);
     }
 
     private static List<String> parseFormats(String value) {

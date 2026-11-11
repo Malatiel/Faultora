@@ -37,6 +37,35 @@ supported; the existing local Windows exclusion for `RunnerShutdownTest`
 must never be used for this Linux gate. Report local skips and exclusions
 separately from strict qualification results.
 
+## Independent installation check
+
+Ask someone who has not used Faultora to follow the published README and
+[installation guide](INSTALLATION.md) for the release under test. Give them a
+clean user environment with Java 21 and GitHub CLI, and a synthetic test
+service with its OpenAPI document and URL. Start without a checkout or an
+existing Faultora installation. Provide the inputs before the run so the
+reviewer can work from the published instructions.
+
+1. Download the release archive and `SHA256SUMS` into an empty directory.
+   Verify the archive checksum and release workflow attestation before
+   extraction. Follow the installation steps for the selected platform.
+2. From a separate project directory, check the version, generate a scenario
+   with `faultora init`, validate it, and preview it. The version must match
+   the release tag, and the preview must make no requests to the service.
+3. Execute the generated scenario against the synthetic service. Expect
+   exit code 0 and readable results. Confirm the journal and HTML report are
+   available in the requested output directory.
+4. Repeat version and validation checks with network access disabled after
+   the verified archive has been copied in. Supply a local Java runtime and
+   the files bundled with the release. Record the runner bundle transfer and
+   verification separately using the [air-gap procedure](../deploy/README.md#carrying-a-bundle-across-an-air-gap).
+
+Record the release tag, platform, archive type, expected and actual results,
+and any step that required help or a documentation correction. Use synthetic
+inputs throughout. A repeatable run in a fresh environment establishes
+installation behavior. The onboarding criterion requires a first-time reviewer
+to complete the documented path without source changes.
+
 ## Scenario preparation and execution
 
 Measure preparation from task receipt to a runnable plan. Record revisions,

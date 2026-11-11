@@ -13,6 +13,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 
 /**
@@ -29,6 +31,7 @@ public final class ExtensionAssertionProvider implements AssertionProvider, Auto
     private final ExtensionProcess.Provider selector;
     private final Duration timeout;
     private final List<String> syntheticHandles;
+    private final ReentrantLock calls = new ReentrantLock();
 
     ExtensionAssertionProvider(ExtensionProcess peer, ExtensionProcess.Provider selector, Duration timeout) {
         this(peer, selector, timeout, List.of());
@@ -89,15 +92,21 @@ public final class ExtensionAssertionProvider implements AssertionProvider, Auto
                                     AssertionContext context) {
         if (!type().equals(assertionType) || evidence == null || context == null) return refused();
         try {
-            var config = context.config();
-            if (config == null || config.containsKey(SYNTHETIC_HANDLES)) return refused();
-            if (!syntheticHandles.isEmpty()) {
-                config = new LinkedHashMap<>(config);
-                config.put(SYNTHETIC_HANDLES, syntheticHandles);
-                context = new AssertionContext(context.nodeId(), config, context.schema());
+            // One peer handles one request at a time, including when plan branches run in parallel.
+            if (!calls.tryLock(timeout.toMillis(), TimeUnit.MILLISECONDS)) return refused();
+            try {
+                var config = context.config();
+                if (config == null || config.containsKey(SYNTHETIC_HANDLES)) return refused();
+                if (!syntheticHandles.isEmpty()) {
+                    config = new LinkedHashMap<>(config);
+                    config.put(SYNTHETIC_HANDLES, syntheticHandles);
+                    context = new AssertionContext(context.nodeId(), config, context.schema());
+                }
+                var input = AssertionWire.input(params, evidence, context);
+                return peer.request(selector, input, timeout, AssertionWire::readResult);
+            } finally {
+                calls.unlock();
             }
-            var input = AssertionWire.input(params, evidence, context);
-            return peer.request(selector, input, timeout, AssertionWire::readResult);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             return refused();

@@ -3,6 +3,8 @@ package dev.faultora.cli;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.IntNode;
+import com.fasterxml.jackson.databind.node.JsonNodeType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -129,9 +131,37 @@ class MachineDiagnosticsTest {
         Files.writeString(journal, "existing journal");
         var result = invoke("test", "--preview", "--scenario", scenario.toString(), "--output", artifacts.toString());
         assertEnvelope(result, 0);
-        assertThat(result.json().path("preview").path("compiled").asBoolean()).isTrue();
-        assertThat(result.json().path("preview").path("actions").get(0).path("kind").asText()).isEqualTo("wait");
+        JsonNode preview = result.json().path("preview");
+        assertThat(preview.path("compiled").booleanValue()).isTrue();
+        assertThat(preview.path("actions")).isEqualTo(JSON.readTree("""
+                [{
+                  "nodeId": "pause",
+                  "kind": "wait",
+                  "operationId": null,
+                  "target": null,
+                  "protocol": null,
+                  "deadlineMs": 1,
+                  "maxAttempts": 0,
+                  "repetitions": 1
+                }]
+                """));
         assertThat(Files.readString(journal)).isEqualTo("existing journal");
+    }
+
+    @Test
+    void previewInputFailureHasAnExplicitNullPreviewAndStableDiagnostic() throws Exception {
+        var result = invoke("test", "--preview", "--scenario", directory.resolve(MARKER + ".yaml").toString());
+
+        assertEnvelope(result, 3);
+        assertThat(result.json().path("command").textValue()).isEqualTo("test");
+        assertThat(result.json().path("preview").isNull()).isTrue();
+        assertThat(result.json().path("diagnostics")).singleElement().satisfies(diagnostic -> {
+            assertThat(diagnostic.path("code").textValue()).isEqualTo("FILE_READ_FAILED");
+            assertThat(diagnostic.path("severity").textValue()).isEqualTo("ERROR");
+            assertThat(diagnostic.path("node").isNull()).isTrue();
+            assertThat(diagnostic.path("path").isNull()).isTrue();
+            assertThat(diagnostic.has("detailCode")).isFalse();
+        });
     }
 
     @Test
@@ -254,10 +284,24 @@ class MachineDiagnosticsTest {
 
     private static void assertEnvelope(Invocation invocation, int expectedExit) {
         assertThat(invocation.exit()).isEqualTo(expectedExit);
-        assertThat(invocation.json().path("schemaVersion").asInt()).isEqualTo(1);
-        assertThat(invocation.json().path("exitCode").asInt()).isEqualTo(expectedExit);
-        assertThat(invocation.json().properties()).extracting(entry -> entry.getKey())
+        JsonNode result = invocation.json();
+        assertThat(result.path("schemaVersion")).isEqualTo(IntNode.valueOf(1));
+        assertThat(result.path("exitCode")).isEqualTo(IntNode.valueOf(expectedExit));
+        assertThat(result.properties()).extracting(Map.Entry::getKey)
                 .containsExactlyInAnyOrder("schemaVersion", "command", "exitCode", "diagnostics", "preview");
+        assertThat(result.path("command").getNodeType()).isIn(JsonNodeType.STRING, JsonNodeType.NULL);
+        assertThat(result.path("preview").getNodeType()).isIn(JsonNodeType.OBJECT, JsonNodeType.NULL);
+        assertThat(result.path("diagnostics").isArray()).isTrue();
+        for (JsonNode diagnostic : result.path("diagnostics")) {
+            assertThat(diagnostic.path("code").textValue()).isNotBlank();
+            assertThat(diagnostic.path("severity").textValue()).isIn("ERROR", "WARNING", "INFO");
+            assertThat(diagnostic.path("node").getNodeType()).isIn(JsonNodeType.STRING, JsonNodeType.NULL);
+            assertThat(diagnostic.path("path").getNodeType()).isIn(JsonNodeType.STRING, JsonNodeType.NULL);
+            assertThat(diagnostic.path("hint").textValue()).isNotBlank();
+            assertThat(diagnostic.path("detailCode").getNodeType()).isIn(JsonNodeType.STRING, JsonNodeType.MISSING);
+        }
+        assertThat(invocation.stdout()).startsWith("{").endsWith("}" + System.lineSeparator());
+        assertThat(invocation.stdout().lines()).hasSize(1);
         assertThat(invocation.stdout()).doesNotContain(MARKER, "Exception", "Running scenario", "Report written:");
         assertThat(invocation.stderr()).doesNotContain(MARKER);
     }

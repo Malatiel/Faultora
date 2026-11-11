@@ -2,6 +2,15 @@
 
 All notable changes to Faultora are documented in this file.
 
+## Unreleased
+
+### Added
+
+- `faultora test --isolated-assertion` runs one digest-approved assertion
+  provider in a separate JVM with bounded calls and a restricted environment.
+- The qualification guide includes a checklist for first-time reviewers to
+  install the published archive and run a synthetic scenario.
+
 ## 0.13.0 — 2026-11-11
 
 The private-network runner can resume delivery of committed results after a

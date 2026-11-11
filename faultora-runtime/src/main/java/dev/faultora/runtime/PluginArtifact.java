@@ -135,6 +135,19 @@ public record PluginArtifact(String location, String digest, PluginManifest mani
     record Inspection(PluginArtifact artifact, String refusal) {
     }
 
+    /** Read the manifest from a staged, digest-checked JAR without loading classes. */
+    static PluginManifest stagedManifest(Path artifact) throws IOException {
+        try (JarFile jar = new JarFile(artifact.toFile())) {
+            var entry = jar.getJarEntry(PluginManifest.LOCATION);
+            if (entry == null || entry.isDirectory()) {
+                throw new IOException("Plugin manifest missing");
+            }
+            try (InputStream input = jar.getInputStream(entry)) {
+                return readManifest(input);
+            }
+        }
+    }
+
     private static Inspection refused(String location, String digest, String reason) {
         return new Inspection(new PluginArtifact(location, digest, null), reason);
     }
