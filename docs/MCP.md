@@ -7,7 +7,7 @@ and get to a first approved run, start with
 Start the packaged CLI as a subprocess:
 
 ```sh
-java -jar faultora-0.12.0.jar mcp --config operator.json
+java -jar faultora-0.13.0.jar mcp --config operator.json
 ```
 
 The configuration is an operator-controlled local JSON file:
@@ -134,7 +134,7 @@ Review the actual scenario, catalog and preparation preview, then sign its exact
 identity in a separate operator context with a PKCS#8 DER Ed25519 private key:
 
 ```sh
-java -jar faultora-0.12.0.jar mcp approve --private-key operator.der \
+java -jar faultora-0.13.0.jar mcp approve --private-key operator.der \
   --prepared-id <preparedId> --digest <preparationDigest> --run-id <runId> --expires-in 60
 ```
 

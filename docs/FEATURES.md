@@ -1,6 +1,6 @@
 # What Faultora includes
 
-Everything below is in the 0.12.0 release. The [README](../README.md) shows how
+Everything below is in the 0.13.0 release. The [README](../README.md) shows how
 to start; this page lists what is there once you have.
 
 Scenario execution:
@@ -100,6 +100,9 @@ Private-network execution:
 - every event and the final result committed to a local spool before they are
   sent, so a disk failure cannot report a passing run
   ([runner spool](RUNNER_SPOOL.md));
+- opt-in [protocol 2 delivery](RUNNER_PROTOCOL.md#version-2-durable-delivery)
+  resumes from a verified checkpoint after restart. Operators can retire
+  acknowledged journals while preserving the terminal receipt;
 - a signed execution and evidence policy, verified against a key the operator
   configures, narrowed by limits the deployment states and a dispatch can never
   widen;

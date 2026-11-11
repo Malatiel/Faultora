@@ -1,8 +1,10 @@
 # Local runner spool
 
 Each admitted execution owns a `spool.bin` beside its ordinary `events.ndjson`.
-The spool is local evidence for [ADR-031](adr/ADR-031-runner-recovery-ownership.md),
-not a new runner transport or a claim of durable remote delivery.
+The spool preserves local evidence for
+[ADR-031](adr/ADR-031-runner-recovery-ownership.md). The opt-in
+[protocol 2 sender](RUNNER_PROTOCOL.md#version-2-durable-delivery) also uses
+the verified spool to resume delivery after a process restart.
 
 Before the engine starts, the runner commits a version-one identity: persistent
 local runner UUID, fresh attempt UUID, logical run ID, dispatch fingerprint and
@@ -68,7 +70,7 @@ operators should retain it for diagnosis. A verified nonterminal attempt is
 operation or asserts target recovery. Existing run ownership also prevents a
 new process from executing the same dispatch ID over retained artifacts.
 
-## Bounds and remaining delivery work
+## Bounds and delivery
 
 Per attempt the current hard limits are 64 MiB, 100,000 events and 1 MiB per
 JSON record. Eight KiB is withheld from the event quota for the terminal record.
@@ -84,14 +86,14 @@ This slice qualifies process-crash persistence with real killed JVMs. It does
 not qualify power-loss durability of directory entries, filesystem or device
 caches on every platform. Do not infer such a mode from `force(true)`.
 
-Runner protocol v1 remains best effort: numeric progress replies and an empty
-result reply do not prove remote persistence. There is no persisted ACK cursor,
-startup delivery scanner, replay sender, receiver fencing, automatic recovery
-or retention deletion. Aggregate pending-attempt quotas, admission management
-and retention require the later durable-delivery slices. Retain the working
-directory across process changes and size/monitor its volume accordingly;
-unacknowledged evidence currently requires operator management. Restart never
-extends a lease or authorizes repeating target actions.
+Runner protocol 1 uses an in-memory acknowledgment cursor. Its replies do
+not establish remote persistence. Protocol 2 records acknowledgments in
+`delivery-ack.json` and resumes delivery of closed spools with a committed
+terminal. The original route and intact work directory are required. The
+qualification dispatcher exercises the version 2 receiver. Keep
+unacknowledged evidence for reconciliation and use the retention procedure
+below for acknowledged journals. Restart never extends a lease or authorizes
+repeating target actions.
 
 ## Operating the work directory
 

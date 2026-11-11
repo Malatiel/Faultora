@@ -2,9 +2,30 @@
 
 All notable changes to Faultora are documented in this file.
 
-## Unreleased
+## 0.13.0 — 2026-11-11
+
+The private-network runner can resume delivery of committed results after a
+restart when the dispatcher selects protocol 2. Disk admission and journal
+retirement bound the retained evidence. The release also adds a scenario
+schema for editors and extends the verified child JVM library.
 
 ### Added
+
+- **Restartable runner delivery.** The opt-in protocol 2 sender checkpoints
+  acknowledgments and resumes bounded batches from the original work directory
+  and dispatcher route. Replay delivers committed events and results without
+  rerunning target operations. The receiver is exercised in the qualification
+  dispatcher fixture. Protocol 1 remains the default.
+
+- **Crash evidence for external faults.** The runner records activation and
+  rollback obligations on disk. Recovery inspection can verify independent
+  expiry for providers that support it. Toxiproxy still requires operator
+  reconciliation after runner loss.
+
+- **Verified child JVM adapters.** The extension library can evaluate
+  assertions and import sources through a supervised child. Child environments
+  are restricted, and assertion secret handles are synthetic. The CLI still
+  refuses policies that require process isolation.
 
 - **Runner admission checks its storage budget.** The runner checks retained
   attempts and available space before reserving a dispatch. In durable mode,
@@ -29,6 +50,9 @@ All notable changes to Faultora are documented in this file.
   execution policy.
 
 ### Changed
+
+- **Dispatch replay protection survives process restart.** The work directory
+  retains a bounded ledger for recent dispatch run IDs and nonces.
 
 - **Run evidence and journal sizes are bounded.** The engine shares an
   evidence allowance across all steps in a run and records when the allowance
