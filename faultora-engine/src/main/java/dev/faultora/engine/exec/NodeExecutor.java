@@ -89,7 +89,7 @@ public final class NodeExecutor {
                 return stopped;
             }
 
-            NodeEvidence evidence = new NodeEvidence(context.connectorContext().evidencePolicy());
+            NodeEvidence evidence = new NodeEvidence(context.connectorContext().evidencePolicy(), context.evidenceBudget());
 
             Optional<RunResult.NodeResult> earlyResult = switch (node) {
                 case PlanNode.AssertionNode assertion -> Optional.of(assertions.execute(

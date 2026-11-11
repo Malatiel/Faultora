@@ -105,7 +105,8 @@ final class DiagnoseCommand implements Command {
             "RUN_STARTED", "RUN_COMPLETED", "RUN_FAILED", "NODE_STARTED", "NODE_COMPLETED", "NODE_FAILED",
             "NODE_SKIPPED", "OPERATION_RETRIED", "OPERATION_ATTEMPTED", "CONDITION_POLLED", "INPUTS_GENERATED",
             "MESSAGE_PUBLISHED", "MESSAGES_OBSERVED", "ROWS_OBSERVED", "FAULT_INJECTED", "FAULT_ROLLED_BACK",
-            "ASSERTION_EVALUATED", "EVIDENCE_CAPTURED", "CLEANUP_STARTED", "CLEANUP_COMPLETED");
+            "ASSERTION_EVALUATED", "EVIDENCE_CAPTURED", "EVIDENCE_BUDGET_EXCEEDED",
+            "CLEANUP_STARTED", "CLEANUP_COMPLETED");
 
     private static final Set<String> OUTCOMES = names(AssertionResult.Outcome.values());
     private static final Set<String> CATEGORIES = names(NormalizedError.ErrorCategory.values());

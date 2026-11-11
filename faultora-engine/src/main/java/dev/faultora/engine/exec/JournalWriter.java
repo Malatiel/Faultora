@@ -19,6 +19,7 @@ import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -35,11 +36,17 @@ public final class JournalWriter {
 
     private final RunJournal journal;
     private final RunId runId;
+    private final AtomicBoolean cancellation;
     private final AtomicReference<String> failure = new AtomicReference<>();
 
     public JournalWriter(RunJournal journal, RunId runId) {
+        this(journal, runId, new AtomicBoolean());
+    }
+
+    public JournalWriter(RunJournal journal, RunId runId, AtomicBoolean cancellation) {
         this.journal = journal;
         this.runId = runId;
+        this.cancellation = cancellation;
     }
 
     public RunId runId() {
@@ -148,6 +155,9 @@ public final class JournalWriter {
      * about it.
      */
     public void evidenceOf(NodeId nodeId, NodeEvidence evidence) {
+        if (evidence.budgetExceeded()) {
+            append(new RunEvent.EvidenceBudgetExceeded("EVIDENCE_BUDGET_EXCEEDED", now(), runId, nodeId));
+        }
         evidence.responseBody().ifPresent(body -> evidenceCaptured(nodeId, body));
 
         Map<String, Object> protocolEvidence = evidence.protocolEvidence();
@@ -157,7 +167,7 @@ public final class JournalWriter {
         }
         TableEvidence table = TableEvidence.observedIn(protocolEvidence);
         if (table != null) {
-            rowsObserved(nodeId, table, asLong(protocolEvidence.get("fetchedRows")));
+            rowsObserved(nodeId, table, asLong(protocolEvidence.get("fetchedRows")), evidence.tableDigest());
         }
         if (protocolEvidence.containsKey(MessageEvidence.OBSERVED)) {
             messagesObserved(
@@ -192,10 +202,13 @@ public final class JournalWriter {
 
     /** What a database observation returned, by count and by digest. */
     public void rowsObserved(NodeId nodeId, TableEvidence table, long fetched) {
+        rowsObserved(nodeId, table, fetched, ContentDigest.sha256Uri(table.canonicalForm()));
+    }
+
+    private void rowsObserved(NodeId nodeId, TableEvidence table, long fetched, String digest) {
         append(new RunEvent.RowsObserved(
                 "ROWS_OBSERVED", now(), runId, nodeId,
-                table.rowCount(), fetched, table.truncated(),
-                ContentDigest.sha256Uri(table.canonicalForm())));
+                table.rowCount(), fetched, table.truncated(), digest));
     }
 
     public void cleanupStarted(int pendingObligations) {
@@ -220,7 +233,12 @@ public final class JournalWriter {
         try {
             journal.append(event);
         } catch (IOException e) {
-            failure.compareAndSet(null, "append");
+            if (e instanceof RunJournal.EventBudgetExceeded) {
+                failure.compareAndSet(null, "event-budget");
+                cancellation.set(true);
+            } else {
+                failure.compareAndSet(null, "append");
+            }
             LOG.warn("Failed to append run journal event");
         }
     }
@@ -257,9 +275,12 @@ public final class JournalWriter {
     }
 
     public NormalizedError failureError(int rollbackFailures, int unconfirmedRollbacks) {
+        String operation = failure.get();
+        String message = "event-budget".equals(operation)
+                ? "Run event budget exhausted" : "Mandatory run journal could not be written";
         return new NormalizedError(NormalizedError.ErrorCategory.INTERNAL, "JOURNAL_WRITE_FAILED",
-                "Mandatory run journal could not be written", false,
-                Map.of("journalOperation", failure.get(), "rollbackFailures", rollbackFailures,
+                message, false,
+                Map.of("journalOperation", operation, "rollbackFailures", rollbackFailures,
                         "unconfirmedRollbacks", unconfirmedRollbacks));
     }
 

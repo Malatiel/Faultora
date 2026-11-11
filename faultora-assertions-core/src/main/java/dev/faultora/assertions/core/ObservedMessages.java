@@ -85,7 +85,7 @@ final class ObservedMessages {
         }
         String trimmed = locator.trim();
         if (KEY.equals(trimmed)) {
-            return true;
+            return !message.keyWithheld();
         }
         if (trimmed.startsWith(HEADER)) {
             return message.headerReadable(trimmed.substring(HEADER.length()));
@@ -95,6 +95,9 @@ final class ObservedMessages {
 
     /** Why a locator could not be read, for an indeterminate verdict. */
     static String unreadable(String locator) {
+        if (locator != null && KEY.equals(locator.trim())) {
+            return "The run evidence budget withheld the message key";
+        }
         return locator != null && locator.trim().startsWith(HEADER)
                 ? "The evidence policy withheld the requested message header"
                 : "The message payload was withheld, redacted or truncated";

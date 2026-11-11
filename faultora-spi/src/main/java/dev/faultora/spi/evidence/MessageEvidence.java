@@ -1,5 +1,6 @@
 package dev.faultora.spi.evidence;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import java.util.ArrayList;
@@ -35,6 +36,7 @@ import java.util.Locale;
  * @param payloadComplete whether the payload was captured without redaction or truncation
  * @param headersCaptured whether absence of a permitted header can be established
  * @param withheldHeaders lowercased header names withheld by policy
+ * @param keyWithheld whether the run's evidence budget withheld the key
  */
 public record MessageEvidence(
         String topic,
@@ -47,7 +49,8 @@ public record MessageEvidence(
         String digest,
         boolean payloadComplete,
         boolean headersCaptured,
-        Set<String> withheldHeaders
+        Set<String> withheldHeaders,
+        @JsonInclude(JsonInclude.Include.NON_DEFAULT) boolean keyWithheld
 ) {
     /** Protocol-evidence key under which observed messages are published. */
     public static final String OBSERVED = "messages";
@@ -59,6 +62,14 @@ public record MessageEvidence(
         headers = headers == null ? Map.of() : Map.copyOf(headers);
         withheldHeaders = withheldHeaders == null ? Set.of() : withheldHeaders.stream()
                 .map(name -> name.toLowerCase(Locale.ROOT)).collect(java.util.stream.Collectors.toUnmodifiableSet());
+        if (keyWithheld) key = null;
+    }
+
+    public MessageEvidence(String topic, int partition, long offset, long timestampMs,
+            String key, Map<String, String> headers, JsonNode payload, String digest,
+            boolean payloadComplete, boolean headersCaptured, Set<String> withheldHeaders) {
+        this(topic, partition, offset, timestampMs, key, headers, payload, digest,
+                payloadComplete, headersCaptured, withheldHeaders, false);
     }
 
     /** Existing producers that have no capture provenance retain their conservative header semantics. */

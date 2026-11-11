@@ -178,6 +178,12 @@
     "sizeBytes": 0
   },
   {
+    "eventType": "EVIDENCE_BUDGET_EXCEEDED",
+    "timestamp": 1000,
+    "runId": "synthetic-run",
+    "nodeId": "read"
+  },
+  {
     "eventType": "CLEANUP_STARTED",
     "timestamp": 1000,
     "runId": "synthetic-run",

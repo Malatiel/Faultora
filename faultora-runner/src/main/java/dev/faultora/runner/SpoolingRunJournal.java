@@ -25,6 +25,8 @@ final class SpoolingRunJournal extends RunJournal {
         this.cancellation = cancellation;
     }
 
+    @Override protected boolean boundedBySpool() { return true; }
+
     @Override public synchronized void append(RunEvent event) throws IOException {
         try {
             spool.appendEvent(event);
@@ -33,6 +35,9 @@ final class SpoolingRunJournal extends RunJournal {
             catch (IOException failed) { mirrorFailed = true; throw failed; }
         } catch (IOException unavailable) {
             cancellation.set(true);
+            if ("SPOOL_QUOTA_EXCEEDED".equals(unavailable.getMessage())) {
+                throw new EventBudgetExceeded("MANDATORY_SPOOL_OR_JOURNAL_FAILED");
+            }
             throw new IOException("MANDATORY_SPOOL_OR_JOURNAL_FAILED");
         }
     }

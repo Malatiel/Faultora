@@ -1,17 +1,81 @@
 package dev.faultora.engine.evidence;
 
+import com.fasterxml.jackson.databind.node.TextNode;
+import dev.faultora.model.security.ContentDigest;
 import dev.faultora.model.security.EvidencePolicy;
+import dev.faultora.spi.evidence.MessageEvidence;
+import dev.faultora.spi.evidence.TableEvidence;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class NodeEvidenceTest {
+    @Test
+    void parallelClaimsCannotOverspendTheSharedBudget() {
+        EvidenceBudget budget = new EvidenceBudget(17);
+        long admitted = IntStream.range(0, 32).parallel().filter(ignored -> budget.admit(3)).count();
+
+        assertThat(admitted).isEqualTo(5);
+        assertThat(budget.admit(2)).isTrue();
+        assertThat(budget.admit(1)).isFalse();
+    }
+
+    @Test
+    void sharedBudgetCountsPermittedBytesAndRetainsPreviouslyAdmittedEvidence() {
+        EvidencePolicy policy = new EvidencePolicy(true, true, Set.of(), 1024, 0, List.of(), Set.of(), "session");
+        EvidenceBudget budget = new EvidenceBudget(5);
+        NodeEvidence admitted = new NodeEvidence(policy, budget);
+        admitted.headers(Map.of("x", List.of("é"), "authorization", List.of("fixture")));
+        admitted.body("{}".getBytes(StandardCharsets.UTF_8));
+        NodeEvidence refused = new NodeEvidence(policy, budget);
+        refused.headers(Map.of("x", List.of("é")));
+        refused.body("{}".getBytes(StandardCharsets.UTF_8));
+
+        assertThat(admitted.budgetExceeded()).isFalse();
+        assertThat(admitted.responseHeaders()).containsOnlyKeys("x");
+        assertThat(admitted.bodyComplete()).isTrue();
+        assertThat(refused.budgetExceeded()).isTrue();
+        assertThat(refused.headerReadable("x")).isFalse();
+        assertThat(refused.bodyComplete()).isFalse();
+        assertThat(refused.responseBody()).isEmpty();
+    }
+
+    @Test
+    void deniedProtocolContentRetainsCountsCoordinatesAndDigests() {
+        var budget = new EvidenceBudget(0);
+        var evidence = new NodeEvidence(EvidencePolicy.MINIMAL, budget);
+        var message = new MessageEvidence("events", 1, 2, 3, "key", Map.of("h", "v"),
+                TextNode.valueOf("payload"), ContentDigest.sha256Uri("payload"), true, true, Set.of());
+        var table = new TableEvidence(List.of("col"), List.of(Map.of("col", "value")), true);
+        evidence.protocolEvidence(MessageEvidence.OBSERVED, List.of(message));
+        evidence.protocolEvidence(TableEvidence.OBSERVED, table);
+        evidence.protocolEvidence("fetchedRows", 2L);
+        evidence.protocolEvidence("extension-value", Map.of("body", "omitted"));
+
+        assertThat(evidence.budgetExceeded()).isTrue();
+        var retained = MessageEvidence.observedIn(evidence.protocolEvidence()).getFirst();
+        assertThat(retained.key()).isNull();
+        assertThat(retained.keyWithheld()).isTrue();
+        assertThat(retained.payloadComplete()).isFalse();
+        assertThat(retained.headerReadable("h")).isFalse();
+        assertThat(retained.digest()).isEqualTo(message.digest());
+        assertThat(retained.offset()).isEqualTo(2);
+        var withheld = TableEvidence.observedIn(evidence.protocolEvidence());
+        assertThat(withheld.rowCount()).isEqualTo(1);
+        assertThat(withheld.valuesWithheld()).isTrue();
+        assertThat(withheld.truncated()).isTrue();
+        assertThat(withheld.rows()).containsExactly(Map.of());
+        assertThat(evidence.tableDigest()).isEqualTo(ContentDigest.sha256Uri(table.canonicalForm()));
+        assertThat(evidence.protocolEvidence()).containsEntry("fetchedRows", 2L).doesNotContainKey("extension-value");
+    }
+
 
     @Test
     void bodyIsDefensivelyCopiedOnWriteAndRead() {
