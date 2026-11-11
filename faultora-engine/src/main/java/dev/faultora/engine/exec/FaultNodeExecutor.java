@@ -14,9 +14,8 @@ import java.util.Optional;
 /**
  * Starts and stops injected faults.
  * <p>
- * The rollback obligation is registered by the fault session before activation
- * is reported successful, so a fault can never outlive the run that created it
- * even if this executor is interrupted immediately afterwards.
+ * The fault session registers rollback before reporting successful activation.
+ * The watchdog and end-of-run sweep attempt cleanup while the process is alive.
  */
 final class FaultNodeExecutor {
 

@@ -103,6 +103,24 @@ public final class DurableRunSpool implements AutoCloseable {
         } catch (IOException failed) { throw fixed(failed); }
     }
 
+    static boolean ownersMatch(Path workDirectory, Path runDirectory, String runnerId, String runId)
+            throws IOException {
+        return ownerMatches(workDirectory.resolve("runner-identity"), runnerId)
+                && ownerMatches(runDirectory.resolve("run-owner"), runId);
+    }
+
+    private static boolean ownerMatches(Path path, String expected) throws IOException {
+        byte[] identity = expected.getBytes(StandardCharsets.US_ASCII);
+        try {
+            noLinks(path);
+            try (var input = Files.newInputStream(path, LinkOption.NOFOLLOW_LINKS)) {
+                return Arrays.equals(identity, input.readNBytes(identity.length + 1));
+            }
+        } catch (IOException failed) {
+            throw fixed(failed);
+        }
+    }
+
     private record Descriptor(int version, Identity identity, Limits limits) { }
 
     public record Terminal(RunResult.Status status, boolean cleanupConfirmed, long finalPosition,

@@ -15,7 +15,6 @@ import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.channels.OverlappingFileLockException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryIteratorException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
@@ -123,16 +122,10 @@ final class DurableRunDelivery {
         }
 
         Attempt attempt = checkpoint.attempt();
-        Path owner = workingDirectory.resolve("runner-identity");
-        Path runOwner = checkpointPath.resolveSibling("run-owner");
-        DurableRunSpool.noLinks(owner);
-        DurableRunSpool.noLinks(runOwner);
         if (!RunArtifacts.dispatchedDirectory(workingDirectory, new RunId(attempt.runId()))
                 .equals(checkpointPath.getParent())
-                || Files.size(owner) != 36
-                || !attempt.runnerId().equals(Files.readString(owner, StandardCharsets.US_ASCII))
-                || Files.size(runOwner) != attempt.runId().length()
-                || !attempt.runId().equals(Files.readString(runOwner, StandardCharsets.US_ASCII))) {
+                || !DurableRunSpool.ownersMatch(workingDirectory, checkpointPath.getParent(),
+                        attempt.runnerId(), attempt.runId())) {
             throw new IOException("DURABLE_CHECKPOINT_OWNER_MISMATCH");
         }
         return checkpoint;

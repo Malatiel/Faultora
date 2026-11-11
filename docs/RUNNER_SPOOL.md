@@ -108,6 +108,30 @@ Keep the ledger across restarts, and pause dispatch if the runner refuses work
 because the ledger is damaged or inaccessible. Reconcile the dispatcher and
 the work directory before restoring ledger data from backup.
 
+### Fault obligations after a crash
+
+Before invoking an external fault provider, the runner forces an activation record under
+`fault-obligations/` in the run directory. The record binds an opaque activation
+ID and hard deadline to the spool attempt and a hash of the configured provider
+key. Provider parameters and endpoints stay out of this record. Successful
+rollback adds a completion record. Keep both records with the run artifacts.
+The ledger allows up to 1,024 activations per run and reserves room for their
+rollback confirmations.
+
+The runner library can inspect a closed spool with
+`DispatchedRun.inspectFaultRecovery`. Use the same provider configuration that
+owned the activation. The inspection asks providers implementing
+`ExpiringFaultProvider` for read-only proof that the exact activation expired
+and its dependency was restored. Missing providers, failed queries and
+unconfirmed responses leave the obligation outstanding. Toxiproxy toxics
+require operator reconciliation after runner loss because Toxiproxy does not
+provide independent expiry.
+
+External expiry confirms that fault obligation alone. An empty inspection
+reports no surviving outstanding entries. The original spool and its
+recovery state remain intact. Scenario cleanup and target effects require
+their own reconciliation.
+
 ### Capacity and retention
 
 Budget up to 64 MiB per retained attempt for its spool, plus space for its

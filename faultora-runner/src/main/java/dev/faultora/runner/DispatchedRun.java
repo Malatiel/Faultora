@@ -9,6 +9,7 @@ import dev.faultora.engine.exec.JournalWriter;
 import dev.faultora.engine.plan.PlanCompilationResult;
 import dev.faultora.engine.run.RunResult;
 import dev.faultora.model.identifier.RunId;
+import dev.faultora.model.security.ContentDigest;
 import dev.faultora.model.security.ExtensionPolicy;
 import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.runner.protocol.Dispatch;
@@ -23,6 +24,7 @@ import dev.faultora.runtime.UnenforceablePolicy;
 import dev.faultora.runtime.RunEvidence;
 import dev.faultora.spec.expression.ExpressionContext;
 import dev.faultora.spi.context.ConnectorContext;
+import dev.faultora.spi.contract.ExpiringFaultProvider;
 import dev.faultora.spi.contract.FaultProvider;
 
 import java.io.IOException;
@@ -245,6 +247,7 @@ public final class DispatchedRun {
                 dispatch.lease().deadlineFrom(receivedAt));
         Outcome outcome;
         boolean restoreInterrupt = false;
+        var obligations = new FaultObligations(journalPath.getParent(), identity.attemptId());
         try (DurableRunSpool spool = spools.create(journalPath.resolveSibling("spool.bin"), identity)) {
             whileRunning.spoolOpened(identity, spool.path());
             boolean cleanupConfirmed = false;
@@ -252,11 +255,13 @@ public final class DispatchedRun {
                  RunJournal journal = new SpoolingRunJournal(journalPath, spool, cancellation)) {
                 lease.start();
                 whileRunning.started(lease, journalPath);
-                RunResult result = sealed.execute(request, settings, faultProviders, journal, cancellation);
+                RunResult result = sealed.execute(request, settings,
+                        TrackedFaultProvider.wrap(faultProviders, obligations), journal, cancellation);
                 result = JournalWriter.closeJournal(journal, result);
                 boolean cleanupFailed = journal.events().stream().anyMatch(event ->
                         event instanceof dev.faultora.model.events.RunEvent.CleanupCompleted cleanup && cleanup.failed() != 0);
-                cleanupConfirmed = !cleanupFailed && result.status() != RunResult.Status.ERROR;
+                cleanupConfirmed = !cleanupFailed && result.status() != RunResult.Status.ERROR
+                        && obligations.pending().isEmpty();
                 outcome = Outcome.ran(result, journalPath, lease.hasExpired(), prepared.catalogWarnings());
             } catch (Exception stopped) {
                 restoreInterrupt = stopped instanceof InterruptedException;
@@ -278,6 +283,47 @@ public final class DispatchedRun {
     }
 
     Path workingDirectory() { return workingDirectory; }
+
+    public record FaultRecovery(String activationId, long hardExpiryMs, boolean expiryConfirmed) { }
+
+    /**
+     * Inspect outstanding fault obligations for a closed, verified attempt.
+     * Provider queries are read-only and cannot change the recorded run result.
+     */
+    public List<FaultRecovery> inspectFaultRecovery(RunId runId, Map<String, FaultProvider> configuredProviders)
+            throws IOException {
+        Path runDirectory = RunArtifacts.dispatchedDirectory(workingDirectory, runId);
+        List<FaultObligations.Entry> pending;
+        try (var spool = DurableRunSpool.openVerified(runDirectory.resolve("spool.bin"))) {
+            var identity = spool.snapshot().identity();
+            if (!runId.value().equals(identity.runId())
+                    || !DurableRunSpool.ownersMatch(workingDirectory, runDirectory, identity.runnerId(), identity.runId())) {
+                throw new IOException("FAULT_OBLIGATION_OWNER_MISMATCH");
+            }
+            pending = new FaultObligations(runDirectory, identity.attemptId()).pending();
+        }
+
+        var expiring = new LinkedHashMap<String, ExpiringFaultProvider>();
+        configuredProviders.forEach((key, provider) -> {
+            if (provider instanceof ExpiringFaultProvider external) {
+                expiring.put(ContentDigest.sha256Uri(key), external);
+            }
+        });
+        var recovered = new ArrayList<FaultRecovery>(pending.size());
+        for (var entry : pending) {
+            boolean confirmed = false;
+            var provider = expiring.get(entry.providerKeyDigest());
+            if (provider != null) {
+                try {
+                    confirmed = provider.confirmsExpiry(entry.activationId(), entry.hardExpiryMs());
+                } catch (RuntimeException unavailable) {
+                    // An unavailable provider leaves this obligation unresolved.
+                }
+            }
+            recovered.add(new FaultRecovery(entry.activationId(), entry.hardExpiryMs(), confirmed));
+        }
+        return List.copyOf(recovered);
+    }
 
     /** Binds the complete dispatch and the locally narrowed policy; only the digest is retained. */
     static String dispatchFingerprint(Dispatch dispatch, String preparationDigest) throws java.io.IOException {
