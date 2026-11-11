@@ -31,6 +31,8 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.FileTime;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -359,19 +361,62 @@ class RemoteRunQualificationTest {
                 assertThat(journal).isNotEmpty().hasSize((int) terminal.finalPosition());
                 assertThat(checkpoint(run).path("nextPosition").longValue()).isEqualTo(terminal.finalPosition());
                 assertThat(checkpoint(run).path("terminalDigest").isNull()).isTrue();
+                assertThat(durableAgent(client, work).inspectRetention(new RunId(runId), Instant.MAX)).isEmpty();
+                assertThat(durableAgent(client, work).retireAcknowledgedRun(new RunId(runId), Instant.MAX)).isEmpty();
+                assertThat(run.resolve("spool.bin")).exists();
+                assertThat(run.resolve("retention-receipt.json")).doesNotExist();
                 assertThat(mutations).hasValue(1);
             }
 
             // A mirror that cannot be read must not suppress replay of committed spool records.
             Files.move(run.resolve("events.ndjson"), run.resolve("withheld-mirror.ndjson"));
+            Path interruptedCheckpoint = Files.writeString(run.resolve("delivery-ack.pending"), "interrupted");
             try (var dispatcher = new QualificationDispatcher(tls.dispatcher().sslContext(), receiver, port)) {
                 RunnerClient client = durableClient(dispatcher, tls, "runner-1");
                 Session session = client.register();
                 RunnerAgent restarted = durableAgent(client, work);
                 assertThat(restarted.takeOneDispatch(session.sessionId())).isEmpty();
                 assertThat(checkpoint(run).path("terminalDigest").textValue()).isEqualTo(terminal.terminalDigest());
+                assertThat(interruptedCheckpoint).doesNotExist();
                 assertThat(dispatcher.durableTerminalOf(runId)).isEqualTo(terminal);
                 assertThat(dispatcher.durableJournalOf(runId)).containsExactlyElementsOf(journal);
+                Path ack = run.resolve("delivery-ack.json");
+                Instant acknowledgedAt = Files.getLastModifiedTime(ack).toInstant();
+                byte[] ackBefore = Files.readAllBytes(ack);
+                byte[] spoolBefore = Files.readAllBytes(run.resolve("spool.bin"));
+                var id = new RunId(runId);
+                assertThat(restarted.inspectRetention(id, acknowledgedAt)).isEmpty();
+                assertThat(restarted.inspectRetention(id, acknowledgedAt.plusNanos(1)))
+                        .contains(new RunnerAgent.RetentionCandidate(terminal, acknowledgedAt));
+                assertThat(agentFor(dispatcher, tls, work).inspectRetention(id, Instant.MAX)).isEmpty();
+                assertThatThrownBy(() -> durableAgent(durableClient(dispatcher, tls, "other-route"), work)
+                        .inspectRetention(id, Instant.MAX)).hasMessage("DURABLE_RETENTION_INSPECTION_FAILED");
+                assertThat(Files.readAllBytes(ack)).containsExactly(ackBefore);
+                assertThat(Files.readAllBytes(run.resolve("spool.bin"))).containsExactly(spoolBefore);
+
+                var obligations = new FaultObligations(run, terminal.attempt().attemptId());
+                var pendingFault = new FaultObligations.Entry("123e4567-e89b-12d3-a456-426614174050",
+                        ContentDigest.sha256Uri("fixture-provider"), 1000L);
+                obligations.record(pendingFault);
+                assertThat(restarted.inspectRetention(id, Instant.MAX)).isEmpty();
+                assertThat(restarted.retireAcknowledgedRun(id, Instant.MAX)).isEmpty();
+                assertThat(run.resolve("retention-receipt.json")).doesNotExist();
+                obligations.rolledBack(pendingFault.activationId());
+                assertThat(restarted.inspectRetention(id, Instant.MAX))
+                        .contains(new RunnerAgent.RetentionCandidate(terminal, acknowledgedAt));
+
+                var mismatched = (com.fasterxml.jackson.databind.node.ObjectNode) checkpoint(run);
+                mismatched.put("terminalDigest", ContentDigest.sha256Uri("fixture-mismatch"));
+                try {
+                    MAPPER.writeValue(ack.toFile(), mismatched);
+                    assertThatThrownBy(() -> restarted.inspectRetention(id, Instant.MAX))
+                            .hasMessage("DURABLE_RETENTION_INSPECTION_FAILED");
+                } finally {
+                    Files.write(ack, ackBefore);
+                    Files.setLastModifiedTime(ack, FileTime.from(acknowledgedAt));
+                }
+
+                verifyRetirement(client, session, work, run, new RunnerAgent.RetentionCandidate(terminal, acknowledgedAt));
 
                 dispatcher.offer(offered);
                 assertThatThrownBy(() -> durableAgent(client, directory.resolve("empty-runner"))
@@ -382,6 +427,66 @@ class RemoteRunQualificationTest {
         } finally {
             target.stop(0);
         }
+    }
+
+    private static void verifyRetirement(RunnerClient client, Session session, Path work, Path run,
+                                         RunnerAgent.RetentionCandidate expected) throws Exception {
+        var id = new RunId(expected.terminal().attempt().runId());
+        Path ack = run.resolve("delivery-ack.json");
+        Path spool = run.resolve("spool.bin");
+        Path savedMirror = run.resolve("withheld-mirror.ndjson");
+        Path mirror = Files.copy(savedMirror, run.resolve("events.ndjson"));
+        Path receipt = run.resolve("retention-receipt.json");
+        Path stage = run.resolve("retention-receipt.pending");
+        byte[] ackBefore = Files.readAllBytes(ack);
+        byte[] spoolBefore = Files.readAllBytes(spool);
+        RunnerAgent agent = durableAgent(client, work);
+        Files.createDirectory(stage);
+        assertThatThrownBy(() -> agent.retireAcknowledgedRun(id, Instant.MAX))
+                .hasMessage("DURABLE_RETIREMENT_FAILED");
+        assertThat(receipt).doesNotExist();
+        assertThat(stage).isDirectory();
+        assertThat(mirror).exists();
+        assertThat(Files.readAllBytes(spool)).containsExactly(spoolBefore);
+        Files.delete(stage);
+        Files.writeString(stage, "interrupted");
+
+        assertThat(agent.retireAcknowledgedRun(id, Instant.MAX)).contains(expected);
+        assertThat(mirror).doesNotExist();
+        assertThat(spool).doesNotExist();
+        assertThat(stage).doesNotExist();
+        assertThat(savedMirror).exists();
+        assertThat(run.resolve("run-owner")).exists();
+        assertThat(Files.readAllBytes(ack)).containsExactly(ackBefore);
+        assertThat(DurableRunDelivery.isRetired(work, run)).isTrue();
+        byte[] receiptBefore = Files.readAllBytes(receipt);
+
+        // Recreate the exact crash state after receipt installation and mirror removal.
+        Files.write(spool, spoolBefore);
+        assertThat(DurableRunDelivery.isRetired(work, run)).isFalse();
+        RunnerAgent restarted = durableAgent(client, work);
+        assertThat(restarted.takeOneDispatch(session.sessionId())).isEmpty();
+        assertThat(spool).exists();
+        assertThat(restarted.inspectRetention(id, Instant.MAX)).contains(expected);
+        assertThat(restarted.retireAcknowledgedRun(id, Instant.MAX)).contains(expected);
+        assertThat(spool).doesNotExist();
+        assertThat(restarted.retireAcknowledgedRun(id, Instant.MAX)).contains(expected);
+        assertThat(Files.readAllBytes(receipt)).containsExactly(receiptBefore);
+        assertThat(durableAgent(client, work).takeOneDispatch(session.sessionId())).isEmpty();
+
+        var tampered = (com.fasterxml.jackson.databind.node.ObjectNode) MAPPER.readTree(receiptBefore);
+        tampered.put("routeDigest", ContentDigest.sha256Uri("fixture-retirement-mismatch"));
+        try {
+            MAPPER.writeValue(receipt.toFile(), tampered);
+            assertThatThrownBy(() -> DurableRunDelivery.isRetired(work, run)).isInstanceOf(IOException.class);
+            assertThatThrownBy(() -> restarted.retireAcknowledgedRun(id, Instant.MAX))
+                    .hasMessage("DURABLE_RETIREMENT_FAILED");
+            assertThatThrownBy(() -> durableAgent(client, work).takeOneDispatch(session.sessionId()))
+                    .hasMessage("DURABLE_DELIVERY_STORAGE_UNAVAILABLE");
+        } finally {
+            Files.write(receipt, receiptBefore);
+        }
+        assertThat(durableAgent(client, work).inspectRetention(id, Instant.MAX)).contains(expected);
     }
 
     @Test
@@ -468,6 +573,8 @@ class RemoteRunQualificationTest {
                     assertThat(dispatcher.durableJournalOf(runId.value())).hasSize(DurableDelivery.MAX_BATCH_EVENTS);
                     assertThat(dispatcher.durableTerminalOf(runId.value())).isNull();
                     assertThat(checkpoint(artifacts.directory()).path("nextPosition").longValue()).isZero();
+                    assertThat(durableAgent(client, work).inspectRetention(runId, Instant.MAX)).isEmpty();
+                    assertThat(durableAgent(client, work).retireAcknowledgedRun(runId, Instant.MAX)).isEmpty();
                 } finally {
                     releaseAck.countDown();
                 }
@@ -606,13 +713,14 @@ class RemoteRunQualificationTest {
             var neverStarted = dispatch("run-storage-before-invocation", scenarioLasting(1, "1ms"), 60_000);
             Path newRun = RunArtifacts.dispatchedDirectory(newWork, new RunId(neverStarted.runId()));
             dispatcher.offer(neverStarted);
-            assertThatThrownBy(() -> durableAgent(client, newWork).takeOneDispatch(restart.sessionId(), id -> {
-                try {
-                    Files.createDirectories(newRun.resolve("delivery-ack.json"));
-                } catch (IOException failed) {
-                    throw new java.io.UncheckedIOException(failed);
-                }
-            })).isInstanceOf(RunnerAgent.DeliveryStorageFailure.class);
+            var brokenCheckpoint = mutatingRunner(newWork, (path, identity) -> {
+                // Inject the checkpoint fault after the work directory has passed admission.
+                Files.createDirectory(path.resolveSibling("delivery-ack.json"));
+                return DurableRunSpool.create(path, identity);
+            });
+            var blocked = new RunnerAgent(client, brokenCheckpoint, Map.of(), EXTENSIONS);
+            assertThatThrownBy(() -> blocked.takeOneDispatch(restart.sessionId()))
+                    .isInstanceOf(RunnerAgent.DeliveryStorageFailure.class);
             assertThat(newRun.resolve("events.ndjson")).doesNotExist();
             assertThat(DurableRunSpool.recover(newRun.resolve("spool.bin")).recoveryRequired()).isTrue();
         }
@@ -681,10 +789,14 @@ class RemoteRunQualificationTest {
     }
 
     private static DispatchedRun mutatingRunner(Path work) {
+        return mutatingRunner(work, DurableRunSpool::create);
+    }
+
+    private static DispatchedRun mutatingRunner(Path work, DispatchedRun.SpoolFactory spools) {
         var limits = new LocalLimits(Set.of(), Set.of(SafetyClassification.MUTATING, SafetyClassification.READ_ONLY), Set.of(),
                 Set.of(), 4, 600_000, 1000, 1_048_576, null);
         return new DispatchedRun(new DispatchVerifier(limits, policy -> "trusted".equals(policy.keyId())),
-                work, handle -> null, true);
+                work, handle -> null, true, spools);
     }
 
     private static HttpServer mutatingTarget(AtomicInteger mutations) throws IOException {

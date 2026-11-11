@@ -3,13 +3,17 @@ package dev.faultora.runner;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.faultora.engine.run.RunResult;
+import dev.faultora.model.identifier.RunId;
 import dev.faultora.model.security.ExtensionPolicy;
 import dev.faultora.runner.protocol.Dispatch;
+import dev.faultora.runner.protocol.DurableDelivery;
 import dev.faultora.runner.protocol.Lease;
 import dev.faultora.spi.contract.FaultProvider;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Consumer;
 
@@ -73,6 +77,31 @@ public final class RunnerAgent {
         this.faultProviders = faultProviders;
         this.extensions = extensions;
         this.delivery = client.durableDelivery() ? new DurableRunDelivery(client, runs.workingDirectory()) : null;
+    }
+
+    /** An acknowledged terminal and the local checkpoint's recorded modification time. */
+    public record RetentionCandidate(DurableDelivery.Terminal terminal, Instant acknowledgedAt) { }
+
+    /**
+     * Inspect a single protocol 2 run for retention review. The checkpoint must
+     * predate the cutoff. The result describes the verified snapshot at inspection time.
+     */
+    public Optional<RetentionCandidate> inspectRetention(RunId runId, Instant acknowledgedBefore)
+            throws IOException {
+        Objects.requireNonNull(runId, "runId");
+        Objects.requireNonNull(acknowledgedBefore, "acknowledgedBefore");
+        return delivery == null ? Optional.empty() : delivery.inspectRetention(runId, acknowledgedBefore);
+    }
+
+    /**
+     * Explicitly retire the spool and mirror for an eligible protocol 2 run.
+     * Preserves the verified terminal, its acknowledgement and run ownership.
+     */
+    public Optional<RetentionCandidate> retireAcknowledgedRun(RunId runId, Instant acknowledgedBefore)
+            throws IOException {
+        Objects.requireNonNull(runId, "runId");
+        Objects.requireNonNull(acknowledgedBefore, "acknowledgedBefore");
+        return delivery == null ? Optional.empty() : delivery.retireAcknowledgedRun(runId, acknowledgedBefore);
     }
 
     /**

@@ -726,6 +726,11 @@ faultora runner \
   --work-dir /var/faultora
 ```
 
+Put the work directory on persistent storage. The runner checks its disk
+budget before admitting work and retains committed results for delivery or
+inspection. [Runner work directory operations](docs/RUNNER_SPOOL.md#capacity-and-retention)
+covers capacity and retention review.
+
 **The runner dials out; nothing connects to it.** It asks a control plane for
 work, compiles the scenario it is sent with the same compiler a local run uses,
 executes it, and streams the journal back as it goes. It has no port — not for

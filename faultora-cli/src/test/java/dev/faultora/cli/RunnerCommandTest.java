@@ -2,12 +2,14 @@ package dev.faultora.cli;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.faultora.model.catalog.SafetyClassification;
+import dev.faultora.model.identifier.RunId;
 import dev.faultora.model.security.ContentDigest;
 import dev.faultora.model.security.TargetPolicy;
 import dev.faultora.runner.protocol.Dispatch;
 import dev.faultora.runner.protocol.EffectivePolicy;
 import dev.faultora.runner.protocol.Lease;
 import dev.faultora.runner.protocol.SignedPolicy;
+import dev.faultora.runtime.RunArtifacts;
 import dev.faultora.testkit.Certificates;
 import dev.faultora.testkit.QualificationDispatcher;
 import org.junit.jupiter.api.Test;
@@ -16,12 +18,14 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The runner as a process an operator starts.
@@ -65,15 +69,21 @@ class RunnerCommandTest {
     }
 
     private Deployment deploy(String... trustedKeyFiles) throws Exception {
+        return deploy(false, trustedKeyFiles);
+    }
+
+    private Deployment deploy(boolean durable, String... trustedKeyFiles) throws Exception {
         Certificates.Identity runner = Certificates.issue(directory, "runner", 1);
         Certificates.Identity control = Certificates.issue(directory, "control", 1);
         Certificates.Identity signing = Certificates.issue(directory, "policy-signing", 1);
 
-        QualificationDispatcher dispatcher = new QualificationDispatcher(
-                new dev.faultora.runner.TlsMaterial(
-                        control.keystore(),
-                        Certificates.trusting(directory, "control", runner),
-                        () -> Certificates.PASSWORD.toCharArray()).sslContext());
+        var tls = new dev.faultora.runner.TlsMaterial(
+                control.keystore(),
+                Certificates.trusting(directory, "control", runner),
+                () -> Certificates.PASSWORD.toCharArray()).sslContext();
+        QualificationDispatcher dispatcher = durable
+                ? new QualificationDispatcher(tls, directory.resolve("receiver"), 0)
+                : new QualificationDispatcher(tls);
 
         List<String> args = new ArrayList<>(List.of(
                 "--dispatcher", dispatcher.address(),
@@ -84,6 +94,7 @@ class RunnerCommandTest {
                 "--runner-id", "runner-under-test",
                 "--allow-private",
                 "--once"));
+        if (durable) args.add("--durable-delivery");
         for (String keyFile : trustedKeyFiles.length == 0
                 ? new String[]{signing.certificate().toString()} : trustedKeyFiles) {
             args.add("--policy-key");
@@ -137,6 +148,44 @@ class RunnerCommandTest {
                     .isNotEmpty();
             assertThat(dispatcher.outcomeOf("run-served-1")).contains("PASSED");
         }
+    }
+
+    @Test
+    void retiresAnAcknowledgedRunLocallyAndPreservesItsResult() throws Exception {
+        var deployment = deploy(true);
+        var runId = new RunId("run-retired");
+        try (var dispatcher = deployment.dispatcher()) {
+            dispatcher.offer(dispatch(runId.value(), policySignedBy(deployment.signingKey())));
+            assertThat(run(deployment.args())).as(err::toString).isEqualTo(FaultoraCli.EXIT_PASS);
+            assertThat(dispatcher.durableTerminalOf(runId.value())).isNotNull();
+        }
+
+        Path run = RunArtifacts.dispatchedDirectory(directory.resolve("work"), runId);
+        assertThat(run.resolve("spool.bin")).exists();
+        assertThat(run.resolve("events.ndjson")).exists();
+        var retire = new ArrayList<>(deployment.args());
+        retire.remove("--once");
+        retire.addAll(List.of("--retire-acknowledged", runId.value(),
+                "--acknowledged-before", Instant.now().plusSeconds(60).toString()));
+
+        assertThat(run(retire)).as(err::toString).isEqualTo(FaultoraCli.EXIT_PASS);
+        assertThat(out.toString()).contains("Retired journal payload. Terminal status PASSED");
+        assertThat(run.resolve("retention-receipt.json")).exists();
+        assertThat(run.resolve("run-owner")).exists();
+        assertThat(run.resolve("delivery-ack.json")).exists();
+        assertThat(run.resolve("spool.bin")).doesNotExist();
+        assertThat(run.resolve("events.ndjson")).doesNotExist();
+        assertThat(run(retire)).as(err::toString).isEqualTo(FaultoraCli.EXIT_PASS);
+    }
+
+    @Test
+    void retirementRequiresOneExactTargetAndCutoff() {
+        var flags = List.of("--durable-delivery", "--retire-acknowledged", "run-first",
+                "--retire-acknowledged", "run-second");
+        assertThatThrownBy(() -> RunnerOptions.parse(flags)).isInstanceOf(CliException.class)
+                .hasMessage("--retire-acknowledged may be supplied once");
+        assertThatThrownBy(() -> RunnerOptions.parse(List.of("--durable-delivery", "--retire-acknowledged", "run-first")))
+                .isInstanceOf(CliException.class).hasMessageContaining("--acknowledged-before");
     }
 
     @Test
