@@ -7,7 +7,7 @@ This is the normative data contract for the process-boundary slice of
 conformance probe and the bounded `faultora-extension-protocol` codec exist.
 The child lifecycle library includes an assertion adapter. The CLI and
 runner still refuse policies that require process isolation. Importer and
-renderer adapters and resource, network and secret controls remain pending.
+renderer adapters and resource, network and real credential controls remain pending.
 
 Only `AssertionProvider`, `SourceImporter` and `ReportRenderer` cross this
 boundary. Connectors, fault providers and secret resolvers do not. There is no
@@ -218,7 +218,7 @@ enforcement are not implemented by the codec.
 
 Tests compare assertion payloads with the wire fixtures and exercise the
 adapter with a real child. The remaining slices cover the importer and
-renderer adapters, resource, network and secret controls, and packaged
+renderer adapters, resource, network and real credential controls, and packaged
 plugin qualification. Existing ADR-023 policy refusals remain in effect.
 
 ## Child lifecycle implementation
@@ -229,6 +229,10 @@ supplies an approved artifact digest and declaration and an operator-owned
 runtime classpath. The caller retains responsibility for manifest, API and
 capability admission.
 
+The launcher clears the inherited environment and preserves only
+`SystemRoot` on Windows for JVM startup. The runtime uses the absolute Java
+launcher path and explicit encoding options.
+
 `ExtensionAssertionProvider` selects one assertion type. Its trusted child
 loads one artifact-local `AssertionProvider` from the verified JAR's service
 declaration. The caller supplies evidence already narrowed by policy and
@@ -236,6 +240,16 @@ projects protocol-specific Java values to plain JSON before calling the
 adapter. The adapter bounds tree construction before encoding the frame
 and returns the verdict with fixed diagnostic text. A malformed or
 mismatched reply closes the peer and yields `INDETERMINATE`.
+
+For a synthetic assertion fixture, the caller can supply the declared handle
+IDs and an explicit allowlist at startup. Each set holds up to 32 IDs. IDs
+begin with `synthetic.`, use ASCII letters or digits at the start of the
+suffix, and allow letters, digits, dots, underscores and hyphens thereafter.
+Each ID is at most 128 characters. The adapter refuses malformed or unknown
+IDs with `SECRET_HANDLE_REFUSED` before launching the child. It projects only
+the admitted IDs into the reserved `syntheticSecretHandles` list in the
+assertion context configuration. An application-supplied value at that key
+refuses evaluation. The projection carries no credential value or resolver.
 
 `StagedArtifact.copy` creates an owner-only run directory, rejects link/reparse
 paths, bounds the copy at 128 MiB and computes its SHA-256 after writing and

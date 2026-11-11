@@ -7,6 +7,7 @@ import dev.faultora.extension.protocol.ExtensionCodec;
 import dev.faultora.extension.protocol.JsonFrameCodec;
 import dev.faultora.process.SupervisedProcess;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.security.SecureRandom;
@@ -90,7 +91,7 @@ public final class ExtensionProcess implements AutoCloseable {
                 "-cp", classpath, VerifiedJvmMain.class.getName(),
                 artifact.artifact().toAbsolutePath().toString(), artifact.digest(), entrypoint);
         builder.directory(artifact.directory().toFile());
-        String systemRoot = builder.environment().get("SystemRoot");
+        String systemRoot = File.separatorChar == '\\' ? builder.environment().get("SystemRoot") : null;
         builder.environment().clear();
         if (systemRoot != null) builder.environment().put("SystemRoot", systemRoot);
         var child = new SupervisedProcess(builder, runMs, 1000, 1000, 8192);

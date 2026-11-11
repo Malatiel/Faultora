@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 
@@ -47,6 +48,9 @@ class ExtensionAssertionProviderTest {
             new ExtensionProcess.Declaration("fixture.assertion", "1", Set.of(SELECTOR));
     private static final Duration TIMEOUT = Duration.ofSeconds(3);
     private static final Duration LIFETIME = Duration.ofSeconds(15);
+    private static final String PARENT_CONTROL = "FAULTORA_FIXTURE_PARENT_CONTROL";
+    private static final String CONTROL_VALUE = "SYNTHETIC_PRIVATE_PARENT_CONTROL";
+    private static final String FIXTURE_HANDLE = "synthetic.fixture";
     @TempDir Path directory;
 
     @Test
@@ -116,6 +120,46 @@ class ExtensionAssertionProviderTest {
     }
 
     @Test
+    void verifiedChildReceivesOnlyAdmittedSyntheticHandlesAndAScrubbedEnvironment() throws Exception {
+        Path plugin = jar(EnvironmentAssertion.class, SERVICE, EnvironmentAssertion.class.getName());
+        String classpath = String.join(File.pathSeparator,
+                classpath().stream().map(Path::toString).toList());
+        var builder = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                "-cp", classpath, EnvironmentParent.class.getName(), plugin.toString(), directory.toString());
+        var env = builder.environment();
+        var systemRoot = env.get("SystemRoot");
+        env.clear();
+        if (systemRoot != null && File.separatorChar == '\\') env.put("SystemRoot", systemRoot);
+        if (File.separatorChar != '\\') env.put("SystemRoot", "SYNTHETIC_NON_WINDOWS_SYSTEM_ROOT");
+        env.put(PARENT_CONTROL, CONTROL_VALUE);
+        builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+        builder.redirectError(ProcessBuilder.Redirect.DISCARD);
+        var parent = builder.start();
+        try {
+            assertThat(parent.waitFor(25, TimeUnit.SECONDS)).isTrue();
+            assertThat(parent.exitValue()).isZero();
+        } finally {
+            if (parent.isAlive()) {
+                parent.destroyForcibly();
+                assertThat(parent.waitFor(5, TimeUnit.SECONDS)).isTrue();
+            }
+        }
+    }
+
+    @Test
+    void unknownAndNonSyntheticHandleRequestsAreRefusedWithoutEchoingThem() throws Exception {
+        Path plugin = jar(EnvironmentAssertion.class, SERVICE, EnvironmentAssertion.class.getName());
+        try (var staged = stage(plugin)) {
+            assertThatThrownBy(() -> ExtensionAssertionProvider.start(staged, runtimeClasspath(),
+                    DECLARATION, TIMEOUT, LIFETIME, Set.of("synthetic.unknown"), Set.of(FIXTURE_HANDLE)))
+                    .isInstanceOf(IOException.class).hasMessage("SECRET_HANDLE_REFUSED");
+            assertThatThrownBy(() -> ExtensionAssertionProvider.start(staged, runtimeClasspath(),
+                    DECLARATION, TIMEOUT, LIFETIME, Set.of(PARENT_CONTROL), Set.of(PARENT_CONTROL)))
+                    .isInstanceOf(IOException.class).hasMessage("SECRET_HANDLE_REFUSED");
+        }
+    }
+
+    @Test
     void providerFromTheParentClasspathCannotSatisfyTheVerifiedArtifactOffer() throws Exception {
         Path plugin = jar(null, SERVICE, FixtureAssertion.class.getName());
         try (var staged = stage(plugin)) {
@@ -151,6 +195,10 @@ class ExtensionAssertionProviderTest {
     }
 
     private StagedArtifact stage(Path plugin) throws IOException {
+        return stage(plugin, directory);
+    }
+
+    private static StagedArtifact stage(Path plugin, Path directory) throws IOException {
         String digest = "sha256:" + HexFormat.of().formatHex(StagedArtifact.sha256().digest(Files.readAllBytes(plugin)));
         return StagedArtifact.copy(plugin, digest, directory);
     }
@@ -181,6 +229,46 @@ class ExtensionAssertionProviderTest {
     private static List<Path> runtimeClasspath() throws Exception {
         Path tests = Path.of(ExtensionAssertionProviderTest.class.getProtectionDomain().getCodeSource().getLocation().toURI());
         return classpath().stream().filter(path -> !path.equals(tests)).toList();
+    }
+
+    public static final class EnvironmentParent {
+        public static void main(String[] args) throws Exception {
+            if (!CONTROL_VALUE.equals(System.getenv(PARENT_CONTROL))) throw new AssertionError("Missing parent fixture value");
+            boolean expectSystemRoot = File.separatorChar == '\\' && System.getenv("SystemRoot") != null;
+            try (var staged = stage(Path.of(args[0]), Path.of(args[1]));
+                 var provider = ExtensionAssertionProvider.start(staged, runtimeClasspath(), DECLARATION,
+                         TIMEOUT, LIFETIME, Set.of(FIXTURE_HANDLE), Set.of(FIXTURE_HANDLE, "synthetic.other"))) {
+                var forged = new AssertionContext("fixture-node",
+                        Map.of("syntheticSecretHandles", List.of("synthetic.unknown")));
+                assertThat(provider.evaluate(TYPE, Map.of(), evidence(200), forged).outcome()).isEqualTo(INDETERMINATE);
+
+                var context = new AssertionContext("fixture-node", Map.of("fixture", true));
+                var result = provider.evaluate(TYPE, Map.of("expectSystemRoot", expectSystemRoot), evidence(200), context);
+                assertThat(result).isEqualTo(AssertionResult.pass("Assertion passed"));
+                var refused = provider.evaluate(TYPE, Map.of("expectSystemRoot", expectSystemRoot, "fail", true),
+                        evidence(200), context);
+                assertThat(refused).isEqualTo(AssertionResult.indeterminate("Extension assertion could not be evaluated"));
+            }
+        }
+    }
+
+    public static final class EnvironmentAssertion implements AssertionProvider {
+        @Override public String type() { return "sample.status"; }
+
+        @Override
+        public AssertionResult evaluate(String type, Map<String, Object> params, EvidenceView evidence, AssertionContext context) {
+            boolean hasSystemRoot = System.getenv("SystemRoot") != null;
+            if (System.getenv(PARENT_CONTROL) != null || System.getenv("PATH") != null
+                    || hasSystemRoot != Boolean.TRUE.equals(params.get("expectSystemRoot"))
+                    || !context.config().equals(Map.of("fixture", true, "syntheticSecretHandles", List.of(FIXTURE_HANDLE)))) {
+                return AssertionResult.fail("Unexpected fixture launch data", Map.of());
+            }
+            if (Boolean.TRUE.equals(params.get("fail"))) {
+                System.err.println("SYNTHETIC_PRIVATE_STDERR");
+                throw new IllegalStateException("SYNTHETIC_PRIVATE_PROVIDER_EXCEPTION");
+            }
+            return new AssertionResult(PASS, "SYNTHETIC_PRIVATE_RESULT", Map.of("private", "SYNTHETIC_PRIVATE_DETAIL"));
+        }
     }
 
     public static final class FixtureAssertion implements AssertionProvider {
