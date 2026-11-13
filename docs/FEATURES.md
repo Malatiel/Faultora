@@ -113,8 +113,9 @@ Private-network execution:
 
 Security posture:
 
-- `faultora test --isolated-assertion` runs one digest-approved assertion
-  provider in a separate JVM. See [admission and process limits](SECURITY.md#separate-jvm-assertions).
+- `--isolated-assertion` runs one digest-approved assertion provider in a
+  separate JVM from the packaged CLI or runner.
+  See [admission and process limits](SECURITY.md#separate-jvm-assertions).
 - SSRF protection with DNS resolution and address pinning;
 - bounded HTTP response streaming;
 - policy-bounded in-memory evidence for assertions;

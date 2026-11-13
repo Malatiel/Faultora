@@ -44,6 +44,25 @@ class RunnerOptionsTest {
     }
 
     @Test
+    void isolatedAssertionUsesOneDigestAndCannotEnableClasspathExtensions() {
+        String digest = "sha256:" + "a".repeat(64);
+        assertThat(parse().isolatedAssertion()).isNull();
+        var approval = parse("--isolated-assertion", "custom-check", digest, "fixture.jar").isolatedAssertion();
+        assertThat(approval.type()).isEqualTo("custom-check");
+        assertThat(approval.digest()).isEqualTo(digest);
+        assertThatThrownBy(() -> parse("--isolated-assertion", "custom-check", digest, "fixture.jar",
+                "--allow-extension", "example.Provider"))
+                .isInstanceOf(CliException.class).hasMessageContaining("cannot be combined");
+        assertThatThrownBy(() -> parse("--isolated-assertion", "custom-check", digest, "fixture.jar",
+                "--isolated-assertion", "other-check", digest, "other.jar"))
+                .isInstanceOf(CliException.class).hasMessageContaining("may be used once");
+        assertThatThrownBy(() -> parse("--isolated-assertion", "custom-check", digest, "fixture.jar",
+                "--durable-delivery", "--retire-acknowledged", "synthetic-run",
+                "--acknowledged-before", "2026-01-01T00:00:00Z"))
+                .isInstanceOf(CliException.class).hasMessageContaining("only available when serving dispatches");
+    }
+
+    @Test
     void aRunnerBreaksNothingUntilSomebodySaysItMay() {
         // The asymmetry that matters. Empty means "any" for targets and
         // environments, and "none" for faults — because listing no targets is

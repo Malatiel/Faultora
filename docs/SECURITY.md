@@ -254,10 +254,17 @@ With the packaged CLI, `faultora test --isolated-assertion <type> <sha256:digest
 approves one assertion provider for the run. Supply the SHA-256 of a reviewed
 JAR with a compatible plugin manifest and an assertion service declaration.
 Admission requires empty capability declarations and a type distinct from the
-built-ins. The option is available for execution and conflicts with
-`--preview` and `--allow-extension`.
+built-ins. The option conflicts with `--allow-extension` and with
+`--preview` for local runs. The packaged runner accepts the same option when
+serving dispatches.
+The runner operator supplies the JAR and digest locally. The dispatcher can
+request its assertion type in a scenario, and the runner includes its
+configured type and digest in the prepared-run identity.
 
-The CLI stages and verifies the JAR before opening target connections. The
+When the plan uses that type, Faultora stages and verifies the JAR before
+opening target connections. The JVM's temporary directory must be writable
+for staging. For a read-only root filesystem, mount a private writable
+volume at `/tmp` owned by the runner user. The
 child verifies the staged bytes again and receives assertion parameters and
 policy-filtered evidence over the extension protocol. The child starts with
 an empty environment apart from the Windows system root when required.

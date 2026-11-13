@@ -1,5 +1,7 @@
 package dev.faultora.cli;
 
+import dev.faultora.runtime.IsolatedAssertion;
+
 import dev.faultora.model.catalog.SafetyClassification;
 import dev.faultora.model.identifier.RunId;
 import dev.faultora.model.security.EvidencePolicy;
@@ -52,6 +54,7 @@ import java.util.Set;
  * @param limits             everything this runner permits, whatever it is told
  * @param toxiproxyUrl       admin endpoint enabling network faults, or null
  * @param allowedExtensions  classes of non-built-in extensions permitted here
+ * @param isolatedAssertion  operator-approved assertion JAR, or null
  * @param healthFile         where the runner writes what it is doing, for a
  *                           probe to read with {@code faultora health}
  * @param shutdownGraceMs    how long a signal waits for the run in flight to
@@ -73,6 +76,7 @@ record RunnerOptions(
         LocalLimits limits,
         String toxiproxyUrl,
         List<String> allowedExtensions,
+        IsolatedAssertion isolatedAssertion,
         Path healthFile,
         long shutdownGraceMs,
         boolean once,
@@ -133,6 +137,7 @@ record RunnerOptions(
         long maxPayloadBytes = DEFAULT_MAX_PAYLOAD_BYTES;
         String toxiproxyUrl = null;
         List<String> allowedExtensions = new java.util.ArrayList<>();
+        IsolatedAssertion isolatedAssertion = null;
         Path healthFile = null;
         long shutdownGraceMs = DEFAULT_SHUTDOWN_GRACE_MS;
         boolean once = false;
@@ -177,6 +182,8 @@ record RunnerOptions(
                         maxPayloadBytes = positive(value(remaining, option), option);
                 case "--toxiproxy-url" -> toxiproxyUrl = value(remaining, option);
                 case "--allow-extension" -> allowedExtensions.add(value(remaining, option));
+                case IsolatedAssertionOption.FLAG ->
+                        isolatedAssertion = IsolatedAssertionOption.parse(remaining, isolatedAssertion);
                 case "--no-capture-bodies" -> captureBodies = false;
                 case "--no-capture-headers" -> captureHeaders = false;
                 case "--max-evidence-bytes" ->
@@ -209,6 +216,14 @@ record RunnerOptions(
                     FaultoraCli.EXIT_INVALID_CONFIG);
         }
         Retirement retirement = retireRun == null ? null : new Retirement(retireRun, acknowledgedBefore);
+        if (isolatedAssertion != null && !allowedExtensions.isEmpty()) {
+            throw new CliException("--isolated-assertion cannot be combined with --allow-extension",
+                    FaultoraCli.EXIT_INVALID_CONFIG);
+        }
+        if (isolatedAssertion != null && retirement != null) {
+            throw new CliException("--isolated-assertion is only available when serving dispatches",
+                    FaultoraCli.EXIT_INVALID_CONFIG);
+        }
 
         require(dispatcherUrl, "--dispatcher", "the address this runner dials out to");
         if (durableDelivery && (!"https".equalsIgnoreCase(dispatcherUrl.getScheme())
@@ -243,14 +258,14 @@ record RunnerOptions(
                                 captureBodies, captureHeaders, keeps.headerDenylist(),
                                 maxEvidenceBytes, maxEvidenceRows, redactPaths,
                                 keeps.contentTypeAllowlist(), keeps.retentionClass())),
-                toxiproxyUrl, List.copyOf(allowedExtensions),
+                toxiproxyUrl, List.copyOf(allowedExtensions), isolatedAssertion,
                 healthFile == null ? workDirectory.resolve("health.json") : healthFile,
                 shutdownGraceMs, once, durableDelivery, retirement, false);
     }
 
     private static RunnerOptions help() {
         return new RunnerOptions(null, null, null, null, Map.of(), DEFAULT_WORK_DIRECTORY,
-                null, false, null, null, List.of(),
+                null, false, null, null, List.of(), null,
                 DEFAULT_WORK_DIRECTORY.resolve("health.json"),
                 DEFAULT_SHUTDOWN_GRACE_MS, false, false, null, true);
     }

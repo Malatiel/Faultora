@@ -86,7 +86,7 @@ final class RunnerCommand implements Command {
                         options.limits(), new PolicyKeys(options.policyKeys())),
                 options.workDirectory(),
                 handleId -> resolveOrNothing(secrets, handleId),
-                options.allowPrivate());
+                options.allowPrivate(), options.isolatedAssertion());
 
         RunnerAgent agent = new RunnerAgent(
                 client, runs,
@@ -372,6 +372,8 @@ final class RunnerCommand implements Command {
         out.println("                              class you want; they are printed on start");
         out.println("  --allow-private             Permit private and loopback destinations");
         out.println("  --allow-extension <class>   Permit a non-built-in extension");
+        out.println("  --isolated-assertion <type> <sha256:digest> <jar>");
+        out.println("                              Run one operator-approved assertion provider in a child JVM");
         out.println("  --no-capture-bodies         Keep no request or response bodies");
         out.println("  --no-capture-headers        Keep no headers");
         out.println("  --max-evidence-bytes <n>    Largest body kept (default 10485760)");

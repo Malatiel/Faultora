@@ -154,8 +154,11 @@ public final class PreparedRun {
         if (!consumed.compareAndSet(false, true)) {
             throw new Refused(Refusal.ALREADY_EXECUTED);
         }
+        IsolatedAssertion isolated = settings.isolatedAssertion();
+        boolean usesIsolated = isolated != null && !cancellation.get() && assertionChecks().stream()
+                .anyMatch(check -> check.assertionType().equals(isolated.type()));
         try (RunEnvironment environment = RunEnvironment.open(result.compilation().plan(),
-                faultProviders, request.extensions(), settings.allowPrivate(), settings.isolatedAssertion())) {
+                faultProviders, request.extensions(), settings.allowPrivate(), usesIsolated ? isolated : null)) {
             Settings execution = snapshot(settings);
             return environment.engine().execute(result.compilation().plan(), journal,
                     execution.bindings(), execution.connectors(), cancellation);
