@@ -13,6 +13,7 @@ REQUIRED = {
     "dev.faultora.integration.RemoteCrossComponentE2ETest": 4,
     "dev.faultora.integration.RunnerImageE2ETest": 3,
     "dev.faultora.integration.RunnerExtensionSandboxE2ETest": 1,
+    "dev.faultora.integration.OfflineBundleNetworkE2ETest": 1,
     "dev.faultora.cli.RunnerIsolationTest": 2,
     "dev.faultora.cli.RunnerShutdownTest": 2,
 }
