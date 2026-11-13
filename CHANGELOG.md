@@ -10,6 +10,8 @@ All notable changes to Faultora are documented in this file.
   one digest-approved assertion provider in a separate JVM with bounded calls
   and a restricted environment. The runner's operator supplies the approval
   locally.
+- `faultora runner --require-extension-sandbox` requires Linux filesystem,
+  process and network isolation for the approved assertion provider.
 - The qualification guide includes a checklist for first-time reviewers to
   install the published archive and run a synthetic scenario.
 

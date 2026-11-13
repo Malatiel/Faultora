@@ -271,9 +271,23 @@ an empty environment apart from the Windows system root when required.
 Calls and queue waits are each limited to five seconds. The child has a
 five-minute lifetime and is closed at the end of the run.
 
-Use an operator-reviewed extension. The child runs with the account's
-filesystem and network permissions. Operating system isolation and resource
-policy enforcement remain open under [ADR-023](adr/ADR-023-extension-isolation.md).
+On a Linux runner, add `--require-extension-sandbox` to require filesystem
+and network isolation. Install the distribution's non-setuid Bubblewrap at
+`/usr/bin/bwrap` and run on a host that permits it to create user, PID,
+network, mount, IPC and UTS namespaces. The packaged runner can be launched
+directly on such a host. The stock distroless image lacks Bubblewrap.
+
+The child can read the Java installation, selected system libraries, the
+Faultora JAR and the verified extension JAR. It gets a private 16 MiB
+`/tmp` for writes, its own process view and a network namespace without
+host interfaces or routes. The runner's work directory, TLS files and
+environment credentials stay outside the sandbox. If the sandbox cannot
+start, a dispatch using the extension fails before opening target
+connections. The runner never retries it with ordinary JVM permissions.
+
+Use an operator-reviewed extension. Without the sandbox switch, the child
+uses the runner account's filesystem and network permissions. Per-extension
+CPU and memory limits remain outside this profile.
 
 **In-process artifact trust boundary.** Operators must restrict write access
 to the runtime, bootstrap classpath, and plugin directories to the operator

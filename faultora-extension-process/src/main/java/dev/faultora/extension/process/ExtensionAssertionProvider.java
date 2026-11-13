@@ -51,6 +51,13 @@ public final class ExtensionAssertionProvider implements AssertionProvider, Auto
         return start(artifact, runtimeClasspath, declaration, timeout, lifetime, Set.of(), Set.of());
     }
 
+    public static ExtensionAssertionProvider startSandboxed(StagedArtifact artifact, Path runtime,
+                                                             ExtensionProcess.Declaration declaration,
+                                                             Duration timeout, Duration lifetime)
+            throws IOException, InterruptedException {
+        return start(artifact, List.of(runtime), declaration, timeout, lifetime, Set.of(), Set.of(), true);
+    }
+
     /**
      * Admit value-less synthetic handles declared by the plugin and allowed by
      * the caller. The child receives their IDs through the assertion context.
@@ -59,6 +66,15 @@ public final class ExtensionAssertionProvider implements AssertionProvider, Auto
                                                     ExtensionProcess.Declaration declaration, Duration timeout,
                                                     Duration lifetime, Set<String> requestedHandles,
                                                     Set<String> allowedSyntheticHandles)
+            throws IOException, InterruptedException {
+        return start(artifact, runtimeClasspath, declaration, timeout, lifetime, requestedHandles,
+                allowedSyntheticHandles, false);
+    }
+
+    private static ExtensionAssertionProvider start(StagedArtifact artifact, List<Path> runtimeClasspath,
+                                                     ExtensionProcess.Declaration declaration, Duration timeout,
+                                                     Duration lifetime, Set<String> requestedHandles,
+                                                     Set<String> allowedSyntheticHandles, boolean requireSandbox)
             throws IOException, InterruptedException {
         if (declaration.providers().size() != 1 || timeout == null || timeout.toMillis() < 1) {
             throw new IllegalArgumentException("One assertion selector and a positive timeout are required");
@@ -71,7 +87,8 @@ public final class ExtensionAssertionProvider implements AssertionProvider, Auto
         var allowed = checkedSyntheticHandles(allowedSyntheticHandles);
         if (!allowed.containsAll(requested)) throw new IOException("SECRET_HANDLE_REFUSED");
         var admitted = requested.stream().sorted().toList();
-        ExtensionProcess peer = ExtensionProcess.startAssertion(artifact, runtimeClasspath, declaration, lifetime);
+        ExtensionProcess peer = ExtensionProcess.startAssertion(artifact, runtimeClasspath, declaration, lifetime,
+                requireSandbox);
         return new ExtensionAssertionProvider(peer, selector, timeout, admitted);
     }
 

@@ -193,6 +193,9 @@ public final class PreparedRun {
             var assertion = policy.putObject("isolatedAssertion");
             assertion.put("type", settings.isolatedAssertion().type());
             assertion.put("digest", settings.isolatedAssertion().digest());
+            if (settings.isolatedAssertion().requireOsSandbox()) {
+                assertion.put("osSandbox", true);
+            }
         }
         try {
             return ContentDigest.sha256Uri("faultora.prepared.v2\n" + MAPPER.writeValueAsString(tree));
