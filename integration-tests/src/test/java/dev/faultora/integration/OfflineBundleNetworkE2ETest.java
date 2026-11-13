@@ -56,7 +56,10 @@ class OfflineBundleNetworkE2ETest {
                 "--setenv", "LD_LIBRARY_PATH", "/java/lib:/java/lib/server",
                 "--", "/bin/sh", "-ec", """
                         test "$(readlink /proc/self/ns/net)" != "$1"
-                        awk 'NR > 1 { exit 1 }' /proc/net/route
+                        {
+                            IFS= read -r route_header
+                            if IFS= read -r route; then exit 1; fi
+                        } < /proc/net/route
                         tar -xzf "$2"
                         sh "$3/verify-offline-bundle.sh" --fingerprint "$4"
                         """, "offline-bundle-receiver", parentNet, archive, folder, match.group(1));
