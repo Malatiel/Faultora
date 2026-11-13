@@ -75,14 +75,27 @@ Every run must have been executed — exit 0 or 1 and a journal from
 `RUN_STARTED` to a terminal event — so two releases that refuse every scenario
 alike do not pass as agreeing. Each journal either release wrote must be
 readable by the current reader, and both must read the same runner status
-file. It is not part of the ordinary build:
+file. With `FAULTORA_CHECK_MACHINE_OUTPUT_V1=true`, the check also requires
+distinct JARs, matches each JSON report to its own journal, compares v1
+machine diagnostic codes, severities and node IDs across releases, and
+compares the smoke scenario's preview actions. Enable it when both builds
+implement the [v1 machine diagnostics](CLI_DIAGNOSTICS.md), including
+`test --preview`. The check runs on demand with a verified previous JAR
+and either a verified release JAR or the candidate JAR built from the
+current checkout.
 
 ```bash
-FAULTORA_PREVIOUS_JAR=/path/to/faultora-0.11.2.jar \
-FAULTORA_NEXT_JAR=/path/to/faultora-0.11.3.jar \
+./mvnw -B package -pl faultora-cli -am -DskipTests
+FAULTORA_PREVIOUS_JAR=/path/to/verified/faultora-0.13.0.jar \
+FAULTORA_NEXT_JAR="$PWD/faultora-cli/target/faultora-0.13.0.jar" \
+FAULTORA_CHECK_MACHINE_OUTPUT_V1=true \
 ./mvnw -B verify -pl integration-tests -am \
   -Dtest=UpgradeRollbackCheck -Dsurefire.failIfNoSpecifiedTests=false
 ```
+
+Use the candidate's Maven revision in the second path if it differs from
+the example. The table in `integration-tests/target/upgrade-rollback/result.md`
+records the comparison and SHA-256 digests for that pair of builds.
 
 Its result for 0.11.2 and 0.11.3, both downloaded from their releases and
 verified with `deploy/verify-release.py`, on 2026-10-29: all 12 scenarios gave

@@ -162,6 +162,11 @@ checked jar.
 each of those alterations once, with a `java` on `PATH` that records whether it
 was started: a refused bundle must never reach it.
 
+`OfflineBundleNetworkE2ETest` transfers the JAR-only archive to a fresh
+directory and runs the bundled verifier in a separate Linux network namespace
+without routes to the host. It checks the CLI version and validates the
+bundled scenario with a local Java runtime.
+
 **"Without infrastructure fault permissions" is two statements that have to
 agree.** The pod drops every capability and is not privileged, *and* the runner
 is started without `--toxiproxy-url` and without any `--allow-fault`. Granting
