@@ -374,6 +374,7 @@ final class RunnerCommand implements Command {
         out.println("  --allow-extension <class>   Permit a non-built-in extension");
         out.println("  --isolated-assertion <type> <sha256:digest> <jar>");
         out.println("                              Run one operator-approved assertion provider in a child JVM");
+        out.println("  --require-extension-sandbox  Require Linux filesystem and network isolation for that provider");
         out.println("  --no-capture-bodies         Keep no request or response bodies");
         out.println("  --no-capture-headers        Keep no headers");
         out.println("  --max-evidence-bytes <n>    Largest body kept (default 10485760)");

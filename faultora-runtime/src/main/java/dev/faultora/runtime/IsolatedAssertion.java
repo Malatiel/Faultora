@@ -14,9 +14,13 @@ import java.util.List;
 import java.util.Set;
 
 /** Operator approval for one assertion provider in a separate JVM. */
-public record IsolatedAssertion(String type, String digest, Path artifact) {
+public record IsolatedAssertion(String type, String digest, Path artifact, boolean requireOsSandbox) {
     private static final Duration CALL_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration LIFETIME = Duration.ofMinutes(5);
+
+    public IsolatedAssertion(String type, String digest, Path artifact) {
+        this(type, digest, artifact, false);
+    }
 
     public IsolatedAssertion {
         new ExtensionProcess.Provider("assertion", type);
@@ -45,15 +49,18 @@ public record IsolatedAssertion(String type, String digest, Path artifact) {
             }
             var declaration = new ExtensionProcess.Declaration(manifest.id(), manifest.version(),
                     Set.of(new ExtensionProcess.Provider("assertion", type)));
-            var provider = ExtensionAssertionProvider.start(staged, List.of(bootstrap), declaration,
-                    CALL_TIMEOUT, LIFETIME);
+            var provider = requireOsSandbox
+                    ? ExtensionAssertionProvider.startSandboxed(staged, bootstrap, declaration, CALL_TIMEOUT, LIFETIME)
+                    : ExtensionAssertionProvider.start(staged, List.of(bootstrap), declaration, CALL_TIMEOUT, LIFETIME);
             opened.add(provider);
             return provider;
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new Refused("Assertion extension startup was interrupted");
         } catch (IOException | IllegalArgumentException invalid) {
-            throw new Refused("Assertion extension JAR, digest, manifest or provider could not be verified");
+            throw new Refused(requireOsSandbox
+                    ? "Assertion extension could not start with the required Linux sandbox"
+                    : "Assertion extension JAR, digest, manifest or provider could not be verified");
         }
     }
 

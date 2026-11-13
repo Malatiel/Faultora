@@ -63,6 +63,20 @@ class RunnerOptionsTest {
     }
 
     @Test
+    void requiringTheExtensionSandboxNeedsLinuxAndAnApprovedAssertion() {
+        assertThatThrownBy(() -> parse("--require-extension-sandbox"))
+                .isInstanceOf(CliException.class).hasMessageContaining("requires Linux and --isolated-assertion");
+        String[] args = {"--require-extension-sandbox", "--isolated-assertion", "custom-check",
+                "sha256:" + "a".repeat(64), "fixture.jar"};
+        if (System.getProperty("os.name").equals("Linux")) {
+            assertThat(parse(args).isolatedAssertion().requireOsSandbox()).isTrue();
+        } else {
+            assertThatThrownBy(() -> parse(args)).isInstanceOf(CliException.class)
+                    .hasMessageContaining("requires Linux and --isolated-assertion");
+        }
+    }
+
+    @Test
     void aRunnerBreaksNothingUntilSomebodySaysItMay() {
         // The asymmetry that matters. Empty means "any" for targets and
         // environments, and "none" for faults — because listing no targets is

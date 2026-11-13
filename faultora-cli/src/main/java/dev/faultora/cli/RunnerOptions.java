@@ -138,6 +138,7 @@ record RunnerOptions(
         String toxiproxyUrl = null;
         List<String> allowedExtensions = new java.util.ArrayList<>();
         IsolatedAssertion isolatedAssertion = null;
+        boolean requireOsSandbox = false;
         Path healthFile = null;
         long shutdownGraceMs = DEFAULT_SHUTDOWN_GRACE_MS;
         boolean once = false;
@@ -184,6 +185,7 @@ record RunnerOptions(
                 case "--allow-extension" -> allowedExtensions.add(value(remaining, option));
                 case IsolatedAssertionOption.FLAG ->
                         isolatedAssertion = IsolatedAssertionOption.parse(remaining, isolatedAssertion);
+                case "--require-extension-sandbox" -> requireOsSandbox = true;
                 case "--no-capture-bodies" -> captureBodies = false;
                 case "--no-capture-headers" -> captureHeaders = false;
                 case "--max-evidence-bytes" ->
@@ -223,6 +225,14 @@ record RunnerOptions(
         if (isolatedAssertion != null && retirement != null) {
             throw new CliException("--isolated-assertion is only available when serving dispatches",
                     FaultoraCli.EXIT_INVALID_CONFIG);
+        }
+        if (requireOsSandbox) {
+            if (isolatedAssertion == null || !System.getProperty("os.name").equals("Linux")) {
+                throw new CliException("--require-extension-sandbox requires Linux and --isolated-assertion",
+                        FaultoraCli.EXIT_INVALID_CONFIG);
+            }
+            isolatedAssertion = new IsolatedAssertion(isolatedAssertion.type(), isolatedAssertion.digest(),
+                    isolatedAssertion.artifact(), true);
         }
 
         require(dispatcherUrl, "--dispatcher", "the address this runner dials out to");

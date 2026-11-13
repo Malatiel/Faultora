@@ -69,8 +69,10 @@ public final class ExtensionProcess implements AutoCloseable {
     }
 
     static ExtensionProcess startAssertion(StagedArtifact artifact, List<Path> runtimeClasspath,
-                                           Declaration declaration, Duration lifetime) throws IOException, InterruptedException {
-        return launch(artifact, VerifiedJvmMain.ASSERTION_MODE, runtimeClasspath, declaration, lifetime);
+                                           Declaration declaration, Duration lifetime, boolean requireSandbox)
+            throws IOException, InterruptedException {
+        return launch(artifact, VerifiedJvmMain.ASSERTION_MODE, runtimeClasspath, declaration, lifetime,
+                requireSandbox);
     }
 
     static ExtensionProcess startImporter(StagedArtifact artifact, List<Path> runtimeClasspath,
@@ -80,6 +82,12 @@ public final class ExtensionProcess implements AutoCloseable {
 
     private static ExtensionProcess launch(StagedArtifact artifact, String entrypoint, List<Path> runtimeClasspath,
                                            Declaration declaration, Duration lifetime) throws IOException, InterruptedException {
+        return launch(artifact, entrypoint, runtimeClasspath, declaration, lifetime, false);
+    }
+
+    private static ExtensionProcess launch(StagedArtifact artifact, String entrypoint, List<Path> runtimeClasspath,
+                                           Declaration declaration, Duration lifetime, boolean requireSandbox)
+            throws IOException, InterruptedException {
         String separator = System.getProperty("path.separator");
         List<String> paths = new ArrayList<>();
         for (Path path : runtimeClasspath) {
@@ -91,11 +99,22 @@ public final class ExtensionProcess implements AutoCloseable {
         if (classpath.isEmpty() || classpath.length() > 16384) throw new IllegalArgumentException("Invalid runtime classpath");
         long runMs = lifetime.toMillis();
         if (runMs <= 0 || runMs > 300000) throw new IllegalArgumentException("Lifetime must be in 1..300000ms");
-        ProcessBuilder builder = new ProcessBuilder(
-                Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-                "-Dfile.encoding=UTF-8", "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8",
-                "-cp", classpath, VerifiedJvmMain.class.getName(),
-                artifact.artifact().toAbsolutePath().toString(), artifact.digest(), entrypoint);
+        Path javaHome = Path.of(System.getProperty("java.home"));
+        var encoding = List.of("-Dfile.encoding=UTF-8", "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8");
+        List<String> command;
+        if (requireSandbox) {
+            if (runtimeClasspath.size() != 1 || !java.nio.file.Files.isRegularFile(runtimeClasspath.getFirst())) {
+                throw new IOException("OS_SANDBOX_REQUIRES_PACKAGED_RUNTIME");
+            }
+            command = LinuxAssertionSandbox.command(javaHome, runtimeClasspath.getFirst(), artifact, encoding);
+        } else {
+            command = new ArrayList<>();
+            command.add(javaHome.resolve("bin/java").toString());
+            command.addAll(encoding);
+            command.addAll(List.of("-cp", classpath, VerifiedJvmMain.class.getName(),
+                    artifact.artifact().toAbsolutePath().toString(), artifact.digest(), entrypoint));
+        }
+        ProcessBuilder builder = new ProcessBuilder(command);
         builder.directory(artifact.directory().toFile());
         String systemRoot = File.separatorChar == '\\' ? builder.environment().get("SystemRoot") : null;
         builder.environment().clear();

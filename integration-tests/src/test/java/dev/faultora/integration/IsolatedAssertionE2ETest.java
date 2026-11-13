@@ -79,13 +79,13 @@ class IsolatedAssertionE2ETest {
         Path artifact = fixture(directory, "0.1");
 
         try (var dispatcher = new QualificationDispatcher(controlTls.sslContext())) {
-            dispatcher.offer(dispatch("approved-assertion", signing));
+            dispatcher.offer(dispatch("approved-assertion", signing, scenario("child-check")));
             var accepted = runRunner(dispatcher, runner, trustedControl, signing, artifact, digest(artifact));
             assertThat(accepted.exitCode()).as(accepted.output()).isZero();
             assertThat(dispatcher.outcomeOf("approved-assertion")).contains("PASSED");
             assertThat(dispatcher.journalOf("approved-assertion")).anyMatch(line -> line.contains("child-check"));
 
-            dispatcher.offer(dispatch("changed-assertion", signing));
+            dispatcher.offer(dispatch("changed-assertion", signing, scenario("child-check")));
             var refused = runRunner(dispatcher, runner, trustedControl, signing, artifact, "sha256:" + "0".repeat(64));
             assertThat(refused.exitCode()).as(refused.output()).isEqualTo(3);
             assertThat(dispatcher.outcomeOf("changed-assertion")).contains("\"broke\":true");
@@ -93,8 +93,7 @@ class IsolatedAssertionE2ETest {
         }
     }
 
-    private static Dispatch dispatch(String runId, Certificates.Identity signing) throws Exception {
-        String scenario = scenario("child-check");
+    static Dispatch dispatch(String runId, Certificates.Identity signing, String scenario) throws Exception {
         String policy = new ObjectMapper().writeValueAsString(EffectivePolicy.of(new TargetPolicy(
                 Set.of(), Set.of(SafetyClassification.READ_ONLY),
                 100, 2, 60_000, 1024, Set.of(), Set.of())));
@@ -108,15 +107,23 @@ class IsolatedAssertionE2ETest {
 
     private Result runRunner(QualificationDispatcher dispatcher, Certificates.Identity runner, Path trustedControl,
                              Certificates.Identity signing, Path artifact, String digest) throws Exception {
+        return runRunner(directory, dispatcher, runner, trustedControl, signing, artifact, digest, List.of());
+    }
+
+    static Result runRunner(Path directory, QualificationDispatcher dispatcher, Certificates.Identity runner,
+                            Path trustedControl, Certificates.Identity signing, Path artifact, String digest,
+                            List<String> extra) throws Exception {
         Path work = Files.createTempDirectory(directory, "runner-");
-        return launch(work, List.of("runner", "--dispatcher", dispatcher.address(),
+        var arguments = new ArrayList<>(List.of("runner", "--dispatcher", dispatcher.address(),
                 "--keystore", runner.keystore().toString(), "--truststore", trustedControl.toString(),
                 "--tls-secret-id", "runner-tls", "--policy-key", "qualification=" + signing.certificate(),
                 "--work-dir", work.resolve("spool").toString(), "--allow-private", "--once",
                 "--isolated-assertion", "child-check", digest, artifact.toString()));
+        arguments.addAll(extra);
+        return launch(work, arguments);
     }
 
-    private record Result(int exitCode, String output) { }
+    record Result(int exitCode, String output) { }
 
     private Result run(Path artifact, String digest, String type) throws Exception {
         Path work = Files.createTempDirectory(directory, "invocation-");
@@ -146,7 +153,7 @@ class IsolatedAssertionE2ETest {
                 """.formatted(type);
     }
 
-    private Result launch(Path work, List<String> args) throws Exception {
+    private static Result launch(Path work, List<String> args) throws Exception {
         Path release = Path.of(System.getProperty("faultora.cliJar")).toAbsolutePath();
         Path output = work.resolve("output.log");
         var invocation = new ArrayList<>(List.of(
@@ -170,11 +177,16 @@ class IsolatedAssertionE2ETest {
     }
 
     static Path fixture(Path directory, String minimumVersion) throws Exception {
+        return fixture(directory, minimumVersion, ChildAssertion.class);
+    }
+
+    static Path fixture(Path directory, String minimumVersion, Class<? extends AssertionProvider> provider)
+            throws Exception {
         Path jar = Files.createTempFile(directory, "assertion-", ".jar");
-        String name = ChildAssertion.class.getName();
+        String name = provider.getName();
         String entry = name.replace('.', '/') + ".class";
         try (var out = new JarOutputStream(Files.newOutputStream(jar));
-             var compiled = ChildAssertion.class.getResourceAsStream("/" + entry)) {
+             var compiled = provider.getResourceAsStream("/" + entry)) {
             assertThat(compiled).isNotNull();
             writeEntry(out, entry, compiled.readAllBytes());
             writeEntry(out, "META-INF/services/" + AssertionProvider.class.getName(),
