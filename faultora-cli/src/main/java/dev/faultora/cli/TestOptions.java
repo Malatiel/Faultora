@@ -119,21 +119,8 @@ record TestOptions(
                 case "--toxiproxy-url" -> toxiproxyUrl = requireNext(it, "--toxiproxy-url");
                 case "--allow-extension" ->
                         allowedExtensions.add(requireNext(it, "--allow-extension"));
-                case "--isolated-assertion" -> {
-                    if (isolatedAssertion != null) {
-                        throw new CliException("--isolated-assertion may be used once",
-                                FaultoraCli.EXIT_INVALID_CONFIG);
-                    }
-                    String type = requireNext(it, arg);
-                    String digest = requireNext(it, arg);
-                    String jar = requireNext(it, arg);
-                    try {
-                        isolatedAssertion = new IsolatedAssertion(type, digest, Path.of(jar));
-                    } catch (IllegalArgumentException invalid) {
-                        throw new CliException("--isolated-assertion requires a type, SHA-256 digest and JAR",
-                                FaultoraCli.EXIT_INVALID_CONFIG);
-                    }
-                }
+                case IsolatedAssertionOption.FLAG ->
+                        isolatedAssertion = IsolatedAssertionOption.parse(it, isolatedAssertion);
                 case "--input", "-i" -> {
                     String pair = requireNext(it, "--input");
                     int separator = pair.indexOf('=');

@@ -182,6 +182,45 @@ class RunnerImageE2ETest {
     }
 
     @Test
+    void aReadOnlyRunnerImageCanEvaluateAnOperatorApprovedAssertion() throws Exception {
+        Certificates.Identity runner = Certificates.issue(directory, "runner", 1);
+        Certificates.Identity control = Certificates.issue(
+                directory, "control", 1, "dns:" + HOST_FROM_CONTAINER);
+        Certificates.Identity signing = Certificates.issue(directory, "policy-signing", 1);
+        Path truststore = Certificates.trusting(directory, "runner", control);
+        Path plugin = IsolatedAssertionE2ETest.fixture(directory, "0.1");
+        readableInsideTheContainer(directory);
+
+        try (QualificationDispatcher dispatcher = new QualificationDispatcher(
+                new TlsMaterial(control.keystore(),
+                        Certificates.trusting(directory, "control", runner),
+                        () -> Certificates.PASSWORD.toCharArray()).sslContext(),
+                "0.0.0.0")) {
+            String runId = "isolated-in-container";
+            dispatcher.offer(dispatch(runId, signing, IsolatedAssertionE2ETest.scenario("child-check")));
+            var result = container(180,
+                    "--add-host", HOST_FROM_CONTAINER + ":host-gateway",
+                    "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
+                    "-e", "FAULTORA_SECRET_RUNNER_TLS=" + Certificates.PASSWORD,
+                    "-v", directory.toAbsolutePath() + ":/etc/faultora:ro",
+                    "--tmpfs", "/var/faultora:uid=65532,gid=65532",
+                    "--tmpfs", "/tmp:uid=65532,gid=65532,mode=0700",
+                    image, "runner", "--dispatcher", "https://" + HOST_FROM_CONTAINER + ":" + dispatcher.port(),
+                    "--keystore", "/etc/faultora/" + runner.keystore().getFileName(),
+                    "--truststore", "/etc/faultora/" + truststore.getFileName(),
+                    "--tls-secret-id", "runner-tls",
+                    "--policy-key", "control-2026=/etc/faultora/" + signing.certificate().getFileName(),
+                    "--work-dir", "/var/faultora", "--allow-private", "--once",
+                    "--isolated-assertion", "child-check", IsolatedAssertionE2ETest.digest(plugin),
+                    "/etc/faultora/" + plugin.getFileName());
+
+            assertThat(result.exitValue()).as(result.output()).isZero();
+            assertThat(dispatcher.outcomeOf(runId)).contains("PASSED");
+            assertThat(dispatcher.journalOf(runId)).anyMatch(line -> line.contains("child-check"));
+        }
+    }
+
+    @Test
     void theProbeInTheImageAnswersWithoutAShell() throws Exception {
         // Distroless has no shell, so `test -f` is not available and the probe
         // has to be a Faultora command. Both halves: a fresh status file is
@@ -280,17 +319,22 @@ class RunnerImageE2ETest {
 
     private static Dispatch dispatch(String runId, Certificates.Identity signing)
             throws Exception {
+        return dispatch(runId, signing, SCENARIO);
+    }
+
+    private static Dispatch dispatch(String runId, Certificates.Identity signing, String scenario)
+            throws Exception {
         String policy = MAPPER.writeValueAsString(EffectivePolicy.of(new TargetPolicy(
                 Set.of(), Set.of(SafetyClassification.READ_ONLY),
                 100, 2, 60_000, 1024, Set.of(), Set.of())));
         return new Dispatch(
-                runId, System.currentTimeMillis(), runId + "-nonce", SCENARIO, List.of(),
+                runId, System.currentTimeMillis(), runId + "-nonce", scenario, List.of(),
                 Map.of(), Map.of("", "http://localhost:1"), Dispatch.Credentials.none(),
                 5L,
                 new SignedPolicy(policy, "control-2026",
                         Certificates.sign(signing, "RSA", policy)),
                 new Lease(System.currentTimeMillis(), 120_000, 20_000),
-                ContentDigest.sha256Uri(SCENARIO), Dispatch.digestOfDocuments(List.of()));
+                ContentDigest.sha256Uri(scenario), Dispatch.digestOfDocuments(List.of()));
     }
 
     private static ImageCommand.Result container(int seconds, String... args) throws Exception {

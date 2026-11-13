@@ -17,6 +17,7 @@ import dev.faultora.runner.protocol.EffectivePolicy;
 import dev.faultora.runner.protocol.DispatchedDocument;
 import dev.faultora.runner.protocol.Refusal;
 import dev.faultora.runtime.CatalogAssembly;
+import dev.faultora.runtime.IsolatedAssertion;
 import dev.faultora.runtime.RunPreparation;
 import dev.faultora.runtime.RunArtifacts;
 import dev.faultora.runtime.PreparedRun;
@@ -59,6 +60,7 @@ public final class DispatchedRun {
     private final SpoolFactory spools;
     private final ReplayProtection replayProtection;
     private final WorkDirectoryBudget storageBudget;
+    private final IsolatedAssertion isolatedAssertion;
 
     @FunctionalInterface
     interface SpoolFactory {
@@ -83,6 +85,13 @@ public final class DispatchedRun {
         this(verifier, workingDirectory, secrets, allowPrivate, DurableRunSpool::create);
     }
 
+    public DispatchedRun(DispatchVerifier verifier, Path workingDirectory,
+                         Function<String, dev.faultora.model.security.SecretHandle> secrets,
+                         boolean allowPrivate, IsolatedAssertion isolatedAssertion) {
+        this(verifier, workingDirectory, secrets, allowPrivate, DurableRunSpool::create,
+                new WorkDirectoryBudget(workingDirectory), isolatedAssertion);
+    }
+
     DispatchedRun(DispatchVerifier verifier, Path workingDirectory,
                   Function<String, dev.faultora.model.security.SecretHandle> secrets,
                   boolean allowPrivate, SpoolFactory spools) {
@@ -92,6 +101,13 @@ public final class DispatchedRun {
     DispatchedRun(DispatchVerifier verifier, Path workingDirectory,
                   Function<String, dev.faultora.model.security.SecretHandle> secrets,
                   boolean allowPrivate, SpoolFactory spools, WorkDirectoryBudget storageBudget) {
+        this(verifier, workingDirectory, secrets, allowPrivate, spools, storageBudget, null);
+    }
+
+    private DispatchedRun(DispatchVerifier verifier, Path workingDirectory,
+                          Function<String, dev.faultora.model.security.SecretHandle> secrets,
+                          boolean allowPrivate, SpoolFactory spools, WorkDirectoryBudget storageBudget,
+                          IsolatedAssertion isolatedAssertion) {
         this.verifier = verifier;
         this.workingDirectory = workingDirectory;
         this.secrets = secrets;
@@ -99,6 +115,7 @@ public final class DispatchedRun {
         this.spools = spools;
         this.replayProtection = new ReplayProtection(workingDirectory);
         this.storageBudget = storageBudget;
+        this.isolatedAssertion = isolatedAssertion;
     }
 
     /**
@@ -245,7 +262,8 @@ public final class DispatchedRun {
 
         AtomicBoolean cancellation = new AtomicBoolean(false);
         PreparedRun.Settings settings = new PreparedRun.Settings(expressionContext(dispatch),
-                connectorContext(dispatch, policy), allowPrivate, policy.targets().allowedFaultTypes());
+                connectorContext(dispatch, policy), allowPrivate, policy.targets().allowedFaultTypes(),
+                isolatedAssertion);
         PreparedRun sealed = PreparedRun.prepare(request, settings, java.time.Duration.ofMinutes(5));
         var identity = new DurableRunSpool.Identity(DurableRunSpool.runnerIdentity(workingDirectory),
                 dispatch.runId(), java.util.UUID.randomUUID().toString(), dispatchFingerprint(dispatch, sealed.preparationDigest()),
