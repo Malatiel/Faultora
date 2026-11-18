@@ -1,13 +1,13 @@
 # Faultora
 
-Faultora is a self-hosted CLI for testing what happens when API requests
-overlap, clients retry, or a dependency fails. In the bundled payment example,
-two concurrent requests use the same idempotency key. The scenario checks
-that the service creates exactly one payment.
+Faultora is a self-hosted reliability testing platform for APIs and distributed
+systems. Verify that business rules hold when requests overlap, clients retry,
+or a dependency fails. The bundled payment scenario checks that two concurrent
+requests with the same idempotency key create exactly one payment.
 
-[Download the CLI](https://github.com/Malatiel/Faultora/releases/latest) ·
-[Run your first check](#first-ten-minutes) ·
-[Share feedback](#help-test-faultora)
+[Download Faultora](https://github.com/Malatiel/Faultora/releases/latest) ·
+[Run a check against your API](#first-ten-minutes) ·
+[Run the payment example](#run-the-payment-example)
 
 - Generate a starter YAML scenario from OpenAPI and preview the plan without
   contacting your service. Add concurrency, retries, or bounded fault
@@ -126,16 +126,16 @@ traffic. Keep the YAML to run it in the CLI or CI. To execute through MCP
 itself, configure operator-signed approval for a test target that needs no
 credentials. [Connect a local MCP client](docs/AI_ASSISTANTS.md).
 
-## Help test Faultora
+## Run the payment example
 
-Try the [payment service examples](examples/README.md#run-the-http-examples)
-or bring one staging API with a business rule you want to check. If setup
-stalls, a report is unclear, or you can't express a check,
-[open an issue](https://github.com/Malatiel/Faultora/issues/new/choose).
-Include the Faultora version, your OS, what you tried, and what you expected.
-A small sanitized example helps. Follow the
-[support guide](https://github.com/Malatiel/Faultora/blob/main/SUPPORT.md)
-for sharing diagnostics and reporting security issues privately.
+Start the bundled payment API locally and run a contract check, a retry case,
+or a settlement check. The [HTTP examples](examples/README.md#run-the-http-examples)
+include commands and show which assertions to inspect in the report. Use the
+same scenario structure with your own OpenAPI contract and keep the check in
+CI to catch regressions.
+
+See the [support guide](https://github.com/Malatiel/Faultora/blob/main/SUPPORT.md)
+for troubleshooting, reporting issues, and sharing diagnostics safely.
 
 ## What 1.0.0 includes
 
