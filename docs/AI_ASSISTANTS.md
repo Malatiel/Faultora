@@ -121,7 +121,7 @@ The server is a subprocess speaking MCP over stdio. Use the operator
 configuration for either preparation or approved execution.
 
 ```bash
-java -jar /path/to/faultora-1.0.0.jar mcp --config /path/to/operator.json
+java -jar /path/to/faultora-1.0.1.jar mcp --config /path/to/operator.json
 ```
 
 For Claude Code, put this in `.mcp.json` in the folder the assistant works in:
@@ -131,7 +131,7 @@ For Claude Code, put this in `.mcp.json` in the folder the assistant works in:
   "mcpServers": {
     "faultora": {
       "command": "java",
-      "args": ["-jar", "/path/to/faultora-1.0.0.jar", "mcp", "--config", "/path/to/operator.json"]
+      "args": ["-jar", "/path/to/faultora-1.0.1.jar", "mcp", "--config", "/path/to/operator.json"]
     }
   }
 }
@@ -140,7 +140,7 @@ For Claude Code, put this in `.mcp.json` in the folder the assistant works in:
 For the Codex CLI:
 
 ```bash
-codex mcp add faultora -- java -jar /path/to/faultora-1.0.0.jar mcp --config /path/to/operator.json
+codex mcp add faultora -- java -jar /path/to/faultora-1.0.1.jar mcp --config /path/to/operator.json
 ```
 
 Use absolute paths, including the path to `java` if the client does not
@@ -164,7 +164,7 @@ and processes, including shell commands, from reaching the targets. See
    agree, sign with the IDs and digest from that response.
 
    ```bash
-   java -jar faultora-1.0.0.jar mcp approve --private-key operator.der \
+   java -jar faultora-1.0.1.jar mcp approve --private-key operator.der \
      --prepared-id <preparedId> --digest <preparationDigest> --run-id <runId> --expires-in 300
    ```
 

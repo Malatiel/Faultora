@@ -1,6 +1,6 @@
 # What Faultora includes
 
-Everything below is in the 1.0.0 release. The [README](../README.md) shows how
+Everything below is in the 1.0.1 release. The [README](../README.md) shows how
 to start; this page lists what is there once you have.
 
 Scenario execution:

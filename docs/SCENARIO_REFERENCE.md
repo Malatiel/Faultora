@@ -1,6 +1,6 @@
 # Scenario reference
 
-This page documents the scenario format implemented by Faultora 1.0.0. The
+This page documents the scenario format implemented by Faultora 1.0.1. The
 format is versioned independently from the application:
 
 ```yaml
@@ -10,7 +10,7 @@ kind: Scenario
 
 Faultora rejects unsupported versions, missing required fields, duplicate step
 IDs, unknown references, dependency cycles, and execution features that are not
-available in 1.0.0.
+available in 1.0.1.
 
 A [JSON Schema](schema/scenario-v1.schema.json) lets editors and AI
 assistants check scenario fields, types and basic limits while editing.
@@ -129,7 +129,7 @@ cleanup:
 Validate a document before running it:
 
 ```bash
-java -jar faultora-1.0.0.jar validate --scenario scenario.yaml
+java -jar faultora-1.0.1.jar validate --scenario scenario.yaml
 ```
 
 Give it the catalogs the run will use and it imports them as `test` does,
@@ -138,7 +138,7 @@ two documents declaring one name — fails `validate` with the same exit code,
 and importer warnings are printed.
 
 ```bash
-java -jar faultora-1.0.0.jar validate --scenario scenario.yaml \
+java -jar faultora-1.0.1.jar validate --scenario scenario.yaml \
   --openapi openapi.yaml --asyncapi asyncapi.yaml --observations observations.yaml
 ```
 

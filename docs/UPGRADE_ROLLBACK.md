@@ -86,8 +86,8 @@ current checkout.
 
 ```bash
 ./mvnw -B package -pl faultora-cli -am -DskipTests
-FAULTORA_PREVIOUS_JAR=/path/to/verified/faultora-0.13.0.jar \
-FAULTORA_NEXT_JAR="$PWD/faultora-cli/target/faultora-1.0.0.jar" \
+FAULTORA_PREVIOUS_JAR=/path/to/verified/faultora-1.0.0.jar \
+FAULTORA_NEXT_JAR="$PWD/faultora-cli/target/faultora-1.0.1.jar" \
 FAULTORA_CHECK_MACHINE_OUTPUT_V1=true \
 ./mvnw -B verify -pl integration-tests -am \
   -Dtest=UpgradeRollbackCheck -Dsurefire.failIfNoSpecifiedTests=false

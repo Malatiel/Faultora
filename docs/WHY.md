@@ -2,7 +2,7 @@
 
 This page says what problem Faultora is meant to solve, for whom, what it
 deliberately does not do, and what is not yet proven. Each capability named
-here is in the 1.0.0 release and links to where it is documented or
+here is in the 1.0.1 release and links to where it is documented or
 tested. A statement about who needs it
 is marked as a hypothesis until users outside the project have confirmed it.
 

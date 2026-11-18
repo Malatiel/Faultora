@@ -47,7 +47,7 @@ spec:
       terminationGracePeriodSeconds: 40
       containers:
         - name: runner
-          image: faultora/runner:1.0.0
+          image: faultora/runner:1.0.1
           args:
             - runner
             - --dispatcher

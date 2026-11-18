@@ -3,7 +3,7 @@
 Put `--diagnostics=json` before the command:
 
 ```bash
-java -jar faultora-cli/target/faultora-1.0.0.jar \
+java -jar faultora-cli/target/faultora-1.0.1.jar \
   --diagnostics=json test --scenario scenario.yaml --format json,junit
 ```
 
