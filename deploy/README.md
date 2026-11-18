@@ -143,12 +143,19 @@ missing, a file the list does not name, a link, and a listed path that leaves
 the bundle, and finally runs the bundled CLI on the bundled example, which
 needs a local Java 21 and nothing from the network.
 
-`--release-sums` takes the release's own `SHA256SUMS`, checked with
-`gh attestation verify` on the connected side (see
-[Verifying a download](../docs/INSTALLATION.md#verifying-a-download)) and
-carried separately, and refuses a `faultora.jar` that is not the published
-one: the fingerprint says the bundle is the one that was sent, the release
-checksums say its jar is the one that was released. Without a fingerprint
+On the connected side, use a Faultora checkout to verify the downloaded
+release JAR and its checksum manifest before building the bundle:
+
+```bash
+python3 deploy/verify-release.py faultora-0.13.0.jar --sums SHA256SUMS \
+  --tag v0.13.0 --require-sums-attestation
+```
+
+This checks the release workflow, tag and hosted runner for both subjects.
+The optional `--source-digest` pins both to the same source commit. Carry
+the verified `SHA256SUMS` separately and pass it to `--release-sums` on
+arrival. The recorded fingerprint identifies the transferred bundle and
+the verified release checksums identify its `faultora.jar`. Without a fingerprint
 the script refuses to run, unless asked for `--self-consistency-only`, which
 checks the files against their own list, says that this is not a trust
 check, and runs nothing.

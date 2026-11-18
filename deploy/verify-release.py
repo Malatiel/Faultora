@@ -10,7 +10,8 @@ build them for this tag? GitHub's attestation for the file must have been signed
 A checksum alone detects a damaged download; anyone who can replace the file
 can replace SHA256SUMS beside it. The attestation is what ties the bytes to
 this repository's release, so it is checked unless --checksum-only is given,
-and that mode says it has not checked authenticity.
+and that mode says it has not checked authenticity. --require-sums-attestation
+also checks the release workflow attestation for SHA256SUMS itself.
 """
 
 import argparse
@@ -119,8 +120,13 @@ def verify_attestation(artifact: Path, tag: str, repo: str, source_digest=None, 
 
 
 def verify(artifact: Path, checksums: Path, tag: str, repo: str = DEFAULT_REPO,
-           checksum_only: bool = False, source_digest=None, run=subprocess.run) -> None:
+           checksum_only: bool = False, source_digest=None, run=subprocess.run, *,
+           require_sums_attestation: bool = False) -> None:
+    if require_sums_attestation and checksum_only:
+        raise ValueError("cannot combine --require-sums-attestation with --checksum-only")
     verify_checksum(artifact, checksums, tag)
+    if require_sums_attestation:
+        verify_attestation(checksums, tag, repo, source_digest, run)
     if not checksum_only:
         verify_attestation(artifact, tag, repo, source_digest, run)
 
@@ -132,16 +138,22 @@ def main() -> int:
     parser.add_argument("--tag", required=True, help="release tag, for example v0.13.0")
     parser.add_argument("--repo", default=DEFAULT_REPO)
     parser.add_argument("--source-digest", help="also require this source commit")
-    parser.add_argument("--checksum-only", action="store_true",
-                        help="skip the attestation; detects damage, not substitution")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--checksum-only", action="store_true",
+                      help="skip the attestation; detects damage, not substitution")
+    mode.add_argument("--require-sums-attestation", action="store_true",
+                      help="also require a release workflow attestation for SHA256SUMS")
     args = parser.parse_args()
     try:
-        verify(args.file, args.sums, args.tag, args.repo, args.checksum_only, args.source_digest)
+        verify(args.file, args.sums, args.tag, args.repo, args.checksum_only, args.source_digest,
+               require_sums_attestation=args.require_sums_attestation)
     except (OSError, ValueError, zipfile.BadZipFile) as error:
         print("Release verification failed: " + str(error), file=sys.stderr)
         return 1
     if args.checksum_only:
         print(args.file.name + ": checksum matches; authenticity NOT verified (--checksum-only)")
+    elif args.require_sums_attestation:
+        print(args.file.name + ": checksum matches and the release workflow attested both files for " + args.tag)
     else:
         print(args.file.name + ": checksum matches and the release workflow attested it for " + args.tag)
     return 0

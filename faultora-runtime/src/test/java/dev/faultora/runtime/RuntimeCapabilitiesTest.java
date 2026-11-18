@@ -38,7 +38,8 @@ class RuntimeCapabilitiesTest {
                 .anyMatch(type -> type.startsWith("observations"));
         assertThat(capabilities.assertionTypes()).contains("status", "row-count", "event-count");
         assertThat(capabilities.reportFormats()).containsExactly("console", "html", "json", "junit");
-        assertThat(capabilities.limitations()).anyMatch(value -> value.contains("isolation"));
+        assertThat(capabilities.limitations())
+                .contains("Classpath extensions share the runtime process and its resource limits");
     }
 
     @Test

@@ -295,8 +295,12 @@ and input-binding errors keep the ordinary CLI error handling.
 
 `compiled: true` describes static compilation. Credentials, reachability and
 provider-specific runtime parameters are checked during execution. A preview
-does not authorize or reserve a later run. Explicitly admitted plugins execute
-in-process and remain subject to the limitations in [ADR-027](docs/adr/ADR-027-run-preparation.md).
+does not authorize or reserve a later run. Classpath providers admitted through
+`--allow-extension` share the runtime process. See [ADR-027](docs/adr/ADR-027-run-preparation.md)
+for the preparation boundary.
+
+To build and run a digest-approved assertion in a separate JVM, follow the
+[plugin authoring guide](docs/PLUGIN_AUTHORING.md).
 
 ### Targets
 

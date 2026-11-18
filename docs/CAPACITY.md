@@ -99,3 +99,38 @@ These are the three cases with 256 KiB responses.
 The largest workload in the historical 0.11.3 grid measured 658 MiB
 after GC. The new grid's largest observed post-GC heap was 102 MiB.
 These observations apply to the synthetic grid and its configuration.
+
+## Repeated runner baseline
+
+Run the opt-in `RunnerSoakBaseline` check to exercise 100 sequential read-only
+dispatches on one runner registration with protocol 2. The dispatcher uses
+mutual TLS over loopback and the target is a local synthetic HTTP service.
+Each dispatch must reach the target exactly once, pass its status assertion,
+and deliver the same journal as the runner wrote. The journal must begin with
+`RUN_STARTED` and end with `RUN_COMPLETED`. The dispatcher must commit a passing
+terminal result with the final journal position.
+
+The harness explicitly retires each acknowledged payload and confirms both
+local files are gone. This exercises the storage budget across repeated
+dispatches while leaving each retirement receipt available for later checks.
+In a preliminary run with protocol 1 and no retirement, the first 63
+dispatches completed and dispatch 64 returned
+`WORK_DIRECTORY_STORAGE_FULL`, consistent with the
+[default work directory budget](RUNNER_SPOOL.md#capacity-and-retention).
+
+```sh
+./mvnw -B verify -pl integration-tests -am \
+  -Dtest=RunnerSoakBaseline -Dsurefire.failIfNoSpecifiedTests=false
+```
+
+The check prints elapsed time, p95 dispatch time and cumulative byte counts
+for the runner's NDJSON journals and binary spools before retirement. Elapsed
+time covers dispatch, verification and retirement and excludes fixture setup.
+Dispatch time covers the request to the dispatcher, execution and delivery of
+the journal and result. Compare measurements taken on the same host. The
+check uses a four-minute timeout to bound execution time.
+
+A Windows run with Java 21.0.12.1 on 2026-11-18 completed all 100 dispatches
+in 40.363 s (2.48 dispatches/s), with a p95 dispatch time of 485 ms. It
+produced 157,892 journal bytes and 256,684 spool bytes across the attempts
+and retired both payload files for every attempt.

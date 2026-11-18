@@ -3,6 +3,7 @@ package dev.faultora.integration;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.faultora.faults.local.LocalFaultProvider;
 import dev.faultora.model.catalog.SafetyClassification;
+import dev.faultora.model.identifier.RunId;
 import dev.faultora.model.security.ContentDigest;
 import dev.faultora.model.security.EvidencePolicy;
 import dev.faultora.model.security.ExtensionPolicy;
@@ -18,18 +19,22 @@ import dev.faultora.runner.TlsMaterial;
 import dev.faultora.runner.protocol.Dispatch;
 import dev.faultora.runner.protocol.EffectivePolicy;
 import dev.faultora.runner.protocol.DispatchedDocument;
+import dev.faultora.runner.protocol.DurableDelivery;
 import dev.faultora.runner.protocol.Lease;
 import dev.faultora.runner.protocol.SignedPolicy;
 import dev.faultora.testkit.Certificates;
 import dev.faultora.testkit.QualificationDispatcher;
 
+import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -70,6 +75,10 @@ final class RemoteRunner implements AutoCloseable {
      *                  own environment, never the dispatch
      */
     RemoteRunner(Path directory, Map<String, String> secrets) throws Exception {
+        this(directory, secrets, false);
+    }
+
+    RemoteRunner(Path directory, Map<String, String> secrets, boolean durableDelivery) throws Exception {
         Files.createDirectories(directory);
         Certificates.Identity runnerIdentity =
                 Certificates.issue(directory, "runner", 1);
@@ -85,11 +94,13 @@ final class RemoteRunner implements AutoCloseable {
                 Certificates.trusting(directory, "dispatcher", runnerIdentity),
                 () -> Certificates.PASSWORD.toCharArray());
 
-        dispatcher = new QualificationDispatcher(dispatcherTls.sslContext());
+        dispatcher = durableDelivery
+                ? new QualificationDispatcher(dispatcherTls.sslContext(), directory.resolve("receiver"), 0)
+                : new QualificationDispatcher(dispatcherTls.sslContext());
         client = new RunnerClient(
                 URI.create(dispatcher.address()), runnerTls,
                 "qualification-runner", "0.9.0-SNAPSHOT",
-                dev.faultora.runtime.RunEnvironment.PROTOCOLS_SPOKEN);
+                dev.faultora.runtime.RunEnvironment.PROTOCOLS_SPOKEN, durableDelivery);
         agent = new RunnerAgent(
                 client,
                 new DispatchedRun(
@@ -213,6 +224,18 @@ final class RemoteRunner implements AutoCloseable {
     /** The journal as the far side received it, rather than as the runner wrote it. */
     List<String> journalDelivered(String runId) {
         return dispatcher.journalOf(runId);
+    }
+
+    List<String> durableJournalDelivered(String runId) throws IOException {
+        return dispatcher.durableJournalOf(runId);
+    }
+
+    DurableDelivery.Terminal durableTerminalDelivered(String runId) throws IOException {
+        return dispatcher.durableTerminalOf(runId);
+    }
+
+    Optional<RunnerAgent.RetentionCandidate> retireAcknowledged(String runId) throws IOException {
+        return agent.retireAcknowledgedRun(new RunId(runId), Instant.MAX);
     }
 
     /** What the runner said became of the run. */

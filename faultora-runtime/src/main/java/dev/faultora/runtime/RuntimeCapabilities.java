@@ -36,7 +36,7 @@ public record RuntimeCapabilities(
                 ExtensionRegistry.assertionProviders(extensions).keySet().stream().sorted().toList(),
                 ExtensionRegistry.renderers(extensions).keySet().stream().sorted().toList(),
                 List.copyOf(faults),
-                List.of("Extension process isolation and per-extension resource controls are unavailable",
+                List.of("Classpath extensions share the runtime process and its resource limits",
                         "Private destinations require deployment permission",
                         "Preparation does not verify destination reachability or credentials"));
     }
