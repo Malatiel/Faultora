@@ -1,41 +1,30 @@
 # Faultora
 
-**Break it here. Trust it everywhere.**
+Faultora is a self-hosted CLI for testing what happens when API requests
+overlap, clients retry, or a dependency fails. In the bundled payment example,
+two concurrent requests use the same idempotency key. The scenario checks
+that the service creates exactly one payment.
 
-Services that pass their functional tests still break business promises when
-requests overlap, clients retry, or a dependency misbehaves: a payment taken
-twice, the last seat sold twice, half of an operation left behind. Each
-response looks fine; the damage shows only across steps and components.
+[Download the CLI](https://github.com/Malatiel/Faultora/releases/latest) ·
+[Run your first check](#first-ten-minutes) ·
+[Share feedback](#help-test-faultora)
 
-Faultora is a self-hosted reliability testing CLI that checks those promises
-from the outside. It imports OpenAPI and AsyncAPI descriptions, runs repeatable
-scenarios with real concurrency and bounded faults across HTTP, Kafka and
-read-only database queries, asserts business invariants rather than only
-status codes, and produces console, JSON, HTML, and JUnit reports. Execution
-stays inside your infrastructure and does not require a hosted control plane
-or telemetry.
+- Generate a starter YAML scenario from OpenAPI and preview the plan without
+  contacting your service. Add concurrency, retries, or bounded fault
+  injection once the basic check runs.
+- Check outcomes across HTTP, Kafka, and read-only database queries. Review
+  the results in an offline HTML report or use JSON and JUnit in CI.
+- Run locally or in CI with Java 21. Telemetry export is opt-in. A separate
+  runner can execute inside a private network with a compatible dispatcher.
 
-It is meant for teams responsible for services where a duplicate or a lost
-update is costly, including teams in closed environments that cannot send
-descriptions or traffic to a hosted product. It is not a load-testing,
-infrastructure-chaos, or production-experiment tool.
-[Why Faultora exists](docs/WHY.md) explains the problem, the design decisions,
-when to use something else, and what is not yet proven. To ask a question,
-report a problem or contribute, see
-[support](https://github.com/Malatiel/Faultora/blob/main/SUPPORT.md) and
-[contributing](https://github.com/Malatiel/Faultora/blob/main/CONTRIBUTING.md).
-
-The scenario format is frozen at `faultora.dev/v1`; the application version
-below moves independently of it.
-
-Faultora 1.0.0 runs locally and in CI with Java 21. The local MCP server can
-help author and preview scenarios without approval setup. To execute inside
-a private network, deploy the runner with a compatible dispatcher.
+The scenario format is frozen at `faultora.dev/v1`. See
+[why Faultora exists](docs/WHY.md) for the problems it covers and its limits.
 
 ## First ten minutes
 
-You need Java 21, the OpenAPI description of a service, and the address of a
-test environment where it runs. Nothing is sent anywhere else.
+You need Java 21, an OpenAPI description, and the address of a test
+environment. For a published build, use the instructions for the version
+you download. The commands here use the current source version.
 
 **1. Install.** Download `faultora-1.0.0.tar.gz` (or `.zip`) and `SHA256SUMS`
 from the [release](https://github.com/Malatiel/Faultora/releases/tag/v1.0.0),
@@ -136,6 +125,17 @@ with an OpenAPI contract and preview a plan without a signing key or target
 traffic. Keep the YAML to run it in the CLI or CI. To execute through MCP
 itself, configure operator-signed approval for a test target that needs no
 credentials. [Connect a local MCP client](docs/AI_ASSISTANTS.md).
+
+## Help test Faultora
+
+Try the [payment service examples](examples/README.md#run-the-http-examples)
+or bring one staging API with a business rule you want to check. If setup
+stalls, a report is unclear, or you can't express a check,
+[open an issue](https://github.com/Malatiel/Faultora/issues/new/choose).
+Include the Faultora version, your OS, what you tried, and what you expected.
+A small sanitized example helps. Follow the
+[support guide](https://github.com/Malatiel/Faultora/blob/main/SUPPORT.md)
+for sharing diagnostics and reporting security issues privately.
 
 ## What 1.0.0 includes
 
