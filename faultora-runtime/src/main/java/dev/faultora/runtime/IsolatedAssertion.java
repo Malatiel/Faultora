@@ -2,6 +2,7 @@ package dev.faultora.runtime;
 
 import dev.faultora.extension.process.ExtensionAssertionProvider;
 import dev.faultora.extension.process.ExtensionProcess;
+import dev.faultora.extension.process.ExtensionResourceLimits;
 import dev.faultora.extension.process.StagedArtifact;
 import dev.faultora.spi.contract.AssertionProvider;
 
@@ -14,7 +15,8 @@ import java.util.List;
 import java.util.Set;
 
 /** Operator approval for one assertion provider in a separate JVM. */
-public record IsolatedAssertion(String type, String digest, Path artifact, boolean requireOsSandbox) {
+public record IsolatedAssertion(
+        String type, String digest, Path artifact, boolean requireOsSandbox, ExtensionResourceLimits resourceLimits) {
     private static final Duration CALL_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration LIFETIME = Duration.ofMinutes(5);
 
@@ -22,7 +24,18 @@ public record IsolatedAssertion(String type, String digest, Path artifact, boole
         this(type, digest, artifact, false);
     }
 
+    public IsolatedAssertion(String type, String digest, Path artifact, boolean requireOsSandbox) {
+        this(type, digest, artifact, requireOsSandbox, null);
+    }
+
+    public IsolatedAssertion(String type, String digest, Path artifact, int memoryMiB, int cpuPercent) {
+        this(type, digest, artifact, true, new ExtensionResourceLimits(memoryMiB, cpuPercent));
+    }
+
     public IsolatedAssertion {
+        if (resourceLimits != null && !requireOsSandbox) {
+            throw new IllegalArgumentException("Extension resource limits require OS sandboxing");
+        }
         new ExtensionProcess.Provider("assertion", type);
         if (digest == null || !digest.matches("sha256:[0-9a-f]{64}") || artifact == null) {
             throw new IllegalArgumentException("An assertion JAR and its approved SHA-256 digest are required");
@@ -49,15 +62,24 @@ public record IsolatedAssertion(String type, String digest, Path artifact, boole
             }
             var declaration = new ExtensionProcess.Declaration(manifest.id(), manifest.version(),
                     Set.of(new ExtensionProcess.Provider("assertion", type)));
-            var provider = requireOsSandbox
-                    ? ExtensionAssertionProvider.startSandboxed(staged, bootstrap, declaration, CALL_TIMEOUT, LIFETIME)
-                    : ExtensionAssertionProvider.start(staged, List.of(bootstrap), declaration, CALL_TIMEOUT, LIFETIME);
+            ExtensionAssertionProvider provider;
+            if (resourceLimits != null) {
+                provider = ExtensionAssertionProvider.startSandboxed(
+                        staged, bootstrap, declaration, CALL_TIMEOUT, LIFETIME, resourceLimits);
+            } else if (requireOsSandbox) {
+                provider = ExtensionAssertionProvider.startSandboxed(staged, bootstrap, declaration, CALL_TIMEOUT, LIFETIME);
+            } else {
+                provider = ExtensionAssertionProvider.start(staged, List.of(bootstrap), declaration, CALL_TIMEOUT, LIFETIME);
+            }
             opened.add(provider);
             return provider;
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new Refused("Assertion extension startup was interrupted");
         } catch (IOException | IllegalArgumentException invalid) {
+            if (resourceLimits != null) {
+                throw new Refused("Assertion extension could not start with the required Linux sandbox and resource limits");
+            }
             throw new Refused(requireOsSandbox
                     ? "Assertion extension could not start with the required Linux sandbox"
                     : "Assertion extension JAR, digest, manifest or provider could not be verified");

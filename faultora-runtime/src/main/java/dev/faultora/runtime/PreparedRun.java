@@ -189,12 +189,18 @@ public final class PreparedRun {
         policy.put("totalTimeoutMs", settings.connectors().totalTimeoutMs());
         policy.put("allowPrivate", settings.allowPrivate());
         policy.set("faultTypes", MAPPER.valueToTree(new java.util.TreeSet<>(settings.faultTypes())));
-        if (settings.isolatedAssertion() != null) {
+        IsolatedAssertion isolated = settings.isolatedAssertion();
+        if (isolated != null) {
             var assertion = policy.putObject("isolatedAssertion");
-            assertion.put("type", settings.isolatedAssertion().type());
-            assertion.put("digest", settings.isolatedAssertion().digest());
-            if (settings.isolatedAssertion().requireOsSandbox()) {
+            assertion.put("type", isolated.type());
+            assertion.put("digest", isolated.digest());
+            if (isolated.requireOsSandbox()) {
                 assertion.put("osSandbox", true);
+            }
+            if (isolated.resourceLimits() != null) {
+                var limits = assertion.putObject("resourceLimits");
+                limits.put("memoryMiB", isolated.resourceLimits().memoryMiB());
+                limits.put("cpuPercent", isolated.resourceLimits().cpuPercent());
             }
         }
         try {

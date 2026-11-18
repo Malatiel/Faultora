@@ -43,6 +43,7 @@ public final class ExtensionProcess implements AutoCloseable {
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private final SupervisedProcess child;
+    private final LinuxAssertionScope scope;
     private final Declaration declaration;
     private final String session;
     private final AtomicBoolean pending = new AtomicBoolean();
@@ -51,8 +52,9 @@ public final class ExtensionProcess implements AutoCloseable {
     private volatile boolean closed;
     private long nextId = 1;
 
-    private ExtensionProcess(SupervisedProcess child, Declaration declaration) {
+    private ExtensionProcess(SupervisedProcess child, Declaration declaration, LinuxAssertionScope scope) {
         this.child = child;
+        this.scope = scope;
         this.declaration = declaration;
         byte[] nonce = new byte[16];
         new SecureRandom().nextBytes(nonce);
@@ -69,10 +71,10 @@ public final class ExtensionProcess implements AutoCloseable {
     }
 
     static ExtensionProcess startAssertion(StagedArtifact artifact, List<Path> runtimeClasspath,
-                                           Declaration declaration, Duration lifetime, boolean requireSandbox)
-            throws IOException, InterruptedException {
+                                           Declaration declaration, Duration lifetime, boolean requireSandbox,
+                                           ExtensionResourceLimits limits) throws IOException, InterruptedException {
         return launch(artifact, VerifiedJvmMain.ASSERTION_MODE, runtimeClasspath, declaration, lifetime,
-                requireSandbox);
+                requireSandbox, limits);
     }
 
     static ExtensionProcess startImporter(StagedArtifact artifact, List<Path> runtimeClasspath,
@@ -82,12 +84,13 @@ public final class ExtensionProcess implements AutoCloseable {
 
     private static ExtensionProcess launch(StagedArtifact artifact, String entrypoint, List<Path> runtimeClasspath,
                                            Declaration declaration, Duration lifetime) throws IOException, InterruptedException {
-        return launch(artifact, entrypoint, runtimeClasspath, declaration, lifetime, false);
+        return launch(artifact, entrypoint, runtimeClasspath, declaration, lifetime, false, null);
     }
 
     private static ExtensionProcess launch(StagedArtifact artifact, String entrypoint, List<Path> runtimeClasspath,
-                                           Declaration declaration, Duration lifetime, boolean requireSandbox)
-            throws IOException, InterruptedException {
+                                           Declaration declaration, Duration lifetime, boolean requireSandbox,
+                                           ExtensionResourceLimits limits) throws IOException, InterruptedException {
+        if (limits != null && !requireSandbox) throw new IllegalArgumentException("Resource limits require the OS sandbox");
         String separator = System.getProperty("path.separator");
         List<String> paths = new ArrayList<>();
         for (Path path : runtimeClasspath) {
@@ -114,18 +117,23 @@ public final class ExtensionProcess implements AutoCloseable {
             command.addAll(List.of("-cp", classpath, VerifiedJvmMain.class.getName(),
                     artifact.artifact().toAbsolutePath().toString(), artifact.digest(), entrypoint));
         }
+        LinuxAssertionScope scope = limits == null ? null : LinuxAssertionScope.open();
+        if (scope != null) command = scope.command(limits, runMs, command);
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.directory(artifact.directory().toFile());
         String systemRoot = File.separatorChar == '\\' ? builder.environment().get("SystemRoot") : null;
         builder.environment().clear();
         if (systemRoot != null) builder.environment().put("SystemRoot", systemRoot);
-        var child = new SupervisedProcess(builder, runMs, 1000, 1000, 8192);
-        var peer = new ExtensionProcess(child, declaration);
+        if (scope != null) scope.configure(builder);
+        SupervisedProcess child = null;
         try {
+            child = new SupervisedProcess(builder, runMs, 1000, 1000, 8192);
+            if (scope != null) scope.watch(child.process());
+            var peer = new ExtensionProcess(child, declaration, scope);
             peer.handshake();
             return peer;
-        } catch (IOException | InterruptedException | RuntimeException failed) {
-            try { child.close(); } catch (IOException cleanup) { failed.addSuppressed(cleanup); }
+        } catch (IOException | InterruptedException | RuntimeException | Error failed) {
+            try { closeOwned(child, scope); } catch (IOException cleanup) { failed.addSuppressed(cleanup); }
             throw failed;
         }
     }
@@ -218,11 +226,14 @@ public final class ExtensionProcess implements AutoCloseable {
             child.awaitExit(Duration.ofNanos(Math.max(0, java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(budget)
                     - (System.nanoTime() - started))));
             require(beforeDeadline(started, budget), "DEADLINE_EXCEEDED");
+        } catch (IOException | InterruptedException | RuntimeException | Error failed) {
+            abort(failed);
+            throw failed;
         } finally {
             closed = true;
             pending.set(false);
-            child.close();
         }
+        close();
     }
 
     private int budget(Duration timeout) throws IOException {
@@ -273,15 +284,20 @@ public final class ExtensionProcess implements AutoCloseable {
         return System.nanoTime() - started < java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(budgetMs);
     }
 
-    private void abort(Exception failure) {
-        closed = true;
-        try { child.close(); } catch (IOException cleanup) { failure.addSuppressed(cleanup); }
+    private void abort(Throwable failure) {
+        try { close(); } catch (IOException cleanup) { failure.addSuppressed(cleanup); }
     }
 
     /** Closing during a pending call cancels it; no protocol shutdown is sent into a busy session. */
     @Override public void close() throws IOException {
         closed = true;
-        child.close();
+        closeOwned(child, scope);
+    }
+
+    private static void closeOwned(SupervisedProcess child, LinuxAssertionScope scope) throws IOException {
+        try (scope) {
+            if (child != null) child.close();
+        }
     }
 
 }

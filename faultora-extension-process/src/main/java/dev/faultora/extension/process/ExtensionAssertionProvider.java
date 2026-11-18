@@ -12,6 +12,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
@@ -55,7 +56,16 @@ public final class ExtensionAssertionProvider implements AssertionProvider, Auto
                                                              ExtensionProcess.Declaration declaration,
                                                              Duration timeout, Duration lifetime)
             throws IOException, InterruptedException {
-        return start(artifact, List.of(runtime), declaration, timeout, lifetime, Set.of(), Set.of(), true);
+        return start(artifact, List.of(runtime), declaration, timeout, lifetime, Set.of(), Set.of(), true, null);
+    }
+
+    public static ExtensionAssertionProvider startSandboxed(StagedArtifact artifact, Path runtime,
+                                                             ExtensionProcess.Declaration declaration,
+                                                             Duration timeout, Duration lifetime,
+                                                             ExtensionResourceLimits limits)
+            throws IOException, InterruptedException {
+        return start(artifact, List.of(runtime), declaration, timeout, lifetime, Set.of(), Set.of(), true,
+                Objects.requireNonNull(limits, "Resource limits are required"));
     }
 
     /**
@@ -68,13 +78,14 @@ public final class ExtensionAssertionProvider implements AssertionProvider, Auto
                                                     Set<String> allowedSyntheticHandles)
             throws IOException, InterruptedException {
         return start(artifact, runtimeClasspath, declaration, timeout, lifetime, requestedHandles,
-                allowedSyntheticHandles, false);
+                allowedSyntheticHandles, false, null);
     }
 
     private static ExtensionAssertionProvider start(StagedArtifact artifact, List<Path> runtimeClasspath,
                                                      ExtensionProcess.Declaration declaration, Duration timeout,
                                                      Duration lifetime, Set<String> requestedHandles,
-                                                     Set<String> allowedSyntheticHandles, boolean requireSandbox)
+                                                     Set<String> allowedSyntheticHandles, boolean requireSandbox,
+                                                     ExtensionResourceLimits limits)
             throws IOException, InterruptedException {
         if (declaration.providers().size() != 1 || timeout == null || timeout.toMillis() < 1) {
             throw new IllegalArgumentException("One assertion selector and a positive timeout are required");
@@ -88,7 +99,7 @@ public final class ExtensionAssertionProvider implements AssertionProvider, Auto
         if (!allowed.containsAll(requested)) throw new IOException("SECRET_HANDLE_REFUSED");
         var admitted = requested.stream().sorted().toList();
         ExtensionProcess peer = ExtensionProcess.startAssertion(artifact, runtimeClasspath, declaration, lifetime,
-                requireSandbox);
+                requireSandbox, limits);
         return new ExtensionAssertionProvider(peer, selector, timeout, admitted);
     }
 

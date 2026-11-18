@@ -2,6 +2,7 @@ package dev.faultora.runtime;
 
 import dev.faultora.engine.journal.RunJournal;
 import dev.faultora.engine.run.RunResult;
+import dev.faultora.extension.process.ExtensionResourceLimits;
 import dev.faultora.model.catalog.SafetyClassification;
 import dev.faultora.model.identifier.RunId;
 import dev.faultora.model.security.EvidencePolicy;
@@ -264,6 +265,35 @@ class PreparedRunTest {
         prepared.requireCurrent(request(), b);
         assertThat(prepared.preparationDigest()).isEqualTo(
                 PreparedRun.prepare(request(), b, Duration.ofMinutes(1)).preparationDigest());
+    }
+
+    @Test
+    void bothExtensionLimitsBelongToThePreparedRunIdentity() {
+        String type = "fixture-check";
+        String digest = "sha256:" + "a".repeat(64);
+        Path artifact = directory.resolve("fixture.jar");
+        var request = request();
+        var approved = withAssertion(new IsolatedAssertion(type, digest, artifact, 384, 50));
+        var prepared = PreparedRun.prepare(request, approved, Duration.ofMinutes(1));
+
+        prepared.requireCurrent(request, withAssertion(new IsolatedAssertion(type, digest, artifact, 384, 50)));
+        changed(prepared, request, withAssertion(new IsolatedAssertion(type, digest, artifact, 512, 50)));
+        changed(prepared, request, withAssertion(new IsolatedAssertion(type, digest, artifact, 384, 100)));
+        changed(prepared, request, withAssertion(new IsolatedAssertion(type, digest, artifact, true)));
+
+        var sandboxOnly = withAssertion(new IsolatedAssertion(type, digest, artifact, true));
+        var preparedWithoutLimits = PreparedRun.prepare(request, sandboxOnly, Duration.ofMinutes(1));
+        preparedWithoutLimits.requireCurrent(request,
+                withAssertion(new IsolatedAssertion(type, digest, artifact, true, null)));
+        changed(preparedWithoutLimits, request, approved);
+        assertThatThrownBy(() -> new IsolatedAssertion(type, digest, artifact, false, new ExtensionResourceLimits(384, 50)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("require OS sandboxing");
+    }
+
+    private PreparedRun.Settings withAssertion(IsolatedAssertion approval) {
+        var base = settings();
+        return new PreparedRun.Settings(base.bindings(), base.connectors(), base.allowPrivate(), base.faultTypes(), approval);
     }
 
     private PreparedRun.Settings configured(Object policy) {

@@ -1,11 +1,10 @@
 package dev.faultora.cli;
 
-import dev.faultora.runtime.IsolatedAssertion;
-
 import dev.faultora.model.catalog.SafetyClassification;
 import dev.faultora.model.identifier.RunId;
 import dev.faultora.model.security.EvidencePolicy;
 import dev.faultora.runner.LocalLimits;
+import dev.faultora.runtime.IsolatedAssertion;
 import dev.faultora.runtime.RunEvidence;
 import dev.faultora.spec.parser.DurationSyntax;
 
@@ -13,6 +12,7 @@ import java.net.URI;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -139,6 +139,8 @@ record RunnerOptions(
         List<String> allowedExtensions = new java.util.ArrayList<>();
         IsolatedAssertion isolatedAssertion = null;
         boolean requireOsSandbox = false;
+        Integer extensionMemoryMiB = null;
+        Integer extensionCpuPercent = null;
         Path healthFile = null;
         long shutdownGraceMs = DEFAULT_SHUTDOWN_GRACE_MS;
         boolean once = false;
@@ -186,6 +188,10 @@ record RunnerOptions(
                 case IsolatedAssertionOption.FLAG ->
                         isolatedAssertion = IsolatedAssertionOption.parse(remaining, isolatedAssertion);
                 case "--require-extension-sandbox" -> requireOsSandbox = true;
+                case "--extension-memory-mib" ->
+                        extensionMemoryMiB = extensionBound(remaining, option, extensionMemoryMiB, Integer.MAX_VALUE);
+                case "--extension-cpu-percent" ->
+                        extensionCpuPercent = extensionBound(remaining, option, extensionCpuPercent, 100);
                 case "--no-capture-bodies" -> captureBodies = false;
                 case "--no-capture-headers" -> captureHeaders = false;
                 case "--max-evidence-bytes" ->
@@ -226,13 +232,25 @@ record RunnerOptions(
             throw new CliException("--isolated-assertion is only available when serving dispatches",
                     FaultoraCli.EXIT_INVALID_CONFIG);
         }
+        if ((extensionMemoryMiB == null) != (extensionCpuPercent == null)) {
+            throw new CliException("--extension-memory-mib and --extension-cpu-percent must be supplied together",
+                    FaultoraCli.EXIT_INVALID_CONFIG);
+        }
+        if (extensionMemoryMiB != null && !requireOsSandbox) {
+            throw new CliException("Limiting extension resources requires --require-extension-sandbox",
+                    FaultoraCli.EXIT_INVALID_CONFIG);
+        }
         if (requireOsSandbox) {
             if (isolatedAssertion == null || !System.getProperty("os.name").equals("Linux")) {
                 throw new CliException("--require-extension-sandbox requires Linux and --isolated-assertion",
                         FaultoraCli.EXIT_INVALID_CONFIG);
             }
-            isolatedAssertion = new IsolatedAssertion(isolatedAssertion.type(), isolatedAssertion.digest(),
-                    isolatedAssertion.artifact(), true);
+            String type = isolatedAssertion.type();
+            String digest = isolatedAssertion.digest();
+            Path artifact = isolatedAssertion.artifact();
+            isolatedAssertion = extensionMemoryMiB == null
+                    ? new IsolatedAssertion(type, digest, artifact, true)
+                    : new IsolatedAssertion(type, digest, artifact, extensionMemoryMiB, extensionCpuPercent);
         }
 
         require(dispatcherUrl, "--dispatcher", "the address this runner dials out to");
@@ -346,6 +364,21 @@ record RunnerOptions(
         return millis.getAsLong();
     }
 
+    private static int extensionBound(Iterator<String> remaining, String option, Integer previous, int maximum) {
+        if (previous != null) {
+            throw new CliException(option + " may be supplied once", FaultoraCli.EXIT_INVALID_CONFIG);
+        }
+        try {
+            int bound = Integer.parseInt(value(remaining, option));
+            if (bound > 0 && bound <= maximum) {
+                return bound;
+            }
+        } catch (NumberFormatException invalid) {
+            // Out-of-range and malformed values receive the same configuration error.
+        }
+        throw new CliException(option + " expects an integer from 1 to " + maximum, FaultoraCli.EXIT_INVALID_CONFIG);
+    }
+
     private static long positive(String value, String option) {
         try {
             long number = Long.parseLong(value.trim());
@@ -369,7 +402,7 @@ record RunnerOptions(
         }
     }
 
-    private static String value(java.util.Iterator<String> remaining, String option) {
+    private static String value(Iterator<String> remaining, String option) {
         if (!remaining.hasNext()) {
             throw new CliException(
                     option + " needs a value", FaultoraCli.EXIT_INVALID_CONFIG);

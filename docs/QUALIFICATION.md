@@ -40,6 +40,47 @@ supported; the existing local Windows exclusion for `RunnerShutdownTest`
 must never be used for this Linux gate. Report local skips and exclusions
 separately from strict qualification results.
 
+## Offline runner image qualification
+
+Run the image transfer check on a disposable Linux host with Java 21,
+Docker, Buildx, and permission to start a privileged test container. Prepare
+the matching trusted receiver image while the sender is still connected.
+
+```sh
+docker pull docker.io/library/docker:28.5.2-dind@sha256:2a232a42256f70d78e3cc5d2b5d6b3276710a0de0596c145f627ecfae90282ac
+./mvnw -B verify -pl integration-tests -am \
+  -Dtest=OfflineRunnerImageCheck -Dsurefire.failIfNoSpecifiedTests=false
+```
+
+The check builds the native runner image from the current packaged JAR,
+packages it with `offline-bundle.sh`, and sends the archive to a separate
+Docker daemon with an empty image store and only a loopback interface. The
+recipient verifies the sender's fingerprint and bundle checksums before
+loading the image. It compares the platform, filesystem layers, and runtime
+settings, then checks the version and runner help with image pulls and
+networking disabled. The test removes the receiver container and its
+anonymous image-store volume.
+
+This check runs on demand because the receiving daemon needs privileged
+container support. The default Linux qualification includes the separate
+offline CLI bundle check.
+
+## Extension resource qualification
+
+On a Linux host with Bubblewrap, cgroup v2 and a working systemd user manager
+(version 254 or later), run this check from an otherwise idle user session:
+
+```sh
+./mvnw -B verify -pl integration-tests -am \
+  -Dtest=RunnerExtensionResourceCheck -Dsurefire.failIfNoSpecifiedTests=false
+```
+
+It dispatches a synthetic assertion through the packaged runner and reads the
+live limits from the host cgroup. It also checks that the scope is removed at
+the end of the run. The strict Linux profile can run on hosts and containers
+without a systemd user manager, so select this check explicitly when
+qualifying the optional resource limits.
+
 ## Independent installation check
 
 Ask someone who has not used Faultora to follow the published README and
