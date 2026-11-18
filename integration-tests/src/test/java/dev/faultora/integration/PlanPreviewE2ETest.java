@@ -91,6 +91,9 @@ class PlanPreviewE2ETest {
             var preview = new ObjectMapper().readTree(text);
             assertThat(preview.path("compiled").asBoolean()).isEqualTo(compiled);
             assertThat(preview.path("budgets").path("maxRequests").asInt()).isEqualTo(1000);
+            assertThat(preview.path("capabilities").path("limitations"))
+                    .anySatisfy(limitation -> assertThat(limitation.asText())
+                            .isEqualTo("Classpath extensions share the runtime process and its resource limits"));
             assertThat(text).doesNotContain(marker, endpoint, "unresolved-preview-credential");
             assertThat(exchanges).hasValue(0);
             assertThat(Files.readString(sentinel)).isEqualTo("previous run must survive");

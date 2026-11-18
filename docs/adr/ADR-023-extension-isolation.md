@@ -111,3 +111,15 @@ owned marker/halt policy; this does not add a second termination mechanism.
   and a slice that implements a control while leaving its entry there would
   refuse a policy it can now keep. The tests name each entry, so removing one
   is a deliberate edit rather than an oversight.
+
+## Operator-approved assertions
+
+The packaged CLI and runner now accept one digest-approved assertion through
+`--isolated-assertion`. On Linux, the runner can require Bubblewrap for
+filesystem, process and network isolation and configure dedicated cgroup v2
+memory, CPU and task limits. The operator supplies this configuration locally.
+See the [runner security profile](../SECURITY.md#separate-jvm-assertions).
+
+The general `ExtensionPolicy` path for classpath extensions still rejects
+process isolation and per-extension resource requests. Preview and MCP
+capability descriptions identify that boundary explicitly.

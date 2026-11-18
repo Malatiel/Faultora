@@ -38,6 +38,9 @@ class McpToolsTest {
                             """));
             assertThat(result.path("structuredContent").path("runtime").path("faultTypes"))
                     .isEqualTo(policy.path("allowedFaultTypes"));
+            assertThat(result.path("structuredContent").path("runtime").path("limitations"))
+                    .anySatisfy(limitation -> assertThat(limitation.asText())
+                            .isEqualTo("Classpath extensions share the runtime process and its resource limits"));
             var catalog = tools.call("describe_catalog", McpJson.MAPPER.createObjectNode().put("catalogId", "demo"));
             assertThat(catalog.path("isError").asBoolean()).isFalse();
             assertThat(catalog.path("structuredContent").path("operations").get(0).path("id").asText()).isEqualTo("read");

@@ -3,6 +3,7 @@ import importlib.util
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -67,6 +68,51 @@ class ReleaseVerificationTest(unittest.TestCase):
                             ("--source-ref", "refs/tags/v1.2.3")):
             self.assertEqual(command[command.index(flag) + 1], value)
         self.assertIn("--deny-self-hosted-runners", command)
+
+    def test_manifest_and_artifact_use_the_same_attestation_requirements(self):
+        attestation = Attestation()
+        VERIFIER.verify(self.archive, self.sums, TAG, repo="example/project", source_digest="abc123",
+                        run=attestation, require_sums_attestation=True)
+        self.assertEqual([command[3] for command in attestation.commands], [str(self.sums), str(self.archive)])
+        for command in attestation.commands:
+            self.assertEqual(command[:3], ["gh", "attestation", "verify"])
+            self.assertEqual(command[4:], [
+                "--repo", "example/project",
+                "--signer-workflow", "example/project/.github/workflows/release.yml",
+                "--source-ref", "refs/tags/v1.2.3",
+                "--deny-self-hosted-runners", "--source-digest", "abc123",
+            ])
+
+    def test_manifest_attestation_failure_refuses_the_release(self):
+        attestation = Attestation(exit_code=1)
+        with self.assertRaisesRegex(ValueError, "attestation refused: SHA256SUMS"):
+            VERIFIER.verify(self.archive, self.sums, TAG, run=attestation, require_sums_attestation=True)
+        self.assertEqual([command[3] for command in attestation.commands], [str(self.sums)])
+
+    def test_a_valid_manifest_attestation_does_not_replace_the_artifact_attestation(self):
+        attestation = Attestation()
+
+        def attest_manifest_only(command, check):
+            attestation(command, check)
+            return subprocess.CompletedProcess(command, int(command[3] != str(self.sums)))
+
+        with self.assertRaisesRegex(ValueError, "attestation refused: faultora-1.2.3.tar.gz"):
+            VERIFIER.verify(self.archive, self.sums, TAG, run=attest_manifest_only, require_sums_attestation=True)
+        self.assertEqual([command[3] for command in attestation.commands], [str(self.sums), str(self.archive)])
+
+    def test_manifest_attestation_conflicts_with_checksum_only(self):
+        attestation = Attestation()
+        with self.assertRaisesRegex(ValueError, "cannot combine.*checksum-only"):
+            VERIFIER.verify(self.archive, self.sums, TAG, run=attestation, checksum_only=True,
+                            require_sums_attestation=True)
+        self.assertEqual(attestation.commands, [])
+
+        result = subprocess.run(
+            [sys.executable, str(VERIFIER.__file__), str(self.archive), "--sums", str(self.sums), "--tag", TAG,
+             "--checksum-only", "--require-sums-attestation"],
+            capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("not allowed with argument --checksum-only", result.stderr)
 
     def test_a_tampered_file_is_refused_before_any_attestation_is_asked_for(self):
         self.archive.write_bytes(self.archive.read_bytes() + b"tampered")

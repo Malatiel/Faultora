@@ -6,8 +6,11 @@ This is the normative data contract for the process-boundary slice of
 [ADR-023](adr/ADR-023-extension-isolation.md). The fixtures, a **test-only**
 conformance probe and the bounded `faultora-extension-protocol` codec exist.
 The child lifecycle library includes assertion and source importer adapters.
-The CLI and runner still refuse policies that require process isolation.
-The renderer adapter and resource, network and real credential controls remain pending.
+The packaged CLI and runner support one operator-approved isolated assertion
+using [the plugin authoring guide](PLUGIN_AUTHORING.md). On a Linux runner,
+the approved assertion can use [filesystem, network and resource controls](SECURITY.md#separate-jvm-assertions).
+General extension policies requiring process isolation remain refused. The
+renderer adapter and credential value transfer remain pending.
 
 Only `AssertionProvider`, `SourceImporter` and `ReportRenderer` cross this
 boundary. Connectors, fault providers and secret resolvers do not. There is no
