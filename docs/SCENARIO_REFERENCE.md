@@ -61,6 +61,12 @@ The migrator edits the version token and nothing else — comments, key order an
 formatting survive, because a diff nobody can review is not a migration
 anybody will run.
 
+The packaged CLI is exercised before and after migration by
+`ScenarioMigrationE2ETest`. It checks that previews leave the target and
+output directories untouched, that the plan and verdict stay the same for
+both passing and failing assertions, and that the JSON report matches the
+journal on each run.
+
 ## Complete example
 
 ```yaml

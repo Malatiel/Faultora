@@ -291,6 +291,25 @@ class PreparedRunTest {
                 .hasMessageContaining("require OS sandboxing");
     }
 
+    @Test
+    void theOptionalExtensionTaskLimitBelongsToThePreparedRunIdentityWhenConfigured() {
+        String type = "fixture-check";
+        String digest = "sha256:" + "a".repeat(64);
+        Path artifact = directory.resolve("fixture.jar");
+        var request = request();
+        var ordinary = withAssertion(new IsolatedAssertion(type, digest, artifact, 384, 50));
+        var limited = withAssertion(new IsolatedAssertion(type, digest, artifact, 384, 50, 128));
+        var prepared = PreparedRun.prepare(request, limited, Duration.ofMinutes(1));
+
+        prepared.requireCurrent(request, withAssertion(new IsolatedAssertion(type, digest, artifact, 384, 50, 128)));
+        changed(prepared, request, withAssertion(new IsolatedAssertion(type, digest, artifact, 384, 50, 64)));
+        changed(prepared, request, ordinary);
+
+        var beforeTaskLimit = PreparedRun.prepare(request, ordinary, Duration.ofMinutes(1));
+        beforeTaskLimit.requireCurrent(request, withAssertion(new IsolatedAssertion(type, digest, artifact, 384, 50, null)));
+        changed(beforeTaskLimit, request, limited);
+    }
+
     private PreparedRun.Settings withAssertion(IsolatedAssertion approval) {
         var base = settings();
         return new PreparedRun.Settings(base.bindings(), base.connectors(), base.allowPrivate(), base.faultTypes(), approval);

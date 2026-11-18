@@ -141,6 +141,7 @@ record RunnerOptions(
         boolean requireOsSandbox = false;
         Integer extensionMemoryMiB = null;
         Integer extensionCpuPercent = null;
+        Integer extensionMaxTasks = null;
         Path healthFile = null;
         long shutdownGraceMs = DEFAULT_SHUTDOWN_GRACE_MS;
         boolean once = false;
@@ -192,6 +193,8 @@ record RunnerOptions(
                         extensionMemoryMiB = extensionBound(remaining, option, extensionMemoryMiB, Integer.MAX_VALUE);
                 case "--extension-cpu-percent" ->
                         extensionCpuPercent = extensionBound(remaining, option, extensionCpuPercent, 100);
+                case "--extension-max-tasks" ->
+                        extensionMaxTasks = extensionBound(remaining, option, extensionMaxTasks, Integer.MAX_VALUE);
                 case "--no-capture-bodies" -> captureBodies = false;
                 case "--no-capture-headers" -> captureHeaders = false;
                 case "--max-evidence-bytes" ->
@@ -232,6 +235,10 @@ record RunnerOptions(
             throw new CliException("--isolated-assertion is only available when serving dispatches",
                     FaultoraCli.EXIT_INVALID_CONFIG);
         }
+        if (extensionMaxTasks != null && (extensionMemoryMiB == null || extensionCpuPercent == null)) {
+            throw new CliException("--extension-max-tasks requires --extension-memory-mib and --extension-cpu-percent",
+                    FaultoraCli.EXIT_INVALID_CONFIG);
+        }
         if ((extensionMemoryMiB == null) != (extensionCpuPercent == null)) {
             throw new CliException("--extension-memory-mib and --extension-cpu-percent must be supplied together",
                     FaultoraCli.EXIT_INVALID_CONFIG);
@@ -250,7 +257,7 @@ record RunnerOptions(
             Path artifact = isolatedAssertion.artifact();
             isolatedAssertion = extensionMemoryMiB == null
                     ? new IsolatedAssertion(type, digest, artifact, true)
-                    : new IsolatedAssertion(type, digest, artifact, extensionMemoryMiB, extensionCpuPercent);
+                    : new IsolatedAssertion(type, digest, artifact, extensionMemoryMiB, extensionCpuPercent, extensionMaxTasks);
         }
 
         require(dispatcherUrl, "--dispatcher", "the address this runner dials out to");

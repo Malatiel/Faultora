@@ -1,5 +1,6 @@
 import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import subprocess
 import tempfile
@@ -32,6 +33,13 @@ class ReleaseVerificationTest(unittest.TestCase):
         self.root = Path(self.directory.name)
         self.jar = self.root / "faultora-1.2.3.jar"
         self.archive = self.root / "faultora-1.2.3.tar.gz"
+        self.sbom = self.root / "faultora-1.2.3-sbom.json"
+        self.bom = {
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.6",
+            "metadata": {"component": {"group": "dev.faultora", "name": "faultora-parent", "version": "1.2.3"}},
+            "components": [{"type": "library", "name": "synthetic-component", "version": "1.0.0"}],
+        }
         self.sums = self.root / "SHA256SUMS"
         with zipfile.ZipFile(self.jar, "w") as archive:
             archive.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\nImplementation-Version: 1.2.3\r\n\r\n")
@@ -66,6 +74,48 @@ class ReleaseVerificationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "checksum mismatch"):
             VERIFIER.verify(self.archive, self.sums, TAG, run=attestation)
         self.assertEqual(attestation.commands, [])
+
+    def test_accepts_a_listed_cyclonedx_sbom_and_checks_its_attestation(self):
+        self.write_sbom(json.dumps(self.bom))
+        attestation = Attestation()
+        VERIFIER.verify(self.sbom, self.sums, TAG, run=attestation)
+        self.assertEqual(len(attestation.commands), 1)
+
+    def test_refuses_an_sbom_for_a_different_project_or_version(self):
+        component = self.bom["metadata"]["component"]
+        for field, value in (("group", "example"), ("name", "other-parent"), ("version", "9.9.9")):
+            with self.subTest(field=field):
+                expected = component[field]
+                component[field] = value
+                self.write_sbom(json.dumps(self.bom))
+                component[field] = expected
+                attestation = Attestation()
+                with self.assertRaisesRegex(ValueError, "SBOM.*does not describe"):
+                    VERIFIER.verify(self.sbom, self.sums, TAG, run=attestation)
+                self.assertEqual(attestation.commands, [])
+
+    def test_refuses_non_cyclonedx_or_invalid_component_inventory(self):
+        cases = (
+            ("not JSON", "CycloneDX"),
+            ("[]", "CycloneDX"),
+            (json.dumps({**self.bom, "bomFormat": "SPDX"}), "CycloneDX"),
+            (json.dumps({**self.bom, "specVersion": 1.6}), "CycloneDX"),
+            (json.dumps({**self.bom, "metadata": []}), "SBOM.*does not describe"),
+            (json.dumps({**self.bom, "components": {}}), "component inventory"),
+            (json.dumps({**self.bom, "components": []}), "component inventory"),
+            (json.dumps({**self.bom, "components": [{}]}), "component inventory"),
+            (json.dumps({**self.bom, "components": [{"type": "library", "name": ""}]}), "component inventory"),
+            (json.dumps({**self.bom, "components": [{"type": False, "name": "synthetic"}]}), "component inventory"),
+        )
+        for payload, reason in cases:
+            with self.subTest(payload=payload):
+                self.write_sbom(payload)
+                with self.assertRaisesRegex(ValueError, reason):
+                    VERIFIER.verify(self.sbom, self.sums, TAG, checksum_only=True)
+
+    def write_sbom(self, payload):
+        self.sbom.write_text(payload, encoding="utf-8")
+        self.checksum(self.sbom)
 
     def test_a_file_with_a_matching_checksum_but_no_attestation_from_this_release_is_refused(self):
         # A replaced file arrives with a replaced SHA256SUMS: the checksum then

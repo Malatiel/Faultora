@@ -115,6 +115,37 @@ class RunnerOptionsTest {
     }
 
     @Test
+    void extensionTaskLimitRequiresTheCpuAndMemoryLimits() {
+        assertThatThrownBy(() -> parse("--extension-max-tasks", "128"))
+                .isInstanceOf(CliException.class)
+                .hasMessageContaining("--extension-max-tasks requires --extension-memory-mib and --extension-cpu-percent");
+        for (String paired : List.of("--extension-memory-mib", "--extension-cpu-percent")) {
+            assertThatThrownBy(() -> parse("--extension-max-tasks", "128", paired, "50"))
+                    .isInstanceOf(CliException.class)
+                    .hasMessageContaining("--extension-max-tasks requires --extension-memory-mib and --extension-cpu-percent");
+        }
+        assertThatThrownBy(() -> parse("--extension-max-tasks", "128",
+                "--extension-memory-mib", "384", "--extension-cpu-percent", "50"))
+                .isInstanceOf(CliException.class)
+                .hasMessageContaining("requires --require-extension-sandbox");
+    }
+
+    @Test
+    void extensionTaskLimitRejectsMalformedOutOfRangeAndRepeatedValues() {
+        for (String invalid : List.of("0", "-1", "2147483648", "1.5", "128tasks")) {
+            assertThatThrownBy(() -> parse("--extension-max-tasks", invalid))
+                    .isInstanceOf(CliException.class)
+                    .hasMessageContaining("--extension-max-tasks expects an integer from 1");
+        }
+        assertThatThrownBy(() -> parse("--extension-max-tasks"))
+                .isInstanceOf(CliException.class)
+                .hasMessageContaining("--extension-max-tasks needs a value");
+        assertThatThrownBy(() -> parse("--extension-max-tasks", "128", "--extension-max-tasks", "64"))
+                .isInstanceOf(CliException.class)
+                .hasMessageContaining("--extension-max-tasks may be supplied once");
+    }
+
+    @Test
     void linuxRunnerCarriesBothResourceLimitsWithItsApprovedAssertion() {
         String[] args = {"--extension-memory-mib", "384", "--require-extension-sandbox",
                 "--isolated-assertion", "custom-check", "sha256:" + "a".repeat(64), "fixture.jar",
@@ -124,6 +155,15 @@ class RunnerOptionsTest {
             assertThat(approval.requireOsSandbox()).isTrue();
             assertThat(approval.resourceLimits().memoryMiB()).isEqualTo(384);
             assertThat(approval.resourceLimits().cpuPercent()).isEqualTo(50);
+            assertThat(approval.resourceLimits().maxTasks()).isNull();
+
+            List<String> withMaxTasks = new java.util.ArrayList<>(List.of("--extension-max-tasks", "128"));
+            withMaxTasks.addAll(List.of(args));
+            var bounded = parse(withMaxTasks.toArray(String[]::new)).isolatedAssertion();
+            assertThat(bounded.requireOsSandbox()).isTrue();
+            assertThat(bounded.resourceLimits().memoryMiB()).isEqualTo(384);
+            assertThat(bounded.resourceLimits().cpuPercent()).isEqualTo(50);
+            assertThat(bounded.resourceLimits().maxTasks()).isEqualTo(128);
         } else {
             assertThatThrownBy(() -> parse(args))
                     .isInstanceOf(CliException.class)

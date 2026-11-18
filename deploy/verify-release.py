@@ -2,9 +2,9 @@
 """Verify a downloaded Faultora release file before using it.
 
 Two questions, answered in order. Are these the bytes the release lists? The
-file must have exactly one SHA-256 entry in the release's SHA256SUMS, and a JAR
-must also name the release version. Did this project's release workflow build
-them, for this tag? GitHub's attestation for the file must have been signed by
+file must have exactly one SHA-256 entry in the release's SHA256SUMS. A JAR or
+SBOM must also identify the release version. Did this project's release workflow
+build them for this tag? GitHub's attestation for the file must have been signed by
 .github/workflows/release.yml, from refs/tags/<tag>, on a GitHub-hosted runner.
 
 A checksum alone detects a damaged download; anyone who can replace the file
@@ -15,6 +15,7 @@ and that mode says it has not checked authenticity.
 
 import argparse
 import hashlib
+import json
 from pathlib import Path
 import re
 import subprocess
@@ -51,6 +52,8 @@ def verify_checksum(artifact: Path, checksums: Path, tag: str) -> None:
         raise ValueError("checksum mismatch: " + artifact.name + " is not the file the release lists")
     if artifact.suffix == ".jar":
         verify_jar_version(artifact, version)
+    elif artifact.name == f"faultora-{version}-sbom.json":
+        verify_sbom_identity(artifact, version)
 
 
 def verify_jar_version(jar: Path, version: str) -> None:
@@ -66,6 +69,33 @@ def verify_jar_version(jar: Path, version: str) -> None:
                 for line in manifest.splitlines() if line.startswith("Implementation-Version: ")]
     if versions != [version]:
         raise ValueError("release JAR version does not match the tag")
+
+
+def verify_sbom_identity(sbom: Path, version: str) -> None:
+    try:
+        bom = json.loads(sbom.read_text(encoding="utf-8"))
+    except (ValueError, RecursionError) as error:
+        raise ValueError("release SBOM is not valid CycloneDX JSON") from error
+    spec_version = bom.get("specVersion") if isinstance(bom, dict) else None
+    if (not isinstance(spec_version, str) or not re.fullmatch(r"[1-9][0-9]*\.[0-9]+", spec_version)
+            or bom.get("bomFormat") != "CycloneDX"):
+        raise ValueError("release SBOM is not a CycloneDX JSON document")
+
+    metadata = bom.get("metadata")
+    component = metadata.get("component") if isinstance(metadata, dict) else None
+    if (not isinstance(component, dict)
+            or (component.get("group"), component.get("name"), component.get("version"))
+            != ("dev.faultora", "faultora-parent", version)):
+        raise ValueError("release SBOM does not describe Faultora " + version)
+
+    components = bom.get("components")
+    if not isinstance(components, list) or not components:
+        raise ValueError("release SBOM must contain a nonempty component inventory")
+    for entry in components:
+        if (not isinstance(entry, dict)
+                or not all(isinstance(value, str) and value.strip()
+                           for value in (entry.get("name"), entry.get("type")))):
+            raise ValueError("release SBOM component inventory entries require a name and type")
 
 
 def attestation_command(artifact: Path, tag: str, repo: str, source_digest=None):

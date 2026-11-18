@@ -14,6 +14,7 @@ All notable changes to Faultora are documented in this file.
   process and network isolation for the approved assertion provider.
 - Linux runners can set both `--extension-memory-mib` and `--extension-cpu-percent`
   with the required extension sandbox to bound the approved assertion's cgroup.
+  They can add `--extension-max-tasks` to cap processes and threads in that group.
 - The qualification guide includes a checklist for first-time reviewers to
   install the published archive and run a synthetic scenario.
 
