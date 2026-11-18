@@ -1,10 +1,12 @@
 package dev.faultora.cli;
 
 import dev.faultora.model.events.RunEvent;
+import dev.faultora.runtime.IsolatedRenderer;
 import dev.faultora.spi.contract.ReportRenderer;
 
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -24,6 +26,22 @@ import java.util.Map;
 final class ReportWriter {
 
     private ReportWriter() {
+    }
+
+    static void writeIsolated(
+            IsolatedRenderer.Prepared renderer, List<RunEvent> events, Path outputDir, PrintWriter out
+    ) throws IOException {
+        StringWriter text = new StringWriter();
+        renderer.render(events, text);
+        Path reportPath = outputDir.resolve("report." + renderer.format() + ".txt");
+        Path staged = Files.createTempFile(outputDir, ".report-", ".tmp");
+        try {
+            Files.writeString(staged, text.toString(), StandardCharsets.UTF_8);
+            Files.move(staged, reportPath);
+        } finally {
+            Files.deleteIfExists(staged);
+        }
+        out.println("Report written: " + reportPath);
     }
 
     static void writeAll(

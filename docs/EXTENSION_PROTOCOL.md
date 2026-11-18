@@ -5,12 +5,16 @@
 This is the normative data contract for the process-boundary slice of
 [ADR-023](adr/ADR-023-extension-isolation.md). The fixtures, a **test-only**
 conformance probe and the bounded `faultora-extension-protocol` codec exist.
-The child lifecycle library includes assertion and source importer adapters.
+The child lifecycle library includes assertion, source importer and report
+renderer adapters.
 The packaged CLI and runner support one operator-approved isolated assertion
 using [the plugin authoring guide](PLUGIN_AUTHORING.md). On a Linux runner,
 the approved assertion can use [filesystem, network and resource controls](SECURITY.md#separate-jvm-assertions).
-General extension policies requiring process isolation remain refused. The
-renderer adapter and credential value transfer remain pending.
+General extension policies requiring process isolation remain refused.
+The packaged CLI also supports one [operator-approved text renderer](PLUGIN_AUTHORING.md#author-an-isolated-text-renderer)
+with `test --isolated-renderer`. The isolated source importer is available to
+callers of the child lifecycle library.
+Credential value transfer requires a separate trust contract.
 
 Only `AssertionProvider`, `SourceImporter` and `ReportRenderer` cross this
 boundary. Connectors, fault providers and secret resolvers do not. There is no
@@ -218,10 +222,12 @@ by the caller, which must discard the channel after a refusal and enforce I/O
 deadlines. Handshake state, provider payloads, process start/stop and policy
 enforcement are not implemented by the codec.
 
-Tests compare assertion and import payloads with the wire fixtures and
-exercise both adapters with a real child. The remaining slices cover the
-renderer adapter, resource, network and real credential controls, and packaged
-plugin qualification. Existing ADR-023 policy refusals remain in effect.
+Tests compare assertion, import and render payloads with the wire fixtures
+and exercise the three adapters with real children. The packaged assertion
+path qualifies verified artifact loading and the optional Linux runner
+sandbox. Packaged renderer tests qualify preflight refusal, export-projected
+events and report publication. The existing ADR-023 refusals continue to apply
+to general extension policies.
 
 ## Child lifecycle implementation
 
@@ -252,6 +258,19 @@ checks the result shape, and a refused or malformed response yields an
 import failure with a fixed diagnostic and no catalog. Ordinary importer
 messages remain untrusted data for the caller. Before compilation, the
 caller validates catalog semantics and applies destination and operation policy.
+
+`ExtensionReportRenderer` selects one format and loads one artifact-local
+`ReportRenderer`. The host supplies export-projected events with the usual
+journal field types. Serialization and the child writer are bounded, and the
+frame codec checks exact encoded size. The child returns a text field, with
+the destination and output policy owned by the host. A refused, malformed or
+over-budget reply fails rendering before writing plugin output. Renderer text
+remains untrusted data under the host's publication policy. The packaged CLI
+verifies a capability-free provider in one bounded preflight JVM before
+running the scenario. It starts a fresh bounded JVM from the same staged
+artifact to render the journal's export-projected events. The CLI publishes
+`report.<format>.txt` after a successful render and retains the journal and
+any requested built-in reports if the custom render fails.
 
 For a synthetic assertion fixture, the caller can supply the declared handle
 IDs and an explicit allowlist at startup. Each set holds up to 32 IDs. IDs

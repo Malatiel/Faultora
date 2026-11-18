@@ -157,11 +157,16 @@ public final class PreparedRun {
         IsolatedAssertion isolated = settings.isolatedAssertion();
         boolean usesIsolated = isolated != null && !cancellation.get() && assertionChecks().stream()
                 .anyMatch(check -> check.assertionType().equals(isolated.type()));
-        try (RunEnvironment environment = RunEnvironment.open(result.compilation().plan(),
-                faultProviders, request.extensions(), settings.allowPrivate(), usesIsolated ? isolated : null)) {
-            Settings execution = snapshot(settings);
-            return environment.engine().execute(result.compilation().plan(), journal,
-                    execution.bindings(), execution.connectors(), cancellation);
+        try (RunTelemetry.Observation telemetry = RunTelemetry.observe()) {
+            RunResult outcome;
+            try (RunEnvironment environment = RunEnvironment.open(result.compilation().plan(),
+                    faultProviders, request.extensions(), settings.allowPrivate(), usesIsolated ? isolated : null)) {
+                Settings execution = snapshot(settings);
+                outcome = environment.engine().execute(result.compilation().plan(), journal,
+                        execution.bindings(), execution.connectors(), cancellation);
+            }
+            telemetry.completed(outcome.status());
+            return outcome;
         }
     }
 

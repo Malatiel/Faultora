@@ -1,6 +1,7 @@
 package dev.faultora.cli;
 
 import dev.faultora.runtime.IsolatedAssertion;
+import dev.faultora.runtime.IsolatedRenderer;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -36,6 +37,7 @@ import java.util.Map;
  * @param inputs        values for declared scenario inputs
  * @param allowedExtensions classes of non-built-in extensions this run permits
  * @param isolatedAssertion a digest-approved assertion extension, or null
+ * @param isolatedRenderer a digest-approved text renderer extension, or null
  * @param helpRequested whether the user asked for help instead of a run
  * @param preview      whether to describe the plan without executing it
  */
@@ -58,6 +60,7 @@ record TestOptions(
         Map<String, Object> inputs,
         List<String> allowedExtensions,
         IsolatedAssertion isolatedAssertion,
+        IsolatedRenderer isolatedRenderer,
         boolean helpRequested,
         boolean preview
 ) {
@@ -88,6 +91,7 @@ record TestOptions(
         Map<String, Object> inputs = new LinkedHashMap<>();
         List<String> allowedExtensions = new ArrayList<>();
         IsolatedAssertion isolatedAssertion = null;
+        IsolatedRenderer isolatedRenderer = null;
 
         Iterator<String> it = args.iterator();
         while (it.hasNext()) {
@@ -121,6 +125,7 @@ record TestOptions(
                         allowedExtensions.add(requireNext(it, "--allow-extension"));
                 case IsolatedAssertionOption.FLAG ->
                         isolatedAssertion = IsolatedAssertionOption.parse(it, isolatedAssertion);
+                case "--isolated-renderer" -> isolatedRenderer = parseIsolatedRenderer(it, isolatedRenderer);
                 case "--input", "-i" -> {
                     String pair = requireNext(it, "--input");
                     int separator = pair.indexOf('=');
@@ -151,12 +156,20 @@ record TestOptions(
             throw new CliException("--isolated-assertion cannot be combined with --preview or --allow-extension",
                     FaultoraCli.EXIT_INVALID_CONFIG);
         }
+        if (isolatedRenderer != null && (preview || !allowedExtensions.isEmpty())) {
+            throw new CliException("--isolated-renderer cannot be combined with --preview or --allow-extension",
+                    FaultoraCli.EXIT_INVALID_CONFIG);
+        }
+        if (isolatedRenderer != null && !formats.contains(isolatedRenderer.format())) {
+            throw new CliException("--isolated-renderer requires a matching --format",
+                    FaultoraCli.EXIT_INVALID_CONFIG);
+        }
 
         return new TestOptions(
                 scenarioPath, openApiPath, asyncApiPath, observationsPath,
                 databaseUser, databaseSecretId, targetUrl, Map.copyOf(targetUrls), formats,
                 outputDir, seed, allowPrivate, allowDestructive, authSecretId, toxiproxyUrl,
-                Map.copyOf(inputs), List.copyOf(allowedExtensions), isolatedAssertion, false, preview);
+                Map.copyOf(inputs), List.copyOf(allowedExtensions), isolatedAssertion, isolatedRenderer, false, preview);
     }
 
     /**
@@ -177,7 +190,23 @@ record TestOptions(
     private static TestOptions help() {
         return new TestOptions(
                 null, null, null, null, null, null, DEFAULT_TARGET_URL, Map.of(), List.of(), Path.of("."),
-                0, false, false, null, null, Map.of(), List.of(), null, true, false);
+                0, false, false, null, null, Map.of(), List.of(), null, null, true, false);
+    }
+
+    private static IsolatedRenderer parseIsolatedRenderer(Iterator<String> it, IsolatedRenderer existing) {
+        String flag = "--isolated-renderer";
+        if (existing != null) {
+            throw new CliException(flag + " can be supplied only once", FaultoraCli.EXIT_INVALID_CONFIG);
+        }
+        String format = requireNext(it, flag);
+        String digest = requireNext(it, flag);
+        String artifact = requireNext(it, flag);
+        try {
+            return new IsolatedRenderer(format, digest, Path.of(artifact));
+        } catch (IllegalArgumentException invalid) {
+            throw new CliException(flag + " requires a custom format, SHA-256 digest and JAR",
+                    FaultoraCli.EXIT_INVALID_CONFIG);
+        }
     }
 
     private static List<String> parseFormats(String value) {

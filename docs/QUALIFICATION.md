@@ -1,5 +1,8 @@
 # Qualification
 
+For release candidates, use the [1.0 qualification record](RELEASE_QUALIFICATION.md)
+to pin the source and artifacts and collect independent acceptance evidence.
+
 ## Linux qualification
 
 The default build supports local development without Docker or `lsof`. Such
@@ -29,8 +32,10 @@ The profile refuses non-Linux systems. Missing Docker or `lsof` fails the
 required test condition rather than disabling its suite. Container/image
 startup errors remain test failures. The report gate requires fresh reports
 for all five Docker suites, runner socket isolation, Unix signal shutdown,
-the runner's extension sandbox, scenario migration with both outcomes, and
-startup of the CLI offline bundle in a separate network namespace.
+the runner's extension sandbox, scenario migration with both outcomes,
+opt-in telemetry from the packaged CLI and runner, approved renderer JARs in the
+packaged CLI, and startup of the CLI
+offline bundle in a separate network namespace.
 It also refuses failures, errors and skips in any suite,
 including newly added suites. `clean` and the invocation timestamp keep old
 reports from substituting for tests omitted from the current invocation.

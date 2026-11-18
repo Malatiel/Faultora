@@ -17,6 +17,12 @@ All notable changes to Faultora are documented in this file.
   They can add `--extension-max-tasks` to cap processes and threads in that group.
 - The qualification guide includes a checklist for first-time reviewers to
   install the published archive and run a synthetic scenario.
+- Operators can opt in to run-level OpenTelemetry traces and metrics through
+  `FAULTORA_OTLP_ENDPOINT`.
+- `faultora test --isolated-renderer` runs one digest-approved custom text
+  report provider in a separate JVM.
+- A GitLab CI example validates merge requests and runs the scenario on the
+  protected default branch.
 
 ## 0.13.0 — 2026-11-11
 

@@ -7,8 +7,6 @@ import dev.faultora.extension.process.StagedArtifact;
 import dev.faultora.spi.contract.AssertionProvider;
 
 import java.io.IOException;
-import java.net.URISyntaxException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
@@ -57,12 +55,10 @@ public record IsolatedAssertion(
     AssertionProvider open(List<AutoCloseable> opened) {
         Path bootstrap = bootstrapJar();
         try {
-            Path temporary = Path.of(System.getProperty("java.io.tmpdir")).toRealPath();
-            StagedArtifact staged = StagedArtifact.copy(artifact, digest, temporary);
+            StagedArtifact staged = IsolatedPluginArtifact.stage(artifact, digest);
             opened.add(staged);
             var manifest = PluginArtifact.stagedManifest(staged.artifact());
-            if (!manifest.requiresApi().admits(FaultoraVersion.current())
-                    || !manifest.capabilities().asked().isEmpty()) {
+            if (!IsolatedPluginArtifact.compatibleAndCapabilityFree(manifest)) {
                 throw new Refused("The assertion extension must support this Faultora version and declare no capabilities");
             }
             var declaration = new ExtensionProcess.Declaration(manifest.id(), manifest.version(),
@@ -92,19 +88,11 @@ public record IsolatedAssertion(
     }
 
     private static Path bootstrapJar() {
-        var runtime = IsolatedAssertion.class.getProtectionDomain().getCodeSource();
-        var child = ExtensionProcess.class.getProtectionDomain().getCodeSource();
-        if (runtime != null && child != null
-                && runtime.getLocation().toExternalForm().equals(child.getLocation().toExternalForm())) {
-            try {
-                Path path = Path.of(runtime.getLocation().toURI()).toRealPath();
-                if (Files.isRegularFile(path)) {
-                    return path;
-                }
-            } catch (IOException | URISyntaxException | IllegalArgumentException unavailable) {
-                throw new Refused("The packaged assertion bootstrap cannot be located");
-            }
+        try {
+            return IsolatedPluginArtifact.packagedBootstrap().orElseThrow(
+                    () -> new Refused("Isolated assertions require the packaged Faultora CLI JAR"));
+        } catch (IOException unavailable) {
+            throw new Refused("The packaged assertion bootstrap cannot be located");
         }
-        throw new Refused("Isolated assertions require the packaged Faultora CLI JAR");
     }
 }

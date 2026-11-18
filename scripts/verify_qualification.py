@@ -15,6 +15,8 @@ REQUIRED = {
     "dev.faultora.integration.RunnerExtensionSandboxE2ETest": 1,
     "dev.faultora.integration.OfflineBundleNetworkE2ETest": 1,
     "dev.faultora.integration.ScenarioMigrationE2ETest": 2,
+    "dev.faultora.integration.IsolatedRendererE2ETest": 4,
+    "dev.faultora.integration.TelemetryE2ETest": 5,
     "dev.faultora.cli.RunnerIsolationTest": 2,
     "dev.faultora.cli.RunnerShutdownTest": 2,
 }
