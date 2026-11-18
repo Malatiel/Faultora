@@ -1,6 +1,6 @@
 # What Faultora includes
 
-Everything below is in the 0.13.0 release. The [README](../README.md) shows how
+Everything below is in the 1.0.0 release. The [README](../README.md) shows how
 to start; this page lists what is there once you have.
 
 Scenario execution:
@@ -51,8 +51,10 @@ Scenario execution:
 - `validate` imports the catalogs a run would use, so a catalog `test` would
   refuse is refused before anything runs, and importer warnings — a skipped
   server, a deprecated version — are reported instead of dropped;
-- `init` writes a starter scenario that runs as generated, and a first run
-  against localhost, or with an ID left out, says which flag or input to add;
+- `init` writes a runnable starter for operations that need no input. If all
+  operations need input, add an API step and assertion to the editable starter.
+  A first run against localhost, or with an ID left out, says which flag or
+  input to add.
   [troubleshooting](TROUBLESHOOTING.md) walks through each failure class;
 - ZIP and tar.gz archives with Windows and Linux launchers, using an existing
   Java; see [Installing the CLI](INSTALLATION.md);

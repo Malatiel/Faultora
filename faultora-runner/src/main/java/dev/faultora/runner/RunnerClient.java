@@ -66,16 +66,26 @@ public final class RunnerClient {
 
     public RunnerClient(URI controlPlane, TlsMaterial tls, String runnerId, String agentVersion,
                         Set<String> capabilities, boolean durableDelivery) {
-        if (durableDelivery && (!"https".equalsIgnoreCase(controlPlane.getScheme())
-                || controlPlane.getHost() == null || controlPlane.getUserInfo() != null)) {
-            throw new IllegalArgumentException("Durable delivery requires an HTTPS dispatcher without user info");
-        }
-        this.controlPlane = controlPlane;
+        this.controlPlane = requireDispatcherOrigin(controlPlane);
         this.tls = tls;
         this.runnerId = runnerId;
         this.agentVersion = agentVersion;
         this.capabilities = Set.copyOf(capabilities);
         this.durableDelivery = durableDelivery;
+    }
+
+    /**
+     * Validate the origin used by every dispatcher request under either protocol.
+     * The runner selects the request paths and requires mTLS for the connection.
+     */
+    public static URI requireDispatcherOrigin(URI address) {
+        if (address == null || !"https".equalsIgnoreCase(address.getScheme()) || address.getHost() == null
+                || address.getRawUserInfo() != null || address.getRawQuery() != null || address.getRawFragment() != null
+                || address.getPort() == 0 || address.getPort() > 65535 || address.getRawAuthority().endsWith(":")
+                || !(address.getRawPath().isEmpty() || "/".equals(address.getRawPath()))) {
+            throw new IllegalArgumentException("Dispatcher requires an HTTPS origin (https://host[:port])");
+        }
+        return address;
     }
 
     /**

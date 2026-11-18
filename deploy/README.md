@@ -16,26 +16,80 @@ is arranged to keep it.
 
 ## What an operator has to provide
 
-Four things, and three of them are files.
+Bring a dispatcher that implements the [runner protocol](../docs/RUNNER_PROTOCOL.md).
+It receives registration and results and issues signed work over mutual TLS.
+Use the local CLI or CI integration when you do not have a dispatcher. The
+repository's qualification dispatcher is a test fixture. The bundled
+controller is scheduled for 2.0.
 
 | | What | Why it is separate |
 |---|---|---|
+| `--dispatcher` | An HTTPS origin with an optional port | Identifies the server whose certificate must match the configured host |
 | `--keystore` | This runner's own identity, PKCS#12 | Proves which runner is speaking |
-| `--truststore` | The control planes it will speak to | Proves which control plane it reached |
-| `--policy-key <id>=<file>` | The certificate a signed policy is verified against | Terminating TLS is something an infrastructure component may legitimately be given; issuing a policy that says which faults may be injected is not, so the file that grants the second does not arrive with the first |
-| `FAULTORA_SECRET_RUNNER_TLS` | The key material's password | Resolved from the runner's own environment. A dispatch names handles and never values |
+| `--truststore` | PKCS#12 store containing the trusted dispatcher certificates or issuers | Verifies the dispatcher's server certificate |
+| `--policy-key <id>=<file>` | The dispatcher policy-signing certificate in X.509 format, with the key ID used in its signed policy | Keeps authority to sign a policy separate from authority to terminate TLS |
+| `FAULTORA_SECRET_RUNNER_TLS` | The password shared by the two PKCS#12 stores and the runner's private-key entry | The runner resolves the local `runner-tls` handle from its environment |
 
-All of them are read when they are used, so **rotating any of them is replacing
-a file**. Nothing needs restarting, which matters for the thing least
-convenient to reach.
+Issue the runner's client identity through the PKI trusted by the dispatcher.
+Keep its private key on the runner side and mount both stores and the policy
+certificate read-only. Provision the password through the platform's secret
+mechanism. Validate the dispatcher CA against your PKI before importing it in
+`trusted.p12`. When performing an in-place file rotation, keep the same
+store password and policy key ID. The next TLS connection reads the new
+stores and the next verification reads the policy certificate. A password
+change requires recreating the runner process with the new environment and
+the corresponding stores.
 
-Issue them the way the tests do:
+## Start and verify a deployment
 
-```bash
-keytool -genkeypair -alias runner -keyalg RSA -keysize 2048 \
-        -dname CN=runner -validity 365 -ext SAN=dns:runner.internal \
-        -keystore runner.p12 -storetype PKCS12
+Choose an image from [Runner images](../docs/RUNNER_IMAGE.md), either built
+locally or pulled using its verified digest. Before the first dispatch,
+restrict the runner's outbound network to the dispatcher and the intended
+test systems. For targets on private or loopback addresses, deliberately add
+`--allow-private` to the runner arguments. This permits private destinations
+at the connector layer. Narrow the reachable network, pass `--allow-target`
+for each permitted target ID, and have the dispatcher sign the intended
+targets and endpoints. Keep these controls in place even if the dispatcher is
+inside the same private network.
+
+For Compose, place `runner.p12` and `trusted.p12` under `deploy/tls/` and the
+policy certificate under `deploy/keys/`. Update the policy key argument to
+match the dispatcher. Set `FAULTORA_DISPATCHER` to its HTTPS origin and
+provide `FAULTORA_SECRET_RUNNER_TLS` through the environment. Set
+`FAULTORA_RUNNER_IMAGE` to use a verified digest in place of the locally
+built tag.
+
+```sh
+docker compose -f deploy/docker-compose.yml config --quiet
+docker compose -f deploy/docker-compose.yml up -d
+docker compose -f deploy/docker-compose.yml exec -T runner \
+  java -jar /opt/faultora/faultora.jar health \
+  --file /var/faultora/health.json --require-registered
 ```
+
+For Kubernetes, create the `faultora` namespace and provision the
+`faultora-runner-tls` Secret with keys `runner.p12`, `trusted.p12` and
+`password`. Provision the policy certificate in the
+`faultora-policy-keys` ConfigMap. Set the image digest, dispatcher origin
+and policy key in `kubernetes/runner.yaml`. Update and apply the egress
+policy for your CNI and deployment before starting the pod. The sample
+`emptyDir` storage is suitable for smoke tests. For persistent operation,
+give each runner its own PersistentVolumeClaim and stable `--runner-id`,
+and use a rollout such as `Recreate` that prevents two writers from
+sharing one work directory.
+
+```sh
+kubectl apply -f deploy/kubernetes/network-policy.yaml
+kubectl apply -f deploy/kubernetes/runner.yaml
+kubectl -n faultora rollout status deployment/faultora-runner
+```
+
+Readiness confirms registration. For the first run, dispatch a read-only
+scenario against an approved test target and check receipt of its journal
+and final result. If the runner stays unready, inspect the container logs
+for the registration refusal and see [Troubleshooting](../docs/TROUBLESHOOTING.md#a-runner-that-cannot-start).
+The [work directory guide](../docs/RUNNER_SPOOL.md) covers retaining,
+backing up and restoring the evidence and replay state.
 
 ## What this deployment permits
 
@@ -125,8 +179,8 @@ the fingerprint and every listed file, the verification script included, with
 the system's own `sha256sum`:
 
 ```bash
-tar xzf faultora-0.13.0-offline.tar.gz
-cd faultora-0.13.0-offline
+tar xzf faultora-1.0.0-offline.tar.gz
+cd faultora-1.0.0-offline
 FINGERPRINT=the-recorded-64-hex-digits
 echo "${FINGERPRINT}  SHA256SUMS" | sha256sum -c - && sha256sum -c --quiet SHA256SUMS
 ```
@@ -147,8 +201,8 @@ On the connected side, use a Faultora checkout to verify the downloaded
 release JAR and its checksum manifest before building the bundle:
 
 ```bash
-python3 deploy/verify-release.py faultora-0.13.0.jar --sums SHA256SUMS \
-  --tag v0.13.0 --require-sums-attestation
+python3 deploy/verify-release.py faultora-1.0.0.jar --sums SHA256SUMS \
+  --tag v1.0.0 --require-sums-attestation
 ```
 
 This checks the release workflow, tag and hosted runner for both subjects.

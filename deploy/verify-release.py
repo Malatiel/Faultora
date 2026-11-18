@@ -135,7 +135,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("file", type=Path, help="downloaded release file")
     parser.add_argument("--sums", type=Path, required=True, help="SHA256SUMS from the same release")
-    parser.add_argument("--tag", required=True, help="release tag, for example v0.13.0")
+    parser.add_argument("--tag", required=True, help="release tag, for example v1.0.0")
     parser.add_argument("--repo", default=DEFAULT_REPO)
     parser.add_argument("--source-digest", help="also require this source commit")
     mode = parser.add_mutually_exclusive_group()

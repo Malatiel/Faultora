@@ -2,7 +2,7 @@
 
 This page says what problem Faultora is meant to solve, for whom, what it
 deliberately does not do, and what is not yet proven. Each capability named
-here is in the 0.13.0 release and links to where it is documented or
+here is in the 1.0.0 release and links to where it is documented or
 tested. A statement about who needs it
 is marked as a hypothesis until users outside the project have confirmed it.
 
@@ -156,8 +156,6 @@ reviewable evidence, self-hosted — rather than any one part.
 
 ## What is not yet proven
 
-Faultora is a technical preview (0.13.0). Before 1.0:
-
 - **Whether a person new to Faultora gets to a first useful result unaided**
   has not been measured. In a first trial an AI assistant with no prior
   context, given only the MCP server and these documents, found a defect
@@ -165,9 +163,10 @@ Faultora is a technical preview (0.13.0). Before 1.0:
   got in its way; that is one trial, not a measure.
 - **Whether the people described above need this** has not been confirmed by
   anyone outside the project.
-- **Extension isolation is still at library level.** Verified child adapters
-  cover assertions and source imports. The CLI refuses a policy that requires
-  process isolation ([ADR-023](adr/ADR-023-extension-isolation.md)).
+- **Extension permissions depend on the host profile.** The local CLI runs
+  approved assertions and text renderers in a child JVM with the caller's
+  filesystem and network permissions. A Linux runner can require OS isolation
+  for approved assertions. See [extension isolation](SECURITY.md#sec-08--extension-isolation).
 - **Restart delivery requires protocol 2.** A runner can resume sending a
   committed terminal and its journal when the dispatcher selects version 2.
   The receiver has been exercised in the qualification fixture. A run cut off

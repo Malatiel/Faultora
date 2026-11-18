@@ -2,7 +2,12 @@
 
 All notable changes to Faultora are documented in this file.
 
-## Unreleased
+## 1.0.0
+
+Faultora 1.0 stabilizes the scenario and result contracts for local and CI
+reliability testing. The local MCP server prepares scenarios and can execute
+approved work in configured test environments. The private-network runner
+works with an operator-provided dispatcher.
 
 ### Added
 
@@ -23,6 +28,17 @@ All notable changes to Faultora are documented in this file.
   report provider in a separate JVM.
 - A GitLab CI example validates merge requests and runs the scenario on the
   protected default branch.
+- A preparation-only MCP quickstart uses a bundled example without a signing
+  key or an active service. The approved execution profile remains available.
+
+### Fixed
+
+- MCP can page through large catalogs and preserve a complete plan preview
+  when the catalog summary would exceed the response limit.
+- `faultora init` explains when an editable starter has no API requests or
+  assertions and needs input before it exercises a service.
+- Both runner protocols require an HTTPS dispatcher origin. Invalid addresses
+  are refused before connecting and their values are omitted from diagnostics.
 
 ## 0.13.0 — 2026-11-11
 

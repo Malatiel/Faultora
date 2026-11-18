@@ -17,7 +17,51 @@ reference for every tool, field and limit.
   A `PASS` or `FAIL` can still reveal whether a response value met the
   assertion's condition.
 
-## Set it up (operator)
+## Try preparation without keys or a running service
+
+Use the [CLI release archive](INSTALLATION.md), Java 21 and a local MCP
+client. The archive includes the scenario reference and example API
+contracts. Its JAR is in `lib/` below the extracted directory.
+
+Create a working directory. Copy `examples/payment-service/openapi.yaml`
+from the archive into it as `payments.openapi.yaml`, and save this as
+`operator.json` in the same directory.
+
+```json
+{
+  "catalogs": [
+    {"id": "payments", "family": "openapi", "path": "payments.openapi.yaml"}
+  ],
+  "allowedOperationClasses": ["READ_ONLY"]
+}
+```
+
+Use the [client connection commands below](#connect-the-assistant) with
+the absolute paths to your JAR and `operator.json`. Ask the assistant to
+call `list_capabilities` and `describe_catalog`, then send this YAML to
+`prepare_run` with `catalogIds: ["payments"]`.
+
+```yaml
+apiVersion: faultora.dev/v1
+kind: Scenario
+metadata: {name: payment-list-preview}
+execute:
+  - id: list
+    operationId: list-payments
+assertions:
+  - id: payment-list-returns-200
+    assertionType: status
+    targetStep: list
+    params: {expected: 200}
+```
+
+A working connection lists `payments` and reports `executionAvailable:
+false`. The preparation returns a compiled preview of `list-payments`
+without contacting a target. There are three tools in this profile. Ask
+the assistant to save the YAML to reuse it in the CLI or CI. For approved
+execution over MCP, continue with the operator setup.
+
+## Enable approved execution (operator)
 
 You need the CLI release, Java 21, the API description, and a test
 environment the run may reach.
@@ -71,11 +115,13 @@ $publicKeyPath = (Resolve-Path -LiteralPath 'operator.pub.der').ProviderPath
 The run's target is the server URL in the API description; MCP cannot
 redirect it. Point that URL at the test environment.
 
-**3. Connect the assistant.** The server is a subprocess speaking MCP over
-stdio:
+## Connect the assistant
+
+The server is a subprocess speaking MCP over stdio. Use the operator
+configuration for either preparation or approved execution.
 
 ```bash
-java -jar /path/to/faultora-0.13.0.jar mcp --config /path/to/operator.json
+java -jar /path/to/faultora-1.0.0.jar mcp --config /path/to/operator.json
 ```
 
 For Claude Code, put this in `.mcp.json` in the folder the assistant works in:
@@ -85,7 +131,7 @@ For Claude Code, put this in `.mcp.json` in the folder the assistant works in:
   "mcpServers": {
     "faultora": {
       "command": "java",
-      "args": ["-jar", "/path/to/faultora-0.13.0.jar", "mcp", "--config", "/path/to/operator.json"]
+      "args": ["-jar", "/path/to/faultora-1.0.0.jar", "mcp", "--config", "/path/to/operator.json"]
     }
   }
 }
@@ -94,7 +140,7 @@ For Claude Code, put this in `.mcp.json` in the folder the assistant works in:
 For the Codex CLI:
 
 ```bash
-codex mcp add faultora -- java -jar /path/to/faultora-0.13.0.jar mcp --config /path/to/operator.json
+codex mcp add faultora -- java -jar /path/to/faultora-1.0.0.jar mcp --config /path/to/operator.json
 ```
 
 Use absolute paths, including the path to `java` if the client does not
@@ -118,7 +164,7 @@ and processes, including shell commands, from reaching the targets. See
    agree, sign with the IDs and digest from that response.
 
    ```bash
-   java -jar faultora-0.13.0.jar mcp approve --private-key operator.der \
+   java -jar faultora-1.0.0.jar mcp approve --private-key operator.der \
      --prepared-id <preparedId> --digest <preparationDigest> --run-id <runId> --expires-in 300
    ```
 
@@ -178,15 +224,37 @@ a planted defect in an unfamiliar service through this server:
   documentation through a web fetch that paraphrased its YAML examples; the
   [JSON Schema](schema/scenario-v1.schema.json) of the format gives exact
   field names and types to check a draft against.
-- **Keep the YAML.** To replay a scenario with `faultora test` in CI, use the
-  same catalog, target and seed, and match the MCP run's execution options,
-  including permissions for private targets or destructive operations.
+- **Share the contract as well as the goal.** `describe_catalog` returns
+  operation IDs and permissions. For parameter names, required inputs and
+  response shapes, give the assistant access to the operator-approved API
+  contract or a redacted excerpt. Keep credentials and private deployment
+  details out of that material.
+
+## Take the scenario to the CLI or CI
+
+Save the prepared scenario as `scenario.yaml` and keep its API contract,
+scenario inputs and seed together. Validate it from the same directory:
+
+```sh
+faultora validate --scenario scenario.yaml --openapi payments.openapi.yaml
+faultora test --preview --scenario scenario.yaml --openapi payments.openapi.yaml --seed 0
+```
+
+For an actual run, remove `--preview`, keep the target and seed, and select
+`--format console,html` with a fresh output directory. Use the CLI's target
+and permission options for your environment, including explicit permission
+for private targets or destructive operations. An API requiring
+authentication uses the CLI's [secret handles](../README.md#credentials).
+The [CI examples](../README.md#ci-integration) show how to publish the
+reports from the same files.
 
 ## A brief to give the assistant
 
 ```text
 Faultora is connected as the MCP server "faultora". Use it to check whether
 <service> keeps <promise>. Start with list_capabilities and describe_catalog.
+Use the approved API contract or ask me for a redacted excerpt with the
+required parameters and response shape. Save the scenario YAML.
 Write faultora.dev/v1 scenarios (reference: docs/SCENARIO_REFERENCE.md;
 shape: docs/schema/scenario-v1.schema.json). Use prepare_run. When one
 compiles, stop and ask me to approve it, giving preparedId,

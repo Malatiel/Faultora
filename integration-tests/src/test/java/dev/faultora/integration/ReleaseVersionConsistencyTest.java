@@ -39,6 +39,8 @@ class ReleaseVersionConsistencyTest {
             Pattern.compile("VERSION=\"\\$\\{1:-" + SEMVER + "}\""),
             Pattern.compile("FAULTORA_VERSION=" + SEMVER),
             Pattern.compile("FAULTORA_VERSION: '" + SEMVER + "'"),
+            Pattern.compile("--tag\\s+v" + SEMVER),
+            Pattern.compile("(?m)^  (?:from|to): \"" + SEMVER + "\"$"),
             Pattern.compile("\\$version = '" + SEMVER + "'"),
             Pattern.compile("Version " + SEMVER + " is a runnable"),
             Pattern.compile("## What " + SEMVER + " includes"),
@@ -52,7 +54,7 @@ class ReleaseVersionConsistencyTest {
     private static final List<String> FILES = List.of(
             "README.md", "examples/README.md", "examples/catalog-service/README.md", "docs/INSTALLATION.md", "Dockerfile", "deploy/docker-compose.yml", "deploy/offline-bundle.sh",
             "deploy/kubernetes/runner.yaml", "deploy/README.md",
-            "docs/CLI_DIAGNOSTICS.md", "docs/MCP.md", "docs/RELEASE_PLAN.md",
+            "docs/CLI_DIAGNOSTICS.md", "docs/MCP.md", "docs/PLUGIN_AUTHORING.md", "docs/RELEASE_PLAN.md",
             "docs/SCENARIO_REFERENCE.md", "docs/WHY.md", "docs/FEATURES.md", "docs/AI_ASSISTANTS.md",
             "examples/github-actions/faultora.yml", "examples/gitlab-ci/faultora.yml");
 
@@ -75,6 +77,13 @@ class ReleaseVersionConsistencyTest {
                     }
                 }
             }
+        }
+        // The previous JAR is a pinned historical baseline. Check only the candidate path.
+        Matcher candidate = Pattern.compile("FAULTORA_NEXT_JAR=[^\\r\\n]*faultora-" + SEMVER + "\\.jar")
+                .matcher(Files.readString(root.resolve("docs/UPGRADE_ROLLBACK.md"), StandardCharsets.UTF_8));
+        assertThat(candidate.find()).as("the rollback guide names the candidate JAR").isTrue();
+        if (!candidate.group(1).equals(version)) {
+            mismatches.add("docs/UPGRADE_ROLLBACK.md: '" + candidate.group() + "'");
         }
 
         assertThat(mentions).as("the patterns still find the release mentions").isGreaterThan(20);

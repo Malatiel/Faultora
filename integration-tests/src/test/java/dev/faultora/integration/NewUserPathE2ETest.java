@@ -83,6 +83,35 @@ class NewUserPathE2ETest {
         assertThat(output).contains("Scenario is VALID", "Catalog is VALID");
     }
 
+    @Test
+    void initExplainsWhenTheStarterNeedsEditsBeforeItCanTestTheService() throws Exception {
+        Path openApi = Files.writeString(directory.resolve("required-inputs.yaml"), """
+                openapi: 3.0.3
+                info: {title: Synthetic, version: '1'}
+                paths:
+                  /items/{id}:
+                    get:
+                      operationId: get-item
+                      parameters:
+                        - {name: id, in: path, required: true, schema: {type: string}}
+                      responses:
+                        '200': {description: Item found}
+                """);
+
+        Ran init = faultora("init", "--from-openapi", openApi.toString(), "--output", "edit-first");
+        assertThat(init.exit()).as(init.stderr()).isZero();
+        assertThat(init.stdout())
+                .contains("zero requests and zero assertions", "Replace the placeholder", "faultora validate")
+                .doesNotContain("faultora test");
+
+        Path scenario = directory.resolve("edit-first/scenario.yaml");
+        assertThat(Files.readString(scenario))
+                .contains("get-item: needs id under inputs", "Replace this placeholder", "type: wait")
+                .doesNotContain("operationId:");
+        Ran validated = faultora("validate", "--scenario", scenario.toString(), "--openapi", openApi.toString());
+        assertThat(validated.exit()).as(validated.stderr()).isZero();
+    }
+
     private static boolean windows() {
         return System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT).contains("win");
     }

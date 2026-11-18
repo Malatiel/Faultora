@@ -4,6 +4,7 @@ import dev.faultora.model.catalog.SafetyClassification;
 import dev.faultora.model.identifier.RunId;
 import dev.faultora.model.security.EvidencePolicy;
 import dev.faultora.runner.LocalLimits;
+import dev.faultora.runner.RunnerClient;
 import dev.faultora.runtime.IsolatedAssertion;
 import dev.faultora.runtime.RunEvidence;
 import dev.faultora.spec.parser.DurationSyntax;
@@ -163,7 +164,7 @@ record RunnerOptions(
                 case "--help", "-h" -> {
                     return help();
                 }
-                case "--dispatcher" -> dispatcherUrl = uri(value(remaining, option), option);
+                case "--dispatcher" -> dispatcherUrl = dispatcherOrigin(value(remaining, option));
                 case "--keystore" -> keystore = Path.of(value(remaining, option));
                 case "--truststore" -> truststore = Path.of(value(remaining, option));
                 case "--tls-secret-id" -> tlsSecretId = value(remaining, option);
@@ -261,11 +262,6 @@ record RunnerOptions(
         }
 
         require(dispatcherUrl, "--dispatcher", "the address this runner dials out to");
-        if (durableDelivery && (!"https".equalsIgnoreCase(dispatcherUrl.getScheme())
-                || dispatcherUrl.getHost() == null || dispatcherUrl.getUserInfo() != null)) {
-            throw new CliException("--durable-delivery requires an HTTPS dispatcher without user info",
-                    FaultoraCli.EXIT_INVALID_CONFIG);
-        }
         require(keystore, "--keystore", "this runner's own key material");
         require(truststore, "--truststore",
                 "the control planes this runner will speak to");
@@ -400,12 +396,12 @@ record RunnerOptions(
         }
     }
 
-    private static URI uri(String value, String option) {
+    private static URI dispatcherOrigin(String value) {
         try {
-            return URI.create(value);
-        } catch (IllegalArgumentException notAUri) {
-            throw new CliException(
-                    option + " expects a URL; got: " + value, FaultoraCli.EXIT_INVALID_CONFIG);
+            return RunnerClient.requireDispatcherOrigin(URI.create(value));
+        } catch (IllegalArgumentException invalid) {
+            throw new CliException("--dispatcher requires an HTTPS origin (https://host[:port])",
+                    FaultoraCli.EXIT_INVALID_CONFIG);
         }
     }
 

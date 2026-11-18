@@ -1,7 +1,7 @@
 .faultora:
   image: eclipse-temurin:21-jdk
   variables:
-    FAULTORA_VERSION: '0.13.0'
+    FAULTORA_VERSION: '1.0.0'
   before_script:
     - |
       set -eu
