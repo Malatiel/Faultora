@@ -1,6 +1,6 @@
 # Scenario reference
 
-This page documents the scenario format implemented by Faultora 0.13.0. The
+This page documents the scenario format implemented by Faultora 1.0.0. The
 format is versioned independently from the application:
 
 ```yaml
@@ -10,7 +10,7 @@ kind: Scenario
 
 Faultora rejects unsupported versions, missing required fields, duplicate step
 IDs, unknown references, dependency cycles, and execution features that are not
-available in 0.13.0.
+available in 1.0.0.
 
 A [JSON Schema](schema/scenario-v1.schema.json) lets editors and AI
 assistants check scenario fields, types and basic limits while editing.
@@ -129,7 +129,7 @@ cleanup:
 Validate a document before running it:
 
 ```bash
-java -jar faultora-0.13.0.jar validate --scenario scenario.yaml
+java -jar faultora-1.0.0.jar validate --scenario scenario.yaml
 ```
 
 Give it the catalogs the run will use and it imports them as `test` does,
@@ -138,7 +138,7 @@ two documents declaring one name — fails `validate` with the same exit code,
 and importer warnings are printed.
 
 ```bash
-java -jar faultora-0.13.0.jar validate --scenario scenario.yaml \
+java -jar faultora-1.0.0.jar validate --scenario scenario.yaml \
   --openapi openapi.yaml --asyncapi asyncapi.yaml --observations observations.yaml
 ```
 
@@ -1184,8 +1184,13 @@ What holds for every observation:
 - **the server is a target**, so `--target ledger=jdbc:…` redirects an
   observation to a test database exactly as `--target` redirects an API.
 
-The released executable ships the PostgreSQL driver. Another database means
-building the CLI with its driver on the classpath.
+The released executable ships the PostgreSQL driver. Use a URL with one
+explicit host and optional port, such as
+`jdbc:postgresql://db.example.com:5432/payments`. Put the destination in the
+URL authority. Faultora refuses host lists and PostgreSQL URL options that
+replace the destination or select a custom connection mechanism. Use ASCII
+for option names, such as `sslmode`. Another database means building the CLI
+with its driver on the classpath.
 
 A complete catalog, and the scenarios that use it, live in
 [`examples/payment-recovery`](../examples/payment-recovery) — the same files the

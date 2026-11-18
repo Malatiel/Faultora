@@ -3,8 +3,10 @@ package dev.faultora.connector.jdbc;
 import dev.faultora.net.DestinationPolicyViolation;
 import dev.faultora.net.HostPolicy;
 
+import java.net.URI;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * A database URL, checked against the destination policy.
@@ -29,6 +31,13 @@ import java.util.Locale;
 record JdbcUrl(String value, String host) {
 
     private static final String SCHEME = "jdbc:";
+    private static final String POSTGRESQL_SCHEME = "jdbc:postgresql:";
+    private static final String POSTGRESQL_NETWORK_PREFIX = POSTGRESQL_SCHEME + "//";
+    private static final Set<String> POSTGRESQL_ROUTING_OPTIONS = Set.of(
+            "host", "pghost", "port", "pgport", "service",
+            "socketfactory", "socketfactoryarg", "sslfactory", "sslfactoryarg",
+            "sslhostnameverifier", "connectexecutor", "connectexecutorarg",
+            "classloaderstrategy", "authenticationpluginclassname", "sslpasswordcallback");
 
     /**
      * Subprotocols that reach no network, so a URL of theirs needs no host.
@@ -56,7 +65,7 @@ record JdbcUrl(String value, String host) {
             throw new DestinationPolicyViolation(
                     "A database URL must begin 'jdbc:'");
         }
-        String host = hostOf(url);
+        String host = url.startsWith(POSTGRESQL_SCHEME) ? postgresqlHostOf(url) : hostOf(url);
         if (host == null) {
             String lowercase = url.toLowerCase(Locale.ROOT);
             if (IN_PROCESS.stream().noneMatch(lowercase::startsWith)) {
@@ -75,6 +84,46 @@ record JdbcUrl(String value, String host) {
                     "Database host " + host + " is refused: " + decision.reason());
         }
         return new JdbcUrl(url, host);
+    }
+
+    private static String postgresqlHostOf(String url) {
+        int databasePath = url.indexOf('/', POSTGRESQL_NETWORK_PREFIX.length());
+        int query = url.indexOf('?');
+        if (!url.startsWith(POSTGRESQL_NETWORK_PREFIX) || databasePath < 0
+                || (query >= 0 && query < databasePath)) {
+            throw missingPostgresqlHost();
+        }
+        String authority = url.substring(POSTGRESQL_NETWORK_PREFIX.length(), databasePath);
+        URI destination;
+        try {
+            destination = URI.create("postgresql://" + authority);
+        } catch (IllegalArgumentException invalid) {
+            throw missingPostgresqlHost();
+        }
+        if (destination.getHost() == null || !authority.equals(destination.getRawAuthority())
+                || destination.getRawUserInfo() != null || authority.endsWith(":")
+                || destination.getPort() == 0 || destination.getPort() > 65_535) {
+            throw missingPostgresqlHost();
+        }
+        if (query >= 0) {
+            // The driver applies URL properties after parsing the authority.
+            for (String option : url.substring(query + 1).split("&")) {
+                int assignment = option.indexOf('=');
+                String name = assignment < 0 ? option : option.substring(0, assignment);
+                if (name.chars().anyMatch(character -> character > 0x7f)) {
+                    throw new DestinationPolicyViolation("PostgreSQL JDBC option names must use ASCII");
+                }
+                if (POSTGRESQL_ROUTING_OPTIONS.contains(name.toLowerCase(Locale.ROOT))) {
+                    throw new DestinationPolicyViolation(
+                            "Choose the PostgreSQL JDBC destination in the URL authority and omit routing options");
+                }
+            }
+        }
+        return destination.getHost();
+    }
+
+    private static DestinationPolicyViolation missingPostgresqlHost() {
+        return new DestinationPolicyViolation("A PostgreSQL JDBC URL requires one explicit database host and optional port");
     }
 
     /**
@@ -96,13 +145,15 @@ record JdbcUrl(String value, String host) {
         int end = authority.length();
         for (int index = 0; index < authority.length(); index++) {
             char character = authority.charAt(index);
-            if (character == '/' || character == '?' || character == ';'
-                    || character == ',') {
+            if (character == '/' || character == '?' || character == ';') {
                 end = index;
                 break;
             }
         }
         authority = authority.substring(0, end);
+        if (authority.indexOf(',') >= 0) {
+            throw new DestinationPolicyViolation("A JDBC URL requires one explicit database host");
+        }
 
         int credentials = authority.lastIndexOf('@');
         String host = credentials < 0

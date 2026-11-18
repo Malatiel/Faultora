@@ -1,17 +1,18 @@
-# A runner beside the system it tests, on a network that reaches nothing else.
+# A runner beside the system it tests. See README.md for required TLS
+# material, dispatcher configuration, and outbound network restrictions.
 #
-#   ./mvnw -o package -DskipTests
-#   docker build --build-arg JAR=faultora-cli/target/faultora-0.13.0.jar \
-#                -t faultora/runner:0.13.0 .
-#   FAULTORA_SECRET_RUNNER_TLS=... docker compose -f deploy/docker-compose.yml up
+#   ./mvnw -B -ntp package -pl faultora-cli -am -DskipTests
+#   docker build --build-arg JAR=faultora-cli/target/faultora-1.0.0.jar \
+#                -t faultora/runner:1.0.0 .
+#   export FAULTORA_DISPATCHER=https://dispatcher.example.test:8443
+#   # Provide FAULTORA_SECRET_RUNNER_TLS through the environment before starting.
+#   docker compose -f deploy/docker-compose.yml up -d
 #
-# Nothing here publishes a port. The runner dials the control plane; there is
-# no path into this network from outside it, which is the property the whole
-# arrangement exists for and is visible as the absence of a `ports:` key.
+# The runner dials out. This deployment publishes no ports.
 
 services:
   runner:
-    image: faultora/runner:0.13.0
+    image: ${FAULTORA_RUNNER_IMAGE:-faultora/runner:1.0.0}
     command:
       - runner
       - --dispatcher

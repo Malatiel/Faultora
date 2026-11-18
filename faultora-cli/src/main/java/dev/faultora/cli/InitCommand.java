@@ -97,19 +97,28 @@ public class InitCommand implements Command {
                         + " or move the file away; init does not overwrite it.");
                 return FaultoraCli.EXIT_INVALID_CONFIG;
             }
-            String scenario = generateScenario(catalog);
+            GeneratedScenario scenario = generateScenario(catalog);
             ioStage = CliDiagnostic.Code.ARTIFACT_WRITE_FAILED;
             Files.createDirectories(scenarioPath.toAbsolutePath().getParent());
-            Files.writeString(scenarioPath, scenario);
+            Files.writeString(scenarioPath, scenario.yaml());
             output.out().println("Generated scenario: " + scenarioPath);
             output.out().println();
             output.out().println("Next:");
-            String files = "--scenario " + quoted(scenarioPath, POWERSHELL)
-                    + " --openapi " + quoted(openApiPath, POWERSHELL);
-            output.out().println("  faultora validate " + files);
-            output.out().println("  faultora test " + files + " --target <base-url> --preview");
-            output.out().println("  faultora test " + files + " --target <base-url> --format console,html");
-            output.out().println("Add --allow-private when the target is localhost or another private address.");
+            String scenarioArgument = quoted(scenarioPath, POWERSHELL);
+            String files = "--scenario " + scenarioArgument + " --openapi " + quoted(openApiPath, POWERSHELL);
+            String validate = "  faultora validate " + files;
+            if (scenario.hasOperations()) {
+                output.out().println(validate);
+                output.out().println("  faultora test " + files + " --target <base-url> --preview");
+                output.out().println("  faultora test " + files + " --target <base-url> --format console,html");
+                output.out().println("Add --allow-private when the target is localhost or another private address.");
+            } else {
+                output.out().println("  This starter contains a placeholder, with zero requests and zero assertions.");
+                output.out().println("  Replace the placeholder in " + scenarioArgument
+                        + " with an operation and fill in its required inputs.");
+                output.out().println("  Add an assertion for the response you expect.");
+                output.out().println(validate);
+            }
             if (POWERSHELL && files.contains("'")) {
                 output.out().println("The paths above are quoted for PowerShell.");
             }
@@ -122,8 +131,10 @@ public class InitCommand implements Command {
         }
     }
 
+    private record GeneratedScenario(String yaml, boolean hasOperations) { }
+
     /**
-     * A starter scenario that runs as generated.
+     * A starter scenario that runs as generated when it includes an operation.
      * <p>
      * It used to list every operation, so the first test of a typical API was
      * refused outright for its DELETE and then failed on every GET that needs
@@ -131,7 +142,7 @@ public class InitCommand implements Command {
      * nothing filled in; the others are listed with what they are missing, as
      * a comment the author can turn into a step.
      */
-    static String generateScenario(ApiCatalog catalog) {
+    private static GeneratedScenario generateScenario(ApiCatalog catalog) {
         List<OperationDefinition> runnable = new ArrayList<>();
         List<String> heldBack = new ArrayList<>();
         for (OperationDefinition op : catalog.operations()) {
@@ -155,6 +166,7 @@ public class InitCommand implements Command {
         }
         sb.append("execute:\n");
         if (runnable.isEmpty()) {
+            sb.append("  # Replace this placeholder with an operation and supply its required inputs.\n");
             sb.append("  - id: placeholder\n");
             sb.append("    type: wait\n");
             sb.append("    timeout: 1ms\n");
@@ -173,7 +185,7 @@ public class InitCommand implements Command {
             sb.append("      expected: ").append(expectedStatus(first)).append("\n");
             sb.append("    targetStep: ").append(first.id().value()).append("\n");
         }
-        return sb.toString();
+        return new GeneratedScenario(sb.toString(), !runnable.isEmpty());
     }
 
     /** Whether the commands printed here are for PowerShell rather than a POSIX shell. */

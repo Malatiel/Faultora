@@ -3,11 +3,13 @@
 This is the reference for every tool, field and limit. To connect an assistant
 and get to a first approved run, start with
 [using Faultora with an AI assistant](AI_ASSISTANTS.md).
+Its preparation-only quickstart uses the archived example contract and
+needs only Java 21 and a client.
 
 Start the packaged CLI as a subprocess:
 
 ```sh
-java -jar faultora-0.13.0.jar mcp --config operator.json
+java -jar faultora-1.0.0.jar mcp --config operator.json
 ```
 
 The configuration is an operator-controlled local JSON file:
@@ -52,14 +54,24 @@ supports it. The newer 2026-07-28 binding is not implemented.
 - describe_catalog takes {"catalogId":"payments"}. It returns target IDs,
   protocols, operation IDs, safety classes, static permission and the same
   `operatorPolicy` object. Use each operation's `permitted` flag to account
-  for target and protocol restrictions as well as its safety class.
+  for target and protocol restrictions as well as its safety class. The tool
+  leaves input definitions, response schemas, examples and source values in
+  the API contract. When the default result reaches the size limit, it returns
+  the first page. Supply the same catalog ID and the returned `nextOffset` as
+  `offset` until a page omits `nextOffset`. An explicit `offset: 0` requests a
+  page even for a small catalog. A page contains up to 32 operations, their
+  targets and the `totalOperations` count.
 - prepare_run takes scenario (ordinary faultora.dev/v1 YAML), catalogIds (1–16
   unique declared IDs), optional seed (signed 64-bit integer, default 0), and
   optional inputs (an object of ordinary declared values). Unknown inputs and
   missing required values are refused; declared defaults match CLI behavior.
   A successful result has preparedId, preparationDigest, catalogDigest, runId,
   maxLifetimeMs, executionAuthorized=false and a structural preview. The maximum
-  lifetime starts when sealing begins; it is not a fresh TTL granted at receipt.
+  lifetime starts when sealing begins. If the catalog topology would push the
+  result over the size limit, the preview includes `catalog: null` and
+  `catalogOmitted: true`. Use `describe_catalog` for the topology and review
+  every action, budget and fault from the preview before approval. If those
+  fields still exceed the limit, split the scenario into smaller preparations.
 
 All argument schemas reject additional fields. A client cannot pass a source
 path, target redirect, extension permission, output directory or confirmation
@@ -134,7 +146,7 @@ Review the actual scenario, catalog and preparation preview, then sign its exact
 identity in a separate operator context with a PKCS#8 DER Ed25519 private key:
 
 ```sh
-java -jar faultora-0.13.0.jar mcp approve --private-key operator.der \
+java -jar faultora-1.0.0.jar mcp approve --private-key operator.der \
   --prepared-id <preparedId> --digest <preparationDigest> --run-id <runId> --expires-in 60
 ```
 

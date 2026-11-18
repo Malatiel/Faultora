@@ -35,7 +35,7 @@ attestation, or a missing `gh`, stops before anything is extracted or run; the
 chain does not close your shell when it stops.
 
 ```sh
-FAULTORA_VERSION=0.13.0
+FAULTORA_VERSION=1.0.0
 archive="faultora-${FAULTORA_VERSION}.tar.gz"
 grep " ${archive}\$" SHA256SUMS | sha256sum --check --strict - &&
 gh attestation verify "$archive" --repo Malatiel/Faultora \
@@ -49,10 +49,11 @@ cd "faultora-${FAULTORA_VERSION}" &&
   --openapi examples/payment-service/openapi.yaml
 ```
 
-For a local build, use the archive in `faultora-cli/target/` and omit the
-release checksum step. Validation reads local files and does not contact the
-example service. Running a scenario with `test` needs its target service and
-any other dependencies described by the example.
+For an archive you built locally, use `faultora-cli/target/` and start at the
+`tar` command. For an unpublished candidate shared by the maintainer, compare
+its SHA-256 with the hash you received through a trusted channel before
+extracting it. Validation reads local files. Running a scenario with `test`
+needs the target service and the dependencies described by its example.
 
 The launcher works from another working directory too. Its JAR path is
 relative to the launcher, while scenario paths remain relative to your current
@@ -75,7 +76,7 @@ extract and run the archive.
 ```powershell
 & {
     $ErrorActionPreference = 'Stop'
-    $version = '0.13.0'
+    $version = '1.0.0'
     $archive = "faultora-$version.zip"
     $entries = @(Get-Content -LiteralPath SHA256SUMS |
         Where-Object { $_ -match ("^[0-9a-f]{64}  " + [regex]::Escape($archive) + '$') })
@@ -97,9 +98,10 @@ extract and run the archive.
 }
 ```
 
-For a local build, use the ZIP in `faultora-cli\target\` and omit the release
-checksum step. An invalid `JAVA_HOME` causes the launcher to fail rather than
-silently select a different runtime. Unset it to select Java from `PATH`.
+For a ZIP you built locally, use `faultora-cli\target\` and start at
+`Expand-Archive`. For an unpublished candidate shared by the maintainer,
+compare its SHA-256 with the hash you received through a trusted channel
+before extracting it. Unset an invalid `JAVA_HOME` to select Java from `PATH`.
 
 ## Verifying a download
 

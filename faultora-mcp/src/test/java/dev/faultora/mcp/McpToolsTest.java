@@ -52,6 +52,69 @@ class McpToolsTest {
     }
 
     @Test
+    void aLargeCatalogListsOperationsInBoundedPagesWithoutDroppingAny() throws Exception {
+        try (var tools = new McpTools(largeCatalog())) {
+            var ids = new java.util.HashSet<String>();
+            var schema = tools.definitions().path("tools").get(1).path("inputSchema");
+            assertThat(schema.path("properties").has("offset")).isTrue();
+            var arguments = McpJson.MAPPER.createObjectNode().put("catalogId", "demo");
+            var result = tools.call("describe_catalog", arguments);
+            do {
+                assertThat(result.path("isError").asBoolean()).isFalse();
+                assertThat(result.toString()).doesNotContain(McpFixtures.MARKER, "api.example.com");
+                var page = result.path("structuredContent");
+                assertThat(page.path("totalOperations").asInt()).isEqualTo(1001);
+                assertThat(page.path("operations")).isNotEmpty();
+                for (var operation : page.path("operations")) {
+                    assertThat(ids.add(operation.path("id").asText())).isTrue();
+                    assertThat(page.path("targets").get(0).path("id")).isEqualTo(operation.path("target"));
+                }
+                if (!page.has("nextOffset")) {
+                    break;
+                }
+                assertThat(page.path("nextOffset").asInt()).isEqualTo(ids.size());
+                result = tools.call("describe_catalog", arguments.put("offset", ids.size()));
+            } while (ids.size() < 1001);
+            assertThat(ids).hasSize(1001).contains("read", "getSyntheticNumber999");
+            var invalid = tools.call("describe_catalog", arguments.put("offset", 1002));
+            assertThat(invalid.path("structuredContent").path("code").asText()).isEqualTo("INVALID_ARGUMENT");
+        }
+    }
+
+    @Test
+    void aSmallPlanInALargeCatalogRetainsTheFullActionPreview() throws Exception {
+        try (var tools = new McpTools(largeCatalog())) {
+            var result = tools.call("prepare_run", arguments(McpFixtures.SCENARIO));
+            assertThat(result.path("isError").asBoolean()).isFalse();
+            var data = result.path("structuredContent");
+            assertThat(data.path("preparationDigest").asText()).startsWith("sha256:");
+            assertThat(data.path("executionAuthorized").asBoolean()).isFalse();
+            var preview = data.path("preview");
+            assertThat(preview.path("compiled").asBoolean()).isTrue();
+            assertThat(preview.path("catalog").isNull()).isTrue();
+            assertThat(preview.path("catalogOmitted").asBoolean()).isTrue();
+            assertThat(preview.path("actions")).hasSize(1);
+            assertThat(preview.path("actions").get(0).path("operationId").asText()).isEqualTo("read");
+            assertThat(preview.path("budgets").path("maxRequests").asInt()).isEqualTo(1000);
+            assertThat(result.toString()).doesNotContain(McpFixtures.MARKER, "api.example.com");
+        }
+    }
+
+    private static McpConfiguration largeCatalog() {
+        var source = new StringBuilder(McpFixtures.CATALOG);
+        for (int index = 0; index < 1000; index++) {
+            source.append("""
+                      /synthetic/%d:
+                        get:
+                          operationId: getSyntheticNumber%d
+                          responses: {'200': {description: synthetic}}
+                    """.formatted(index, index));
+        }
+        return new McpConfiguration(Map.of("demo", new CatalogAssembly.Document("openapi", source.toString())),
+                McpFixtures.policy());
+    }
+
+    @Test
     void catalogAndPolicyFieldsFromToolArgumentsCannotWidenAuthority() throws Exception {
         try (var tools = new McpTools(McpFixtures.configuration())) {
             for (String id : java.util.List.of("unknown", "../outside", "file:///outside", McpFixtures.MARKER)) {
@@ -231,7 +294,7 @@ class McpToolsTest {
     }
 
     @Test
-    void oversizedCatalogDescriptionsAreRefusedWithoutExportingPartialData() throws Exception {
+    void oversizedCatalogDescriptionsReturnABoundedPageAndContinuation() throws Exception {
         StringBuilder catalog = new StringBuilder("openapi: 3.0.3\ninfo: {title: synthetic, version: '1'}\npaths:\n");
         for (int index = 0; index < 1500; index++) {
             catalog.append("  /read").append(index).append(":\n    get:\n      operationId: read")
@@ -240,8 +303,12 @@ class McpToolsTest {
         try (var tools = new McpTools(new McpConfiguration(Map.of("demo",
                 new CatalogAssembly.Document("openapi", catalog.toString())), McpFixtures.policy()))) {
             var result = tools.call("describe_catalog", McpJson.MAPPER.createObjectNode().put("catalogId", "demo"));
-            assertThat(result.path("structuredContent").path("code").asText()).isEqualTo("RESULT_TOO_LARGE");
-            assertThat(result.path("structuredContent").has("operations")).isFalse();
+            var data = result.path("structuredContent");
+            assertThat(result.path("isError").asBoolean()).isFalse();
+            assertThat(McpJson.MAPPER.writeValueAsBytes(data).length).isLessThanOrEqualTo(McpJson.MAX_RESULT_BYTES);
+            assertThat(data.path("operations")).hasSize(32);
+            assertThat(data.path("totalOperations").asInt()).isEqualTo(1500);
+            assertThat(data.path("nextOffset").asInt()).isEqualTo(32);
         }
     }
 

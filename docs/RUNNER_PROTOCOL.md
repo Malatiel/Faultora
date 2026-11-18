@@ -1,5 +1,16 @@
 # Runner protocol
 
+## Dispatcher authority
+
+The policy signature authenticates the execution limits and logical target
+IDs. The mTLS-authenticated dispatcher supplies the scenario and inputs, the
+catalogs and their operation classifications, endpoint bindings and target
+credential handles. Include the dispatcher and its TLS termination in the
+deployment's trust boundary for those choices. Scenario and catalog
+digests check consistency with the dispatch. Use network egress rules for
+endpoint restrictions and scoped, least-privilege credentials for targets.
+The runner's mTLS password is available only to the transport.
+
 ## Dispatch replay protection
 
 Both protocol versions require a nonblank nonce of at most 128 UTF-16 code
@@ -42,6 +53,23 @@ tests guard these shapes. New optional fields are additive; mandatory fields,
 type or meaning changes, and incompatible enum changes require a new negotiated
 major. The malformed-registration reason is introduced before this boundary is
 frozen and is a closed-enum change for older strict readers.
+
+Configure the dispatcher as an HTTPS origin with an optional port. The
+runner uses mutual TLS and sends requests to the following paths at that
+origin.
+
+| Request | Input | Response |
+|---|---|---|
+| `POST /runner/register` | `Registration` JSON | `200` with an accepted `Session` or `409` with a refusal `Session` |
+| `GET /runner/work?session=…` | Accepted session ID | `200` with `Dispatch` JSON or `204` when there is no work |
+| `POST /runner/progress` | `Progress` JSON with run ID, starting position and journal lines | `200` with the next position as a decimal integer |
+| `POST /runner/heartbeat?run=…` | Run ID and empty body | `200` with a renewed `Lease` JSON. A refused or empty response leaves the current lease in force. |
+| `POST /runner/result?run=…` | Run ID and final outcome JSON | `200` with an empty body on receipt |
+
+The [protocol models](https://github.com/Malatiel/Faultora/tree/main/faultora-runner-protocol/src/main/java/dev/faultora/runner/protocol)
+define the message shapes. The [qualification dispatcher](https://github.com/Malatiel/Faultora/blob/main/faultora-testkit/src/main/java/dev/faultora/testkit/QualificationDispatcher.java)
+is a test fixture for exercising this exchange. Use an independently
+operated dispatcher with persistent state and authorization for real work.
 
 The runner sends complete UTF-8 JSON object lines from the journal. A numeric
 progress ACK advances only through the acknowledged lines. An unfinished or

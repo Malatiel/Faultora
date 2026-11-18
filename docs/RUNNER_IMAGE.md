@@ -14,14 +14,18 @@ outside the image; the Dockerfile runs no Maven commands and has no `RUN` step.
 Creating the two architecture variants does not need QEMU. Executing one does
 need a native runtime or working emulation for that architecture.
 
+The first Maven build needs access to the wrapper distribution and Maven
+dependencies. Once these are cached, use `-o` for a local offline Maven
+build. Buildx also needs the pinned base image and builder available.
+
 A `docker-container` builder supports OCI export across Docker image stores;
 Docker with a containerd image store can also export with its existing builder.
 The following creates a named builder without changing your selected default:
 
 ```sh
 docker buildx create --name faultora-local --driver docker-container
-./mvnw -o package -DskipTests
-export VERSION="$(./mvnw -o help:evaluate -Dexpression=project.version -q -DforceStdout)"
+./mvnw -B -ntp package -pl faultora-cli -am -DskipTests
+export VERSION="$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout)"
 export JAR="faultora-cli/target/faultora-${VERSION}.jar"
 docker buildx bake --builder faultora-local -f deploy/runner-image.hcl
 ```
@@ -29,8 +33,8 @@ docker buildx bake --builder faultora-local -f deploy/runner-image.hcl
 In PowerShell, set the two variables as follows after building the JAR:
 
 ```powershell
-.\mvnw.cmd -o package -DskipTests
-$env:VERSION = (.\mvnw.cmd -o help:evaluate '-Dexpression=project.version' -q -DforceStdout).Trim()
+.\mvnw.cmd -B -ntp package -pl faultora-cli -am '-DskipTests'
+$env:VERSION = (.\mvnw.cmd help:evaluate '-Dexpression=project.version' -q -DforceStdout).Trim()
 $env:JAR = "faultora-cli/target/faultora-$env:VERSION.jar"
 docker buildx create --name faultora-local --driver docker-container
 docker buildx bake --builder faultora-local -f deploy/runner-image.hcl
@@ -84,7 +88,7 @@ It does not publish an image.
 For example, from a checkout:
 
 ```sh
-./mvnw -o package -pl integration-tests -am \
+./mvnw -B -ntp package -pl integration-tests -am \
   -Dtest=RunnerImageE2ETest,RunnerImageBuildArgumentTest,RunnerMultiArchBuildTest \
   -Dsurefire.failIfNoSpecifiedTests=false
 ```
@@ -118,21 +122,24 @@ tag is moved. The digest it attests is the one Buildx reports for the index it
 pushed, never what the tag points to afterwards, and the provenance is pushed
 to the registry beside the image.
 
-To check a pulled image was published by this workflow from `main`:
+Take the complete `sha256:…` digest from the authorized publication run
+and verify that immutable reference before pulling the image.
+`--source-ref` pins the workflow run to `main`.
 
 ```sh
-gh attestation verify oci://ghcr.io/malatiel/faultora-runner:VERSION \
+: "${FAULTORA_RUNNER_INDEX_DIGEST:?Set the digest reported by the publication workflow}"
+export FAULTORA_RUNNER_IMAGE="ghcr.io/malatiel/faultora-runner@$FAULTORA_RUNNER_INDEX_DIGEST"
+gh attestation verify oci://"$FAULTORA_RUNNER_IMAGE" \
   --repo Malatiel/Faultora \
   --signer-workflow Malatiel/Faultora/.github/workflows/runner-image.yml \
   --source-ref refs/heads/main \
-  --deny-self-hosted-runners
+  --deny-self-hosted-runners &&
+docker pull "$FAULTORA_RUNNER_IMAGE"
 ```
 
-`--source-ref` is the workflow's ref, `main`, not the release tag the workflow
-checks out: without it, the same workflow run from any other branch would also
-pass. Pull by the digest the verification reports, not by the tag, so what runs
-is what was checked. The JAR inside was verified against the release's own
-attestation before the image was built, as described above.
+Compose reads `FAULTORA_RUNNER_IMAGE` directly. For Kubernetes, put the
+same digest reference in the deployment's `image` field. The publication
+workflow verifies the release JAR's attestation before building the image.
 
 The image workflow's CLI/health smoke checks are smaller than the mTLS runtime
 suite and the release qualification that produced the JAR. Registry publication

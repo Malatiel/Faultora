@@ -153,6 +153,7 @@
                              the length of a test method, so the value here is a
                              fixture rather than a secret. -->
                         <FAULTORA_SECRET_RUNNER_TLS>changeit</FAULTORA_SECRET_RUNNER_TLS>
+                        <FAULTORA_SECRET_TEST_TARGET>synthetic-target</FAULTORA_SECRET_TEST_TARGET>
                     </environmentVariables>
                 </configuration>
             </plugin>

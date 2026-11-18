@@ -4,6 +4,8 @@ import dev.faultora.model.security.SecretHandle;
 import dev.faultora.spi.contract.SecretResolutionException;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -165,5 +167,24 @@ class EnvironmentSecretResolverTest {
         EnvironmentSecretResolver resolver = new EnvironmentSecretResolver("P");
         assertThat(resolver.isAvailable("ATH")).isTrue();
         assertThat(resolver.resolve("ATH").handleId()).isEqualTo("ATH");
+    }
+
+    @Test
+    void runnerTargetResolverCannotUseTheConfiguredTlsCredentialOrItsAliases() {
+        var transport = new EnvironmentSecretResolver();
+        var targets = EnvironmentSecretResolver.forRunnerTargets("Runner.Tls");
+        assertThat(transport.isAvailable("runner-tls")).isTrue();
+        assertThat(transport.resolve("runner-tls").handleId()).isEqualTo("runner-tls");
+
+        for (String handle : List.of("Runner.Tls", "runner-tls", "RUNNER_TLS", "rUnNeR_tLs")) {
+            assertThat(targets.isAvailable(handle)).isFalse();
+            assertThatThrownBy(() -> targets.resolve(handle))
+                    .isInstanceOf(SecretResolutionException.class)
+                    .hasMessage("Secret is unavailable for target credentials");
+        }
+
+        assertThat(targets.isAvailable("test-target")).isTrue();
+        assertThat(targets.resolve("test-target").secretValue())
+                .containsExactly("synthetic-target".toCharArray());
     }
 }

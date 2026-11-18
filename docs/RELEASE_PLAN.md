@@ -26,7 +26,7 @@ Three consequences worth stating plainly:
   runners to execute exactly that. A team that invests in a scenario suite
   before 1.0 keeps it afterwards.
 
-## 2. Where 0.13.0 stands
+## 2. Where 1.0.0 stands
 
 | Milestone | State |
 |---|---|
@@ -36,7 +36,7 @@ Three consequences worth stating plainly:
 | M3 — Event-driven and cross-component | complete |
 | M4 — Private-network runner | shipped in 0.9.1; runner and image qualification suites exist |
 | M5 — Distributed execution | deferred to 2.0 |
-| M6 — 1.0 hardening | In progress. The scenario API, run output and runner protocol v1 are frozen. The opt-in protocol 2 sender resumes delivery from a local checkpoint. Runner storage budgets, crash evidence and replay protection are in place. The CLI can supervise approved assertions and text renderers in child JVMs. Linux runner assertions can require OS isolation and resource limits. The supervised source importer is a library adapter. OpenTelemetry export and the release qualification record are ready for candidate testing. |
+| M6 — 1.0 hardening | In progress. The scenario API, run output and runner protocol v1 are frozen. The opt-in protocol 2 sender resumes delivery from a local checkpoint. Runner storage budgets, crash evidence and replay protection are in place. The CLI can supervise approved assertions and text renderers in child JVMs. Linux runner assertions can require OS isolation and resource limits. The supervised source importer is a library adapter. OpenTelemetry export is opt-in. The release qualification record defines the acceptance checks for the 1.0.0 candidate. |
 
 Shipped and working: OpenAPI, AsyncAPI and observation-catalog import into one
 catalog, HTTP, Kafka and JDBC connectors under one destination policy, scenario

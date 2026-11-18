@@ -28,29 +28,29 @@ report a problem or contribute, see
 The scenario format is frozen at `faultora.dev/v1`; the application version
 below moves independently of it.
 
-Version 0.13.0 is a runnable technical preview. It targets local development
-and CI use on Java 21, and it can now run **inside a private network** as a
-runner that dials out for work.
+Faultora 1.0.0 runs locally and in CI with Java 21. The local MCP server can
+help author and preview scenarios without approval setup. To execute inside
+a private network, deploy the runner with a compatible dispatcher.
 
 ## First ten minutes
 
 You need Java 21, the OpenAPI description of a service, and the address of a
 test environment where it runs. Nothing is sent anywhere else.
 
-**1. Install.** Download `faultora-0.13.0.tar.gz` (or `.zip`) and `SHA256SUMS`
-from the [release](https://github.com/Malatiel/Faultora/releases/tag/v0.13.0),
+**1. Install.** Download `faultora-1.0.0.tar.gz` (or `.zip`) and `SHA256SUMS`
+from the [release](https://github.com/Malatiel/Faultora/releases/tag/v1.0.0),
 check them as [Installing the CLI](docs/INSTALLATION.md) shows, including who
 built them, extract the archive where you keep tools, and put its `bin` on
 your `PATH`:
 
 ```bash
-mkdir -p ~/tools && tar xzf faultora-0.13.0.tar.gz -C ~/tools
-export PATH="$HOME/tools/faultora-0.13.0/bin:$PATH"
+mkdir -p ~/tools && tar xzf faultora-1.0.0.tar.gz -C ~/tools
+export PATH="$HOME/tools/faultora-1.0.0/bin:$PATH"
 faultora --version
 ```
 
 On Windows, extract the `.zip` with `Expand-Archive`, add its `bin` to `PATH`
-(`$env:Path = "C:\tools\faultora-0.13.0\bin;$env:Path"`) and the command is
+(`$env:Path = "C:\tools\faultora-1.0.0\bin;$env:Path"`) and the command is
 the same; in PowerShell, join the continued lines below or end them with a
 backtick instead of `\`. Keep your scenarios and results in your own project,
 not in the installation, which an upgrade replaces.
@@ -63,7 +63,9 @@ faultora init --from-openapi openapi.yaml --output my-checks
 
 `init` writes `my-checks/scenario.yaml` with a step for every operation that
 can run with nothing filled in, lists the others as comments saying what they
-need, and prints the next commands.
+need, and prints the next commands. If every operation needs input, it writes
+an editable starter with a wait placeholder. Add an API operation and an
+assertion before using that starter to test the service.
 
 **3. Check it without contacting anything:**
 
@@ -83,11 +85,12 @@ faultora test --scenario my-checks/scenario.yaml --openapi openapi.yaml \
   --target https://staging.example.com --format console,html --output results
 ```
 
-Exit code 0 means every assertion passed, 1 that the run found a failure, 2
-that the configuration was refused before anything ran, and 3 that the command
-itself could not do its job — for example because `results/` already holds an
-earlier run; give each run a new `--output` directory. The console shows each
-node; the output directory holds the HTML report and the journal. A service on
+Exit code 0 means the run passed. Check that it ran the intended operations
+and evaluated assertions. Code 1 means the run failed, including a target
+policy refusal during execution. Code 2 means invalid configuration and 3
+means an execution or reporting error. Give each run a new `--output`
+directory. The console shows each node, and the output directory holds the
+HTML report and the journal. A service on
 localhost or another private address also needs `--allow-private`, and a step
 that deletes something needs `--allow-destructive`;
 [troubleshooting](docs/TROUBLESHOOTING.md) explains each refusal.
@@ -128,12 +131,13 @@ race; the [examples guide](examples/README.md) shows retries, eventual
 consistency, events and faults the same way, and the
 [scenario reference](docs/SCENARIO_REFERENCE.md) lists every field.
 
-**Or let an AI assistant do it.** Faultora's MCP server lets an assistant
-inspect your description, write and prepare scenarios, and run them once you
-sign an approval; [using Faultora with an AI assistant](docs/AI_ASSISTANTS.md)
-shows how to connect one.
+**Use an AI assistant to draft a scenario.** Connect the local MCP server
+with an OpenAPI contract and preview a plan without a signing key or target
+traffic. Keep the YAML to run it in the CLI or CI. To execute through MCP
+itself, configure operator-signed approval for a test target that needs no
+credentials. [Connect a local MCP client](docs/AI_ASSISTANTS.md).
 
-## What 0.13.0 includes
+## What 1.0.0 includes
 
 In short: OpenAPI, AsyncAPI and read-only database catalogs; HTTP and Kafka
 operations; sequential, parallel, repeat and eventually blocks with retries
@@ -170,7 +174,7 @@ find them under `faultora-cli/target/`.
 Download the release JAR and its checksums:
 
 ```bash
-FAULTORA_VERSION=0.13.0
+FAULTORA_VERSION=1.0.0
 RELEASE_URL="https://github.com/Malatiel/Faultora/releases/download/v${FAULTORA_VERSION}"
 
 curl --fail --location --retry 3 \
@@ -207,7 +211,7 @@ their prerequisites are unavailable; those skips do not prove qualification.
 The executable artifact is written to:
 
 ```text
-faultora-cli/target/faultora-0.13.0.jar
+faultora-cli/target/faultora-1.0.0.jar
 ```
 
 The regular CI build can run without repository secrets. Configure the
@@ -219,7 +223,7 @@ missing.
 
 The commands in this and the following sections use `faultora` on your `PATH`,
 as in the first ten minutes; from a source checkout, use
-`java -jar faultora-cli/target/faultora-0.13.0.jar` instead. Paths such as
+`java -jar faultora-cli/target/faultora-1.0.0.jar` instead. Paths such as
 `examples/payment-service/...` are relative to the extracted archive or the
 repository root. The archive carries the example descriptions and scenarios,
 so `validate` and `test --preview` work from it as shown; the example
@@ -731,7 +735,9 @@ HttpClient header and wire logging is disabled in the release configuration.
 
 Everything above runs a scenario from where you are typing. When the system
 under test is somewhere you cannot reach — a customer's network, a segment with
-no inbound path — the same binary runs as a runner instead:
+no inbound path — the same binary can run there. You supply a compatible
+dispatcher, the runner's mTLS credentials, and a policy verification key.
+Follow the [runner setup guide](deploy/README.md) before launching it:
 
 ```bash
 faultora runner \
@@ -778,9 +784,9 @@ A container image, Compose and Kubernetes examples, and an offline installation
 bundle are in [deploy/](deploy/README.md), which also says which of their
 claims are exercised by tests and which are documentation.
 
-The control plane that dispatches to a runner is 2.0. What ships now is the
-runner and the protocol it speaks; the counterpart in this repository is
-qualification scaffolding and is named so.
+The built-in controller is planned for 2.0. This release provides the runner
+and its [dispatcher protocol](docs/RUNNER_PROTOCOL.md). The dispatcher in the
+test kit is a qualification fixture.
 
 ## Security model
 

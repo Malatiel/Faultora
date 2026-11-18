@@ -46,8 +46,10 @@ happens at each edge.
   its path would otherwise decide what the test proves.
 - **The effective policy is signed, and an unsigned one is refused.** A
   dispatch carries the execution policy the run is permitted under, signed by
-  the control plane. A runner that took a policy on the word of whoever sent it
-  would let a compromised transport widen what a run may do.
+  the control plane. The signature protects the signed limits from changes in
+  transit. The runner trusts the authenticated dispatcher to choose the
+  scenario, catalogs, target bindings and target credential handles within
+  the deployment's limits. See [dispatcher authority](../RUNNER_PROTOCOL.md#dispatcher-authority).
 - **The verifying key is its own file, named in the runner's configuration.**
   Not folded into the TLS trust anchor: the two answer different questions and
   rotate on different schedules. Terminating TLS is something an infrastructure
@@ -87,8 +89,9 @@ happens at each edge.
   message, a buffer, and eventually a log, in exchange for one less thing to
   configure on the runner.
 - **The runner's own limits are a floor the signed policy cannot lower.** Its
-  configuration states what this deployment permits — which hosts, which fault
-  kinds, what concurrency, what duration. A signed policy narrows that and can
+  configuration states what this deployment permits, including logical target
+  IDs, fault kinds, concurrency and duration. Network egress rules restrict
+  actual hosts. A signed policy narrows the local execution limits and can
   never widen it. This is what "local refusal independent of controller
   behaviour" means: the runner is not enforcing the controller's decision, it
   is enforcing its own and honouring the controller's on top.

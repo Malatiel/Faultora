@@ -37,10 +37,28 @@ class RunnerOptionsTest {
         assertThat(parse("--durable-delivery").durableDelivery()).isTrue();
         assertThatThrownBy(() -> parse("--durable-delivery", "--dispatcher", "http://control.example.invalid"))
                 .isInstanceOf(CliException.class)
-                .hasMessageContaining("--durable-delivery requires an HTTPS dispatcher");
+                .hasMessageContaining("--dispatcher requires an HTTPS origin");
         assertThatThrownBy(() -> parse("--durable-delivery", "--dispatcher", "https://user@control.example.invalid"))
                 .isInstanceOf(CliException.class)
                 .hasMessageNotContaining("user@");
+    }
+
+    @Test
+    void defaultProtocolRequiresAnHttpsOriginAndWithholdsRefusedAddresses() {
+        assertThat(parse("--dispatcher", "https://control.example.invalid:8443/").dispatcherUrl().getPort())
+                .isEqualTo(8443);
+        for (String invalid : List.of("http://synthetic-marker.example.invalid",
+                "https://synthetic-marker@control.example.invalid",
+                "https://control.example.invalid/synthetic-marker",
+                "https://control.example.invalid?synthetic-marker",
+                "https://control.example.invalid/#synthetic-marker",
+                "https://synthetic-marker example.invalid")) {
+            assertThatThrownBy(() -> parse("--dispatcher", invalid))
+                    .isInstanceOfSatisfying(CliException.class,
+                            error -> assertThat(error.exitCode()).isEqualTo(FaultoraCli.EXIT_INVALID_CONFIG))
+                    .hasMessageContaining("--dispatcher requires an HTTPS origin")
+                    .hasMessageNotContaining("synthetic-marker");
+        }
     }
 
     @Test

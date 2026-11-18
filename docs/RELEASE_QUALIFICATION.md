@@ -98,6 +98,9 @@ published archive.
 An independent security reviewer assesses the exact commit, deployment
 profile, and intended operating conditions. Start with the
 [security architecture](SECURITY.md) and the relevant deployment instructions.
+For the runner, confirm how the deployment restricts dispatcher access,
+network egress and target credential permissions under the
+[trusted dispatcher model](RUNNER_PROTOCOL.md#dispatcher-authority).
 Record findings against the following scope and link to reproducible evidence
 from synthetic test environments.
 

@@ -31,6 +31,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * A run that crossed a wire.
@@ -112,6 +113,32 @@ class RunnerTransportTest {
         return new DispatchedRun(
                 new DispatchVerifier(LIMITS, policy -> "trusted".equals(policy.keyId())),
                 workingDirectory, handleId -> null, true);
+    }
+
+    @Test
+    void bothProtocolModesRequireAnHttpsOriginBeforeConnecting() {
+        TlsMaterial tls = new TlsMaterial(directory.resolve("identity.p12"), directory.resolve("trust.p12"),
+                () -> { throw new AssertionError("Construction must not read TLS material"); });
+        URI origin = URI.create("https://[::1]:8443/");
+        assertThat(new RunnerClient(origin, tls, "runner-1", "1", Set.of())).isNotNull();
+        assertThat(new RunnerClient(origin, tls, "runner-1", "1", Set.of(), true)).isNotNull();
+
+        for (String invalid : List.of("http://control.example.invalid", "https:control.example.invalid",
+                "https://control.example.invalid:0", "https://control.example.invalid:65536",
+                "https://synthetic-marker@control.example.invalid",
+                "https://control.example.invalid/synthetic-marker",
+                "https://control.example.invalid?synthetic-marker",
+                "https://control.example.invalid/#synthetic-marker")) {
+            URI address = URI.create(invalid);
+            assertThatThrownBy(() -> new RunnerClient(address, tls, "runner-1", "1", Set.of()))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("HTTPS origin")
+                    .hasMessageNotContaining("synthetic-marker");
+            assertThatThrownBy(() -> new RunnerClient(address, tls, "runner-1", "1", Set.of(), true))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("HTTPS origin")
+                    .hasMessageNotContaining("synthetic-marker");
+        }
     }
 
     @Test

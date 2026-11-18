@@ -29,9 +29,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /** Closed tool arguments; operator startup policy and signed approval are separate authority. */
 final class McpTools implements AutoCloseable {
+    private static final int CATALOG_PAGE_SIZE = 32;
     private static final ExtensionPolicy BUILT_INS =
             new ExtensionPolicy(Set.of(), false, 0, Set.of(), Set.of());
     private static final List<String> NAMES = List.of("list_capabilities", "describe_catalog", "prepare_run");
@@ -79,7 +81,7 @@ final class McpTools implements AutoCloseable {
             var tool = tools.addObject().put("name", name);
             tool.put("description", switch (name) {
                 case "list_capabilities" -> "Describe runtime capabilities, operator policy and declared catalog IDs";
-                case "describe_catalog" -> "Describe one declared catalog without source content or endpoints";
+                case "describe_catalog" -> "List a catalog's operations and permissions. Use nextOffset as offset to continue";
                 case "prepare_run" -> "Prepare ordinary scenario YAML without executing targets or faults";
                 case "start_run" -> "Start one prepared run with a separate operator-signed approval";
                 case "get_run" -> "Read this session's run status; terminal includes completed cleanup";
@@ -92,6 +94,8 @@ final class McpTools implements AutoCloseable {
             var required = schema.putArray("required");
             if (name.equals("describe_catalog")) {
                 properties.putObject("catalogId").put("type", "string").put("maxLength", 64);
+                properties.putObject("offset").put("type", "integer").put("minimum", 0)
+                        .put("description", "The nextOffset returned by the previous page");
                 required.add("catalogId");
             } else if (name.equals("prepare_run")) {
                 properties.putObject("scenario").put("type", "string").put("maxLength", 262_144);
@@ -188,12 +192,39 @@ final class McpTools implements AutoCloseable {
         return document;
     }
 
-    private JsonNode describe(JsonNode arguments) {
-        McpConfiguration.fields(arguments, Set.of("catalogId"));
+    private JsonNode describe(JsonNode arguments) throws IOException {
+        McpConfiguration.fields(arguments, Set.of("catalogId", "offset"));
+        var offset = arguments.path("offset");
+        if (!offset.isMissingNode() && (!offset.isIntegralNumber() || !offset.canConvertToInt() || offset.intValue() < 0)) {
+            throw new IllegalArgumentException();
+        }
         var catalog = CatalogAssembly.assemble(List.of(catalog(McpConfiguration.text(arguments, "catalogId"))),
                 BUILT_INS).catalog();
-        var response = McpJson.MAPPER.<ObjectNode>valueToTree(
-                CatalogDescription.describe(catalog, configuration.targets()));
+        var description = CatalogDescription.describe(catalog, configuration.targets());
+        if (offset.isMissingNode()) {
+            var complete = describeResponse(description);
+            if (!tooLarge(complete)) {
+                return complete;
+            }
+        }
+        int start = offset.asInt(0);
+        int total = description.operations().size();
+        if (start > total) {
+            throw new IllegalArgumentException();
+        }
+        int end = start + Math.min(CATALOG_PAGE_SIZE, total - start);
+        var operations = description.operations().subList(start, end);
+        var targetIds = operations.stream().map(CatalogDescription.Operation::target).collect(Collectors.toSet());
+        var targets = description.targets().stream().filter(target -> targetIds.contains(target.id())).toList();
+        var page = describeResponse(new CatalogDescription(targets, operations)).put("totalOperations", total);
+        if (end < total) {
+            page.put("nextOffset", end);
+        }
+        return page;
+    }
+
+    private ObjectNode describeResponse(CatalogDescription description) {
+        var response = McpJson.MAPPER.<ObjectNode>valueToTree(description);
         return response.set("operatorPolicy", operatorPolicy());
     }
 
@@ -261,7 +292,12 @@ final class McpTools implements AutoCloseable {
                 .put("preparationDigest", prepared.preparationDigest()).put("catalogDigest", prepared.catalogDigest())
                 .put("runId", request.runId().value()).put("maxLifetimeMs", 300_000)
                 .put("executionAuthorized", false);
-        response.set("preview", McpJson.MAPPER.valueToTree(prepared.preview()));
+        var preview = McpJson.MAPPER.<ObjectNode>valueToTree(prepared.preview());
+        response.set("preview", preview);
+        if (tooLarge(response)) {
+            // Keep actions, faults and limits complete for review. Catalog topology has a paged tool.
+            preview.putNull("catalog").put("catalogOmitted", true);
+        }
         bounded(response);
         preparations.put(id, new SealedPreparation(prepared, request, settings));
         return response;
@@ -297,9 +333,13 @@ final class McpTools implements AutoCloseable {
     }
 
     private static void bounded(JsonNode result) throws IOException {
-        if (McpJson.MAPPER.writeValueAsBytes(result).length > McpJson.MAX_RESULT_BYTES) {
+        if (tooLarge(result)) {
             throw new Refused("RESULT_TOO_LARGE");
         }
+    }
+
+    private static boolean tooLarge(JsonNode result) throws IOException {
+        return McpJson.MAPPER.writeValueAsBytes(result).length > McpJson.MAX_RESULT_BYTES;
     }
 
     private static JsonNode wrap(JsonNode data, boolean error) throws IOException {

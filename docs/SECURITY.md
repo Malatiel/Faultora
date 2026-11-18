@@ -407,6 +407,11 @@ hosting organization.
 
 ### 9.1 What the destination policy decides today
 
+For remote runs, the mTLS-authenticated dispatcher supplies the documents
+and endpoint bindings. The policy signer authorizes logical target IDs and
+execution limits. Use network rules to enforce where the runner can connect.
+See [dispatcher authority](RUNNER_PROTOCOL.md#dispatcher-authority).
+
 The HTTP connector's destination policy is the enforcement point for SEC-02 in
 local mode. Three of its rules are easy to misread, so they are stated here
 rather than left to be inferred from the code.

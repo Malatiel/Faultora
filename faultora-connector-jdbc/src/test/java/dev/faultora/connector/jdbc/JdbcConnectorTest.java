@@ -317,6 +317,51 @@ class JdbcConnectorTest {
     }
 
     @Test
+    void aDatabaseUrlRequiresOneExplicitDestinationEvenWhenPrivateHostsAreAllowed() {
+        for (String url : List.of("jdbc:postgresql://192.0.2.1:5432,192.0.2.2:5432/ledger",
+                "jdbc:postgresql://192.0.2.1;synthetic/ledger",
+                "jdbc:postgresql:ledger")) {
+            assertThatThrownBy(() -> JdbcUrl.parse(url, HostPolicy.permissive()))
+                    .isInstanceOf(DestinationPolicyViolation.class)
+                    .hasMessage("A PostgreSQL JDBC URL requires one explicit database host and optional port");
+        }
+        assertThatThrownBy(() -> JdbcUrl.parse(
+                "jdbc:mysql://192.0.2.1,192.0.2.2/ledger", HostPolicy.permissive()))
+                .isInstanceOf(DestinationPolicyViolation.class)
+                .hasMessage("A JDBC URL requires one explicit database host");
+    }
+
+    @Test
+    void postgresqlConnectionSettingsCannotReplaceTheValidatedDestination() {
+        for (String option : List.of("host=192.0.2.2", "PGHOST=192.0.2.2", "PGPORT=5433",
+                "service=synthetic", "socketFactory=synthetic", "connectExecutor=synthetic")) {
+            assertThatThrownBy(() -> JdbcUrl.parse(
+                    "jdbc:postgresql://192.0.2.1:5432/ledger?sslmode=require&" + option,
+                    HostPolicy.permissive()))
+                    .isInstanceOf(DestinationPolicyViolation.class)
+                    .hasMessage("Choose the PostgreSQL JDBC destination in the URL authority and omit routing options");
+        }
+    }
+
+    @Test
+    void ordinarySettingsAndBracketedAddressesPreserveTheValidatedDestination() {
+        String url = "jdbc:postgresql://[2001:db8::1]:5432/ledger?sslmode=require&currentSchema=ledger,public";
+        JdbcUrl parsed = JdbcUrl.parse(url, HostPolicy.permissive());
+
+        assertThat(parsed.host()).isEqualTo("[2001:db8::1]");
+        assertThat(parsed.value()).isEqualTo(url);
+    }
+
+    @Test
+    void postgresqlConnectionOptionNamesUseAscii() {
+        assertThatThrownBy(() -> JdbcUrl.parse(
+                "jdbc:postgresql://192.0.2.1/ledger?applicationNáme=synthetic",
+                HostPolicy.permissive()))
+                .isInstanceOf(DestinationPolicyViolation.class)
+                .hasMessage("PostgreSQL JDBC option names must use ASCII");
+    }
+
+    @Test
     void aCommentIsNotASecondStatement() {
         // A ';' inside a comment ends nothing. Refusing it would make an
         // operator strip the comments out of a document written to be read.

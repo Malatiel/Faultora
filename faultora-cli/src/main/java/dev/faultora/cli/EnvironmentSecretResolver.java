@@ -4,8 +4,9 @@ import dev.faultora.model.security.SecretHandle;
 import dev.faultora.spi.contract.SecretResolutionException;
 import dev.faultora.spi.contract.SecretResolver;
 
-import java.util.Map;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -27,6 +28,7 @@ public class EnvironmentSecretResolver implements SecretResolver {
     private static final int MIN_SECRET_LENGTH = 4;
 
     private final String prefix;
+    private final String excludedEnvVar;
     private final Map<String, Object> resolvedCache = new ConcurrentHashMap<>();
 
     /**
@@ -42,13 +44,28 @@ public class EnvironmentSecretResolver implements SecretResolver {
      * @param prefix the prefix for environment variable lookup
      */
     public EnvironmentSecretResolver(String prefix) {
+        this(prefix, null);
+    }
+
+    private EnvironmentSecretResolver(String prefix, String excludedHandleId) {
         this.prefix = prefix != null ? prefix : DEFAULT_PREFIX;
+        this.excludedEnvVar = excludedHandleId == null ? null : envVarName(excludedHandleId);
+    }
+
+    /** A target lookup cannot read the environment variable reserved for runner TLS. */
+    static EnvironmentSecretResolver forRunnerTargets(String tlsHandleId) {
+        return new EnvironmentSecretResolver(DEFAULT_PREFIX, Objects.requireNonNull(tlsHandleId));
     }
 
     @Override
     public SecretHandle resolve(String handleId) {
         if (handleId == null || handleId.isBlank()) {
             throw new SecretResolutionException(handleId, "Handle ID must not be null or blank");
+        }
+
+        String envVar = envVarName(handleId);
+        if (envVar.equals(excludedEnvVar)) {
+            throw new SecretResolutionException(handleId, "Secret is unavailable for target credentials");
         }
 
         // Check cache first (may contain null sentinel for "resolved as absent")
@@ -63,11 +80,10 @@ public class EnvironmentSecretResolver implements SecretResolver {
         }
         if (cached == NULL_SENTINEL) {
             throw new SecretResolutionException(handleId,
-                    "Secret not found in environment: " + envVarName(handleId));
+                    "Secret not found in environment: " + envVar);
         }
 
         // Resolve from environment
-        String envVar = envVarName(handleId);
         String value = System.getenv(envVar);
 
         if (value == null) {
@@ -85,13 +101,16 @@ public class EnvironmentSecretResolver implements SecretResolver {
     public boolean isAvailable(String handleId) {
         if (handleId == null || handleId.isBlank()) return false;
 
+        String envVar = envVarName(handleId);
+        if (envVar.equals(excludedEnvVar)) return false;
+
         Object cached = resolvedCache.get(handleId);
         if (cached instanceof SecretHandle handle) {
             return !handle.isExpired();
         }
         if (cached == NULL_SENTINEL) return false;
 
-        return System.getenv(envVarName(handleId)) != null;
+        return System.getenv(envVar) != null;
     }
 
     /**
