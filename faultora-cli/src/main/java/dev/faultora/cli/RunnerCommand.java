@@ -74,18 +74,19 @@ final class RunnerCommand implements Command {
             return FaultoraCli.EXIT_PASS;
         }
 
-        EnvironmentSecretResolver secrets = new EnvironmentSecretResolver();
+        EnvironmentSecretResolver transportSecrets = new EnvironmentSecretResolver();
+        EnvironmentSecretResolver targetSecrets = EnvironmentSecretResolver.forRunnerTargets(options.tlsSecretId());
         RunnerClient client = new RunnerClient(
                 options.dispatcherUrl(),
                 new TlsMaterial(options.keystore(), options.truststore(),
-                        () -> passwordOf(secrets, options.tlsSecretId())),
+                        () -> passwordOf(transportSecrets, options.tlsSecretId())),
                 options.runnerId(), version(), RunEnvironment.PROTOCOLS_SPOKEN, options.durableDelivery());
 
         DispatchedRun runs = new DispatchedRun(
                 new DispatchVerifier(
                         options.limits(), new PolicyKeys(options.policyKeys())),
                 options.workDirectory(),
-                handleId -> resolveOrNothing(secrets, handleId),
+                handleId -> resolveOrNothing(targetSecrets, handleId),
                 options.allowPrivate(), options.isolatedAssertion());
 
         RunnerAgent agent = new RunnerAgent(
@@ -279,10 +280,8 @@ final class RunnerCommand implements Command {
     /**
      * The key material's password, from this runner's own environment.
      * <p>
-     * Resolved on every read rather than held, because {@link TlsMaterial}
-     * re-reads the files on every connection so that rotation is a file swap —
-     * and a password cached here would make the one thing that must not need a
-     * restart need one.
+     * The supplier provides a fresh password copy whenever {@link TlsMaterial}
+     * re-reads the files. Store files can rotate in place with the same password.
      * <p>
      * A handle that resolves to nothing throws from the resolver, naming the
      * environment variable it looked for, and that reaches the operator as the

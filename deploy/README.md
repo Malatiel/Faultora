@@ -40,6 +40,9 @@ stores and the next verification reads the policy certificate. A password
 change requires recreating the runner process with the new environment and
 the corresponding stores.
 
+The handle selected by `--tls-secret-id` is reserved for the runner's mTLS
+connection. Use separate handles for the credentials of test targets.
+
 ## Start and verify a deployment
 
 Choose an image from [Runner images](../docs/RUNNER_IMAGE.md), either built
@@ -47,10 +50,11 @@ locally or pulled using its verified digest. Before the first dispatch,
 restrict the runner's outbound network to the dispatcher and the intended
 test systems. For targets on private or loopback addresses, deliberately add
 `--allow-private` to the runner arguments. This permits private destinations
-at the connector layer. Narrow the reachable network, pass `--allow-target`
-for each permitted target ID, and have the dispatcher sign the intended
-targets and endpoints. Keep these controls in place even if the dispatcher is
-inside the same private network.
+at the connector layer. Restrict the reachable endpoints at the network
+layer and pass `--allow-target` for each permitted target ID. A signed policy
+authorizes logical target IDs and execution limits. See the
+[dispatcher authority](../docs/RUNNER_PROTOCOL.md#dispatcher-authority) for
+which parts of the work the dispatcher selects.
 
 For Compose, place `runner.p12` and `trusted.p12` under `deploy/tls/` and the
 policy certificate under `deploy/keys/`. Update the policy key argument to

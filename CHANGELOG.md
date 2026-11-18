@@ -39,6 +39,10 @@ works with an operator-provided dispatcher.
   assertions and needs input before it exercises a service.
 - Both runner protocols require an HTTPS dispatcher origin. Invalid addresses
   are refused before connecting and their values are omitted from diagnostics.
+- The runner reserves its mTLS password for transport. Target credential
+  lookups cannot use another spelling of the same configured handle.
+- PostgreSQL JDBC URLs require one explicit host. The connector rejects
+  routing options that can change the validated destination.
 
 ## 0.13.0 — 2026-11-11
 

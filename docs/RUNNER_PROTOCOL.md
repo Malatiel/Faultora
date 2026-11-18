@@ -1,5 +1,16 @@
 # Runner protocol
 
+## Dispatcher authority
+
+The policy signature authenticates the execution limits and logical target
+IDs. The mTLS-authenticated dispatcher supplies the scenario and inputs, the
+catalogs and their operation classifications, endpoint bindings and target
+credential handles. Include the dispatcher and its TLS termination in the
+deployment's trust boundary for those choices. Scenario and catalog
+digests check consistency with the dispatch. Use network egress rules for
+endpoint restrictions and scoped, least-privilege credentials for targets.
+The runner's mTLS password is available only to the transport.
+
 ## Dispatch replay protection
 
 Both protocol versions require a nonblank nonce of at most 128 UTF-16 code

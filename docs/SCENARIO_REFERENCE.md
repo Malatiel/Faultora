@@ -1184,8 +1184,13 @@ What holds for every observation:
 - **the server is a target**, so `--target ledger=jdbc:…` redirects an
   observation to a test database exactly as `--target` redirects an API.
 
-The released executable ships the PostgreSQL driver. Another database means
-building the CLI with its driver on the classpath.
+The released executable ships the PostgreSQL driver. Use a URL with one
+explicit host and optional port, such as
+`jdbc:postgresql://db.example.com:5432/payments`. Put the destination in the
+URL authority. Faultora refuses host lists and PostgreSQL URL options that
+replace the destination or select a custom connection mechanism. Use ASCII
+for option names, such as `sslmode`. Another database means building the CLI
+with its driver on the classpath.
 
 A complete catalog, and the scenarios that use it, live in
 [`examples/payment-recovery`](../examples/payment-recovery) — the same files the
