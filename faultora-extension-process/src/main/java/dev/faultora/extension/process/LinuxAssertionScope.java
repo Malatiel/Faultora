@@ -28,7 +28,8 @@ final class LinuxAssertionScope implements AutoCloseable {
             group=$3
             memory=$4
             quota=$5
-            shift 5
+            tasks=$6
+            shift 6
 
             IFS= read -r actual < "$membership" || fail
             [ "$actual" = "$expected" ] || fail
@@ -41,6 +42,10 @@ final class LinuxAssertionScope implements AutoCloseable {
             if [ -e "$group/cpu.max.burst" ]; then
                 IFS= read -r cpu_burst < "$group/cpu.max.burst" || fail
                 [ "$cpu_burst" = 0 ] || fail
+            fi
+            if [ -n "$tasks" ]; then
+                IFS= read -r tasks_max < "$group/pids.max" || fail
+                [ "$tasks_max" = "$tasks" ] || fail
             fi
             exec "$@"
             """;
@@ -83,7 +88,12 @@ final class LinuxAssertionScope implements AutoCloseable {
                 "--description=Faultora isolated assertion", "--property=MemoryMax=" + limits.memoryBytes(),
                 "--property=MemorySwapMax=0", "--property=CPUQuota=" + limits.cpuPercent() + "%",
                 "--property=CPUQuotaPeriodSec=100ms", "--property=RuntimeMaxSec=" + lifetimeMillis + "ms",
-                "--property=TimeoutStopSec=2s", "--property=KillMode=control-group", "--no-ask-password", "--"));
+                "--property=TimeoutStopSec=2s", "--property=KillMode=control-group"));
+        if (limits.maxTasks() != null) {
+            command.add("--property=TasksMax=" + limits.maxTasks());
+        }
+        command.add("--no-ask-password");
+        command.add("--");
         command.addAll(guardCommand(Path.of("/proc/self/cgroup"), "0::" + membershipPath, group, limits, sandbox));
         return command;
     }
@@ -92,7 +102,7 @@ final class LinuxAssertionScope implements AutoCloseable {
                                      List<String> sandbox) {
         var command = new ArrayList<>(List.of("/bin/sh", "-ec", GUARD, "faultora-scope-guard",
                 membership.toString(), expected, group.toString(), Long.toString(limits.memoryBytes()),
-                Integer.toString(limits.quotaMicros())));
+                Integer.toString(limits.quotaMicros()), limits.maxTasks() == null ? "" : limits.maxTasks().toString()));
         command.addAll(sandbox);
         return command;
     }

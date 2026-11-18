@@ -296,6 +296,12 @@ Swap is disabled for the group. The integer CPU quota is 1–100 percent of
 one CPU, shared by all processes in the group. Adjust the memory ceiling for
 the runtime and extension size. A small ceiling can prevent startup.
 
+Add `--extension-max-tasks 128` to the same configuration to cap the
+number of Linux tasks in the group. The positive integer limit counts
+individual threads across all processes, including JVM threads. A low limit
+can prevent startup or thread creation. The cgroup v2 `pids` controller must
+be available when configuring this limit.
+
 The runner user needs a running systemd user manager (systemd 254 or later)
 with its login `XDG_RUNTIME_DIR` set, and a cgroup v2 hierarchy that provides
 the memory and CPU controllers. Faultora checks the kernel limits before

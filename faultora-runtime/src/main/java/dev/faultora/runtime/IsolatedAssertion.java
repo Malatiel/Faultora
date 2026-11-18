@@ -29,7 +29,12 @@ public record IsolatedAssertion(
     }
 
     public IsolatedAssertion(String type, String digest, Path artifact, int memoryMiB, int cpuPercent) {
-        this(type, digest, artifact, true, new ExtensionResourceLimits(memoryMiB, cpuPercent));
+        this(type, digest, artifact, memoryMiB, cpuPercent, null);
+    }
+
+    public IsolatedAssertion(String type, String digest, Path artifact, int memoryMiB, int cpuPercent,
+                             Integer maxTasks) {
+        this(type, digest, artifact, true, new ExtensionResourceLimits(memoryMiB, cpuPercent, maxTasks));
     }
 
     public IsolatedAssertion {

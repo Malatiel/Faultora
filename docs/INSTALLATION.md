@@ -122,7 +122,9 @@ has none from this workflow and tag. Both are refused. It needs the
 
 The same checks apply to the JAR, the ZIP, the tar.gz and the SBOM of a
 release. From a checkout, `deploy/verify-release.py` runs both for one file and
-also checks that a JAR names the release version:
+checks the version in a JAR manifest. For an SBOM it checks the CycloneDX marker,
+the Faultora project identity and version, and that the inventory contains
+components with names and types.
 
 ```sh
 python3 deploy/verify-release.py faultora-VERSION.tar.gz --sums SHA256SUMS --tag vVERSION

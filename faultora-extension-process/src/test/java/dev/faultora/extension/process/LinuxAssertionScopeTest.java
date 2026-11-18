@@ -66,6 +66,36 @@ class LinuxAssertionScopeTest {
         assertThat(directory.resolve("launched.txt")).doesNotExist();
     }
 
+    @Test
+    void validatesAnOptionalPositiveTaskLimit() {
+        assertThat(new ExtensionResourceLimits(128, 50).maxTasks()).isNull();
+        assertThat(new ExtensionResourceLimits(128, 50, 64).maxTasks()).isEqualTo(64);
+        assertThatIllegalArgumentException().isThrownBy(() -> new ExtensionResourceLimits(128, 50, 0));
+        assertThatIllegalArgumentException().isThrownBy(() -> new ExtensionResourceLimits(128, 50, -1));
+    }
+
+    @Test
+    @EnabledOnOs(OS.LINUX)
+    void aTaskLimitRequiresTheKernelValueBeforeLaunch() throws Exception {
+        Path group = writeGroup();
+        var limits = new ExtensionResourceLimits(128, 50, 64);
+        assertThat(run(group, MEMBERSHIP, limits)).isEqualTo(125);
+        assertThat(directory.resolve("launched.txt")).doesNotExist();
+
+        Path tasks = group.resolve("pids.max");
+        Files.writeString(tasks, "max\n");
+        assertThat(run(group, MEMBERSHIP, limits)).isEqualTo(125);
+        assertThat(directory.resolve("launched.txt")).doesNotExist();
+
+        Files.writeString(tasks, "65\n");
+        assertThat(run(group, MEMBERSHIP, limits)).isEqualTo(125);
+        assertThat(directory.resolve("launched.txt")).doesNotExist();
+
+        Files.writeString(tasks, "64\n");
+        assertThat(run(group, MEMBERSHIP, limits)).isZero();
+        assertThat(directory.resolve("launched.txt")).isRegularFile();
+    }
+
     private Path writeGroup() throws Exception {
         Path group = Files.createDirectory(directory.resolve("example.scope"));
         Files.writeString(group.resolve("memory.max"), "134217728\n");
@@ -76,10 +106,14 @@ class LinuxAssertionScopeTest {
     }
 
     private int run(Path group, String actual) throws Exception {
+        return run(group, actual, LIMITS);
+    }
+
+    private int run(Path group, String actual, ExtensionResourceLimits limits) throws Exception {
         Path membership = Files.writeString(directory.resolve("membership"), actual + "\n");
         List<String> inert = List.of("/bin/sh", "-ec", "printf '%s' \"$1\" > launched.txt",
                 "assertion-sandbox-fixture", "a literal $ARG; remains one argument");
-        var builder = new ProcessBuilder(LinuxAssertionScope.guardCommand(membership, MEMBERSHIP, group, LIMITS, inert))
+        var builder = new ProcessBuilder(LinuxAssertionScope.guardCommand(membership, MEMBERSHIP, group, limits, inert))
                 .directory(directory.toFile())
                 .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                 .redirectError(ProcessBuilder.Redirect.DISCARD);

@@ -201,6 +201,10 @@ public final class PreparedRun {
                 var limits = assertion.putObject("resourceLimits");
                 limits.put("memoryMiB", isolated.resourceLimits().memoryMiB());
                 limits.put("cpuPercent", isolated.resourceLimits().cpuPercent());
+                Integer maxTasks = isolated.resourceLimits().maxTasks();
+                if (maxTasks != null) {
+                    limits.put("maxTasks", maxTasks);
+                }
             }
         }
         try {

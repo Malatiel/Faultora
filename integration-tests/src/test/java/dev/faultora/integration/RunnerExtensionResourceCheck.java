@@ -53,7 +53,8 @@ class RunnerExtensionResourceCheck {
             String digest = IsolatedAssertionE2ETest.digest(plugin);
             var run = executor.submit(() -> IsolatedAssertionE2ETest.runRunner(directory, dispatcher, runner,
                     trustedControl, signing, plugin, digest, List.of("--require-extension-sandbox",
-                            "--extension-memory-mib", "384", "--extension-cpu-percent", "50")));
+                            "--extension-memory-mib", "384", "--extension-cpu-percent", "50",
+                            "--extension-max-tasks", "128")));
 
             Path scope = null;
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
@@ -66,6 +67,7 @@ class RunnerExtensionResourceCheck {
                                 .isEqualTo(Long.toString(384L * 1024 * 1024));
                         assertThat(Files.readString(candidate.resolve("memory.swap.max")).strip()).isEqualTo("0");
                         assertThat(Files.readString(candidate.resolve("cpu.max")).strip()).isEqualTo("50000 100000");
+                        assertThat(Files.readString(candidate.resolve("pids.max")).strip()).isEqualTo("128");
                         scope = candidate;
                         break;
                     }
