@@ -1,0 +1,62 @@
+.faultora:
+  image: eclipse-temurin:21-jdk
+  variables:
+    FAULTORA_VERSION: '0.13.0'
+  before_script:
+    - |
+      set -eu
+      download_dir=$(mktemp -d)
+      jar_name="faultora-${FAULTORA_VERSION}.jar"
+      faultora_jar="${download_dir}/${jar_name}"
+      release_url="https://github.com/Malatiel/Faultora/releases/download/v${FAULTORA_VERSION}"
+      curl --fail --location --retry 3 --proto '=https' \
+        --output "${faultora_jar}" "${release_url}/${jar_name}"
+      curl --fail --location --retry 3 --proto '=https' \
+        --output "${download_dir}/SHA256SUMS" "${release_url}/SHA256SUMS"
+      (
+        cd "${download_dir}"
+        awk -v jar="${jar_name}" '$2 == jar { print; count++ } END { if (count != 1) exit 1 }' \
+          SHA256SUMS > jar.sha256
+        sha256sum --check --strict jar.sha256
+      )
+
+faultora-preview:
+  extends: .faultora
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  script:
+    - >-
+      java -jar "${faultora_jar}" validate
+      --scenario faultora/scenario.yaml --openapi faultora/openapi.yaml
+    - >-
+      java -jar "${faultora_jar}" test --preview
+      --scenario faultora/scenario.yaml --openapi faultora/openapi.yaml
+
+faultora-run:
+  extends: .faultora
+  rules:
+    - if: >-
+        $CI_COMMIT_REF_PROTECTED == "true" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH &&
+        ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web")
+  environment:
+    name: faultora-ci
+    action: verify
+  script:
+    - |
+      : "${FAULTORA_TARGET_URL:?Set the protected staging target}"
+      set --
+      if [ "${FAULTORA_ALLOW_PRIVATE:-false}" = "true" ]; then
+        set -- --allow-private
+      fi
+      java -jar "${faultora_jar}" test \
+        --scenario faultora/scenario.yaml --openapi faultora/openapi.yaml \
+        --target "${FAULTORA_TARGET_URL}" --auth-secret-id api "$@" \
+        --format console,json,junit,html --output faultora-results
+  artifacts:
+    when: always
+    access: developer
+    expire_in: 14 days
+    paths:
+      - faultora-results/
+    reports:
+      junit: faultora-results/report.xml

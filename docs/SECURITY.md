@@ -718,8 +718,12 @@ Development and release controls include:
 - a vulnerability disclosure and supported-version policy;
 - no runtime dependency installation by the runner.
 
-Offline bundles contain the runner, approved built-in extensions, schemas,
-licenses, SBOM, provenance, signatures, checksums, and verification tooling.
+Offline transfer bundles contain the packaged CLI and runner JAR, deployment
+files, a local validation example, licenses, checksums and verification
+tooling. The sender can include a saved runner image. Verify the release
+`SHA256SUMS`, SBOM and attestations on the connected side and keep that
+evidence separately from the transfer archive. See the
+[air-gap procedure](../deploy/README.md#carrying-a-bundle-across-an-air-gap).
 
 **Dependency vulnerability gate.** OWASP Dependency-Check scans the aggregated
 dependencies daily, on every push to `main` and in the release workflow, and

@@ -10,7 +10,7 @@
     </parent>
     <artifactId>faultora-extension-process</artifactId>
     <name>Faultora :: Extension Child Lifecycle</name>
-    <description>Verified artifact staging, supervised extension peers and the assertion adapter</description>
+    <description>Verified artifact staging, supervised extension peers and provider adapters</description>
     <dependencies>
         <dependency>
             <groupId>dev.faultora</groupId>
@@ -48,6 +48,7 @@
                 <includes>
                     <include>extension-wire-v1/assertion-*.json</include>
                     <include>extension-wire-v1/import-*.json</include>
+                    <include>extension-wire-v1/render-*.json</include>
                 </includes>
             </testResource>
         </testResources>

@@ -53,7 +53,8 @@ class ReleaseVersionConsistencyTest {
             "README.md", "examples/README.md", "examples/catalog-service/README.md", "docs/INSTALLATION.md", "Dockerfile", "deploy/docker-compose.yml", "deploy/offline-bundle.sh",
             "deploy/kubernetes/runner.yaml", "deploy/README.md",
             "docs/CLI_DIAGNOSTICS.md", "docs/MCP.md", "docs/RELEASE_PLAN.md",
-            "docs/SCENARIO_REFERENCE.md", "docs/WHY.md", "docs/FEATURES.md", "docs/AI_ASSISTANTS.md", "examples/github-actions/faultora.yml");
+            "docs/SCENARIO_REFERENCE.md", "docs/WHY.md", "docs/FEATURES.md", "docs/AI_ASSISTANTS.md",
+            "examples/github-actions/faultora.yml", "examples/gitlab-ci/faultora.yml");
 
     @Test
     void everyReleaseMentionNamesTheProjectVersion() throws IOException {

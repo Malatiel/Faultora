@@ -18,6 +18,7 @@ import dev.faultora.runtime.PreparedRun;
 import dev.faultora.runtime.RunArtifacts;
 import dev.faultora.runtime.RuntimeCapabilities;
 import dev.faultora.runtime.IsolatedAssertion;
+import dev.faultora.runtime.IsolatedRenderer;
 import dev.faultora.runtime.PlanPreview;
 import dev.faultora.runtime.CatalogAssembly;
 import dev.faultora.spec.model.ScenarioDocument;
@@ -82,7 +83,12 @@ public class TestCommand implements Command {
 
         ExtensionPolicy extensionPolicy = RunPolicies.extensionPolicy(options);
         Map<String, ReportRenderer> renderers = ExtensionRegistry.renderers(extensionPolicy);
-        if (!renderers.keySet().containsAll(options.formats())) {
+        IsolatedRenderer approvedRenderer = options.isolatedRenderer();
+        String customFormat = approvedRenderer == null ? null : approvedRenderer.format();
+        List<String> registeredFormats = options.formats().stream()
+                .filter(format -> !format.equals(customFormat))
+                .toList();
+        if (!renderers.keySet().containsAll(registeredFormats)) {
             output.error(CliDiagnostic.Code.CAPABILITY_UNAVAILABLE, null, null);
             output.err().println("Unknown format. Supported formats: "
                     + String.join(",", renderers.keySet()));
@@ -90,7 +96,7 @@ public class TestCommand implements Command {
         }
 
         CliDiagnostic.Code failureStage = CliDiagnostic.Code.FILE_READ_FAILED;
-        try {
+        try (var isolatedRenderer = approvedRenderer == null ? null : approvedRenderer.prepare()) {
             String scenarioContent = Files.readString(
                     options.scenarioPath(), StandardCharsets.UTF_8);
             var documents = CatalogLoader.documents(options);
@@ -166,7 +172,10 @@ public class TestCommand implements Command {
 
             failureStage = CliDiagnostic.Code.REPORT_WRITE_FAILED;
             ReportWriter.writeAll(
-                    options.formats(), renderers, executed.events(), outputDir, output.out());
+                    registeredFormats, renderers, executed.events(), outputDir, output.out());
+            if (isolatedRenderer != null) {
+                ReportWriter.writeIsolated(isolatedRenderer, executed.events(), outputDir, output.out());
+            }
 
             // The counts were of assertions while the line read as nodes, so a
             // run with a failed step said "0 failed" beside FAILED.
@@ -188,7 +197,7 @@ public class TestCommand implements Command {
                 case ERROR, CANCELLED, SKIPPED -> FaultoraCli.EXIT_RUNNER_FAILURE;
             };
 
-        } catch (IsolatedAssertion.Refused refused) {
+        } catch (IsolatedAssertion.Refused | IsolatedRenderer.Refused refused) {
             output.error(CliDiagnostic.Code.CAPABILITY_UNAVAILABLE, null, null);
             output.err().println(refused.getMessage());
             return FaultoraCli.EXIT_INVALID_CONFIG;
@@ -379,6 +388,8 @@ public class TestCommand implements Command {
         output.out().println("      --allow-extension <class>  Permit a non-built-in extension (repeatable)");
         output.out().println("      --isolated-assertion <type> <sha256:digest> <jar>");
         output.out().println("                                 Run one approved assertion provider in a child JVM");
+        output.out().println("      --isolated-renderer <format> <sha256:digest> <jar>");
+        output.out().println("                                 Write report.<format>.txt for a matching --format");
         output.out().println("  -i, --input <key=value>    Value for a declared scenario input (repeatable)");
         output.out().println("  -h, --help                 Show this help");
         output.out().println();

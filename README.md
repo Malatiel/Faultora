@@ -668,6 +668,9 @@ Result: PASSED — 5 nodes, 3 passed assertions, 0 failed assertions (98ms)
 The HTML report has no CDN, remote fonts, scripts, or telemetry and can be
 opened directly from a CI artifact.
 
+Operators can opt in to [OpenTelemetry traces and metrics](docs/TELEMETRY.md)
+for CLI, runner and MCP executions by selecting their collector.
+
 ## CI integration
 
 A copy-ready GitHub Actions workflow is available at
@@ -684,6 +687,16 @@ Pull requests validate the scenario without receiving credentials or contacting
 the target. Main-branch pushes and manual runs execute all report formats and
 upload the results even when an assertion fails. For an unauthenticated API,
 remove `--auth-secret-id api` and `FAULTORA_SECRET_API` from the workflow.
+
+For GitLab, copy [the GitLab example](examples/gitlab-ci/faultora.yml) to
+`.gitlab-ci.yml` or include it in your pipeline. Use a Docker executor, the
+same scenario and OpenAPI paths, and a protected default branch. Set
+`FAULTORA_TARGET_URL` as a protected variable and `FAULTORA_SECRET_API` as a
+masked, protected variable, both scoped to the `faultora-ci` environment.
+Set `FAULTORA_ALLOW_PRIVATE=true` in that environment if the staging target
+uses a private address. Merge requests validate and preview the plan.
+The protected run publishes reports and a JUnit result. [GitLab artifact settings](https://docs.gitlab.com/ci/yaml/#artifactsaccess)
+show how to control report access.
 
 ## Credentials
 

@@ -82,6 +82,11 @@ public final class ExtensionProcess implements AutoCloseable {
         return launch(artifact, VerifiedJvmMain.IMPORTER_MODE, runtimeClasspath, declaration, lifetime);
     }
 
+    static ExtensionProcess startRenderer(StagedArtifact artifact, List<Path> runtimeClasspath,
+                                          Declaration declaration, Duration lifetime) throws IOException, InterruptedException {
+        return launch(artifact, VerifiedJvmMain.RENDERER_MODE, runtimeClasspath, declaration, lifetime);
+    }
+
     private static ExtensionProcess launch(StagedArtifact artifact, String entrypoint, List<Path> runtimeClasspath,
                                            Declaration declaration, Duration lifetime) throws IOException, InterruptedException {
         return launch(artifact, entrypoint, runtimeClasspath, declaration, lifetime, false, null);

@@ -27,7 +27,7 @@ class QualificationReportTest(unittest.TestCase):
         return path
 
     def test_complete_gate_passes(self):
-        self.assertEqual(verify_reports(self.root, 0), (10, 31))
+        self.assertEqual(verify_reports(self.root, 0), (12, 40))
 
     def test_absent_required_suite_fails(self):
         self.report("dev.faultora.integration.EventE2ETest", 0)

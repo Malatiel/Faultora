@@ -36,7 +36,7 @@ Three consequences worth stating plainly:
 | M3 — Event-driven and cross-component | complete |
 | M4 — Private-network runner | shipped in 0.9.1; runner and image qualification suites exist |
 | M5 — Distributed execution | deferred to 2.0 |
-| M6 — 1.0 hardening | In progress. The scenario API, run output and runner protocol v1 are frozen. The opt-in protocol 2 sender resumes delivery from a local checkpoint. Runner storage budgets, crash evidence and replay protection are in place. The supervised extension library covers assertions and source imports. CLI isolation enforcement remains open. |
+| M6 — 1.0 hardening | In progress. The scenario API, run output and runner protocol v1 are frozen. The opt-in protocol 2 sender resumes delivery from a local checkpoint. Runner storage budgets, crash evidence and replay protection are in place. The CLI can supervise approved assertions and text renderers in child JVMs. Linux runner assertions can require OS isolation and resource limits. The supervised source importer is a library adapter. OpenTelemetry export and the release qualification record are ready for candidate testing. |
 
 Shipped and working: OpenAPI, AsyncAPI and observation-catalog import into one
 catalog, HTTP, Kafka and JDBC connectors under one destination policy, scenario
@@ -365,8 +365,9 @@ named refusal, never undefined behaviour.
 - Out-of-process extension protocol, manifests, capability validation, SDK,
   reference extension, process isolation and resource limits (M6-02).
 - Supply chain: multi-architecture images, signed artifacts, SBOM, SLSA
-  provenance, verifiable offline bundle, Helm chart, upgrade and rollback
-  documentation (M6-03).
+  provenance, verifiable offline bundle, runner deployment manifests, and
+  upgrade and rollback documentation (M6-03). Controller and worker Helm
+  charts are part of M5 in 2.0.
 - Operational readiness: OpenTelemetry traces, metrics, structured logs, health
   contracts, backup and retention guides, diagnostic bundles, performance
   baselines (M6-04). Evidence is held in memory for a whole run, so the
@@ -380,6 +381,8 @@ named refusal, never undefined behaviour.
 
 Gate: the roadmap's 1.0 exit gate, plus the compatibility tests that make
 "fixes only" enforceable rather than aspirational.
+Use the [release qualification record](RELEASE_QUALIFICATION.md) to pin the
+candidate and record the evidence before and after publication.
 
 ### 2.0 — Distributed execution
 

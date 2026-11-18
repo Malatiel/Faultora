@@ -18,6 +18,7 @@ import java.util.zip.ZipInputStream;
 public final class VerifiedJvmMain {
     static final String ASSERTION_MODE = "--assertion-provider";
     static final String IMPORTER_MODE = "--source-importer";
+    static final String RENDERER_MODE = "--report-renderer";
 
     private VerifiedJvmMain() { }
 
@@ -25,7 +26,7 @@ public final class VerifiedJvmMain {
         try {
             if (args.length != 3 || !args[1].matches("sha256:[0-9a-f]{64}")
                     || !(ASSERTION_MODE.equals(args[2]) || IMPORTER_MODE.equals(args[2])
-                    || args[2].matches("[A-Za-z_$][A-Za-z0-9_$.]{0,255}"))) {
+                    || RENDERER_MODE.equals(args[2]) || args[2].matches("[A-Za-z_$][A-Za-z0-9_$.]{0,255}"))) {
                 throw new IOException("INVALID_LAUNCH");
             }
             Path artifact = Path.of(args[0]);
@@ -45,6 +46,10 @@ public final class VerifiedJvmMain {
             }
             if (IMPORTER_MODE.equals(args[2])) {
                 ImporterPeer.run(loader, System.in, System.out);
+                return;
+            }
+            if (RENDERER_MODE.equals(args[2])) {
+                RendererPeer.run(loader, System.in, System.out);
                 return;
             }
             Class<?> entry = Class.forName(args[2], false, loader);
