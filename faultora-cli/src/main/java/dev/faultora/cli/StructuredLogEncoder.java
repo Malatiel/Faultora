@@ -45,7 +45,7 @@ public final class StructuredLogEncoder extends EncoderBase<ILoggingEvent> {
             "Run started", "Run finished", "Node started", "Node finished",
             "Fault rollback failed", "Failed to close HTTP response",
             "Failed to flush run journal", "Failed to append run journal event",
-            "Failed to close run journal");
+            "Failed to close run journal", "Extension resource scope cleanup could not be confirmed");
 
     /** What stands in for a message that is not an approved event. */
     public static final String WITHHELD = "Message withheld";

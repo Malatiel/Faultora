@@ -286,8 +286,23 @@ start, a dispatch using the extension fails before opening target
 connections. The runner never retries it with ordinary JVM permissions.
 
 Use an operator-reviewed extension. Without the sandbox switch, the child
-uses the runner account's filesystem and network permissions. Per-extension
-CPU and memory limits remain outside this profile.
+uses the runner account's filesystem and network permissions.
+
+To bound the assertion process and its descendants, add both
+`--extension-memory-mib 384` and `--extension-cpu-percent 50` to the runner's
+`--require-extension-sandbox` configuration. The positive integer memory
+limit covers the whole process group, including the JVM and the loaded JAR.
+Swap is disabled for the group. The integer CPU quota is 1–100 percent of
+one CPU, shared by all processes in the group. Adjust the memory ceiling for
+the runtime and extension size. A small ceiling can prevent startup.
+
+The runner user needs a running systemd user manager (systemd 254 or later)
+with its login `XDG_RUNTIME_DIR` set, and a cgroup v2 hierarchy that provides
+the memory and CPU controllers. Faultora checks the kernel limits before
+starting the isolated JVM. A dispatch that
+needs the extension fails before opening target connections if the scope or
+its limits cannot be applied. The configured limits are part of the
+prepared-run identity.
 
 **In-process artifact trust boundary.** Operators must restrict write access
 to the runtime, bootstrap classpath, and plugin directories to the operator

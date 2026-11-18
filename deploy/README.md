@@ -167,6 +167,10 @@ directory and runs the bundled verifier in a separate Linux network namespace
 without routes to the host. It checks the CLI version and validates the
 bundled scenario with a local Java runtime.
 
+The separate [offline runner image check](../docs/QUALIFICATION.md#offline-runner-image-qualification)
+transfers the image bundle to a Docker daemon with an empty image store and
+no external network access.
+
 **"Without infrastructure fault permissions" is two statements that have to
 agree.** The pod drops every capability and is not privileged, *and* the runner
 is started without `--toxiproxy-url` and without any `--allow-fault`. Granting

@@ -50,6 +50,7 @@ class RunnerOptionsTest {
         var approval = parse("--isolated-assertion", "custom-check", digest, "fixture.jar").isolatedAssertion();
         assertThat(approval.type()).isEqualTo("custom-check");
         assertThat(approval.digest()).isEqualTo(digest);
+        assertThat(approval.resourceLimits()).isNull();
         assertThatThrownBy(() -> parse("--isolated-assertion", "custom-check", digest, "fixture.jar",
                 "--allow-extension", "example.Provider"))
                 .isInstanceOf(CliException.class).hasMessageContaining("cannot be combined");
@@ -69,10 +70,64 @@ class RunnerOptionsTest {
         String[] args = {"--require-extension-sandbox", "--isolated-assertion", "custom-check",
                 "sha256:" + "a".repeat(64), "fixture.jar"};
         if (System.getProperty("os.name").equals("Linux")) {
-            assertThat(parse(args).isolatedAssertion().requireOsSandbox()).isTrue();
+            var assertion = parse(args).isolatedAssertion();
+            assertThat(assertion.requireOsSandbox()).isTrue();
+            assertThat(assertion.resourceLimits()).isNull();
         } else {
             assertThatThrownBy(() -> parse(args)).isInstanceOf(CliException.class)
                     .hasMessageContaining("requires Linux and --isolated-assertion");
+        }
+    }
+
+    @Test
+    void extensionResourceLimitsRequireBothBoundsAndTheSandbox() {
+        assertThatThrownBy(() -> parse("--extension-memory-mib", "384"))
+                .isInstanceOf(CliException.class)
+                .hasMessageContaining("must be supplied together");
+        assertThatThrownBy(() -> parse("--extension-cpu-percent", "50"))
+                .isInstanceOf(CliException.class)
+                .hasMessageContaining("must be supplied together");
+        assertThatThrownBy(() -> parse("--isolated-assertion", "custom-check",
+                "sha256:" + "a".repeat(64), "fixture.jar",
+                "--extension-memory-mib", "384", "--extension-cpu-percent", "50"))
+                .isInstanceOf(CliException.class)
+                .hasMessageContaining("requires --require-extension-sandbox");
+    }
+
+    @Test
+    void extensionBoundsRejectMalformedOutOfRangeAndRepeatedValues() {
+        for (String invalid : List.of("0", "-1", "2147483648", "384MiB")) {
+            assertThatThrownBy(() -> parse("--extension-memory-mib", invalid))
+                    .isInstanceOf(CliException.class)
+                    .hasMessageContaining("--extension-memory-mib expects an integer from 1");
+        }
+        for (String invalid : List.of("0", "101", "50.5", "50%")) {
+            assertThatThrownBy(() -> parse("--extension-cpu-percent", invalid))
+                    .isInstanceOf(CliException.class)
+                    .hasMessageContaining("--extension-cpu-percent expects an integer from 1 to 100");
+        }
+        assertThatThrownBy(() -> parse("--extension-memory-mib", "384", "--extension-memory-mib", "512"))
+                .isInstanceOf(CliException.class)
+                .hasMessageContaining("--extension-memory-mib may be supplied once");
+        assertThatThrownBy(() -> parse("--extension-cpu-percent", "50", "--extension-cpu-percent", "100"))
+                .isInstanceOf(CliException.class)
+                .hasMessageContaining("--extension-cpu-percent may be supplied once");
+    }
+
+    @Test
+    void linuxRunnerCarriesBothResourceLimitsWithItsApprovedAssertion() {
+        String[] args = {"--extension-memory-mib", "384", "--require-extension-sandbox",
+                "--isolated-assertion", "custom-check", "sha256:" + "a".repeat(64), "fixture.jar",
+                "--extension-cpu-percent", "50"};
+        if (System.getProperty("os.name").equals("Linux")) {
+            var approval = parse(args).isolatedAssertion();
+            assertThat(approval.requireOsSandbox()).isTrue();
+            assertThat(approval.resourceLimits().memoryMiB()).isEqualTo(384);
+            assertThat(approval.resourceLimits().cpuPercent()).isEqualTo(50);
+        } else {
+            assertThatThrownBy(() -> parse(args))
+                    .isInstanceOf(CliException.class)
+                    .hasMessageContaining("--require-extension-sandbox requires Linux");
         }
     }
 

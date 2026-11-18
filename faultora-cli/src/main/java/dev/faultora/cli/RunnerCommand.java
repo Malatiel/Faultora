@@ -375,6 +375,9 @@ final class RunnerCommand implements Command {
         out.println("  --isolated-assertion <type> <sha256:digest> <jar>");
         out.println("                              Run one operator-approved assertion provider in a child JVM");
         out.println("  --require-extension-sandbox  Require Linux filesystem and network isolation for that provider");
+        out.println("  --extension-memory-mib <n>  Memory ceiling in MiB for that provider's Linux scope");
+        out.println("  --extension-cpu-percent <n> CPU quota as 1–100 percent of one CPU for that scope");
+        out.println("                              Supply both limits with --require-extension-sandbox");
         out.println("  --no-capture-bodies         Keep no request or response bodies");
         out.println("  --no-capture-headers        Keep no headers");
         out.println("  --max-evidence-bytes <n>    Largest body kept (default 10485760)");

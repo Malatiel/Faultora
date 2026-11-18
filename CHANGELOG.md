@@ -12,6 +12,8 @@ All notable changes to Faultora are documented in this file.
   locally.
 - `faultora runner --require-extension-sandbox` requires Linux filesystem,
   process and network isolation for the approved assertion provider.
+- Linux runners can set both `--extension-memory-mib` and `--extension-cpu-percent`
+  with the required extension sandbox to bound the approved assertion's cgroup.
 - The qualification guide includes a checklist for first-time reviewers to
   install the published archive and run a synthetic scenario.
 
