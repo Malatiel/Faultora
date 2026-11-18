@@ -11,15 +11,15 @@
 # one of the things this packaging exists for.
 #
 #   ./mvnw -o package -DskipTests
-#   docker build --build-arg JAR=faultora-cli/target/faultora-1.0.0.jar \
-#                -t faultora/runner:1.0.0 .
+#   docker build --build-arg JAR=faultora-cli/target/faultora-1.0.1.jar \
+#                -t faultora/runner:1.0.1 .
 #
 # Pin the multi-platform index, not an amd64-only child manifest. Buildx
 # selects the matching Java runtime; the already-built JAR is architecture neutral.
-FROM gcr.io/distroless/java21-debian12:nonroot@sha256:7e37784d94dccbf5ccb195c73b295f5ad00cd266512dfbac12eb9c3c28f8077d
+FROM gcr.io/distroless/java21-debian13:nonroot@sha256:6b60e44d652d66a9e2e584364c96adac4df7133674b2834b6f71741b7cdb1ff3
 
 ARG JAR
-ARG VERSION=1.0.0
+ARG VERSION=1.0.1
 
 LABEL org.opencontainers.image.title="Faultora runner" \
       org.opencontainers.image.description="Reliability test runner for private networks" \

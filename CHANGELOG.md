@@ -2,6 +2,15 @@
 
 All notable changes to Faultora are documented in this file.
 
+## 1.0.1
+
+### Fixed
+
+- Runner images use a pinned Distroless Java 21 base with the Debian fix for
+  CVE-2026-111497 in `libbrotli1` on amd64 and arm64.
+- The runner-image workflow runs Trivy as the owner of the image archives,
+  mounts the scan inputs read-only, and uploads only completed JSON reports.
+
 ## 1.0.0
 
 Faultora 1.0 stabilizes the scenario and result contracts for local and CI

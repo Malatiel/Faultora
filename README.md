@@ -26,20 +26,20 @@ You need Java 21, an OpenAPI description, and the address of a test
 environment. For a published build, use the instructions for the version
 you download. The commands here use the current source version.
 
-**1. Install.** Download `faultora-1.0.0.tar.gz` (or `.zip`) and `SHA256SUMS`
-from the [release](https://github.com/Malatiel/Faultora/releases/tag/v1.0.0),
+**1. Install.** Download `faultora-1.0.1.tar.gz` (or `.zip`) and `SHA256SUMS`
+from the [release](https://github.com/Malatiel/Faultora/releases/tag/v1.0.1),
 check them as [Installing the CLI](docs/INSTALLATION.md) shows, including who
 built them, extract the archive where you keep tools, and put its `bin` on
 your `PATH`:
 
 ```bash
-mkdir -p ~/tools && tar xzf faultora-1.0.0.tar.gz -C ~/tools
-export PATH="$HOME/tools/faultora-1.0.0/bin:$PATH"
+mkdir -p ~/tools && tar xzf faultora-1.0.1.tar.gz -C ~/tools
+export PATH="$HOME/tools/faultora-1.0.1/bin:$PATH"
 faultora --version
 ```
 
 On Windows, extract the `.zip` with `Expand-Archive`, add its `bin` to `PATH`
-(`$env:Path = "C:\tools\faultora-1.0.0\bin;$env:Path"`) and the command is
+(`$env:Path = "C:\tools\faultora-1.0.1\bin;$env:Path"`) and the command is
 the same; in PowerShell, join the continued lines below or end them with a
 backtick instead of `\`. Keep your scenarios and results in your own project,
 not in the installation, which an upgrade replaces.
@@ -137,7 +137,7 @@ CI to catch regressions.
 See the [support guide](https://github.com/Malatiel/Faultora/blob/main/SUPPORT.md)
 for troubleshooting, reporting issues, and sharing diagnostics safely.
 
-## What 1.0.0 includes
+## What 1.0.1 includes
 
 In short: OpenAPI, AsyncAPI and read-only database catalogs; HTTP and Kafka
 operations; sequential, parallel, repeat and eventually blocks with retries
@@ -174,7 +174,7 @@ find them under `faultora-cli/target/`.
 Download the release JAR and its checksums:
 
 ```bash
-FAULTORA_VERSION=1.0.0
+FAULTORA_VERSION=1.0.1
 RELEASE_URL="https://github.com/Malatiel/Faultora/releases/download/v${FAULTORA_VERSION}"
 
 curl --fail --location --retry 3 \
@@ -211,7 +211,7 @@ their prerequisites are unavailable; those skips do not prove qualification.
 The executable artifact is written to:
 
 ```text
-faultora-cli/target/faultora-1.0.0.jar
+faultora-cli/target/faultora-1.0.1.jar
 ```
 
 The regular CI build can run without repository secrets. Configure the
@@ -223,7 +223,7 @@ missing.
 
 The commands in this and the following sections use `faultora` on your `PATH`,
 as in the first ten minutes; from a source checkout, use
-`java -jar faultora-cli/target/faultora-1.0.0.jar` instead. Paths such as
+`java -jar faultora-cli/target/faultora-1.0.1.jar` instead. Paths such as
 `examples/payment-service/...` are relative to the extracted archive or the
 repository root. The archive carries the example descriptions and scenarios,
 so `validate` and `test --preview` work from it as shown; the example

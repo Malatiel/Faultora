@@ -183,8 +183,8 @@ the fingerprint and every listed file, the verification script included, with
 the system's own `sha256sum`:
 
 ```bash
-tar xzf faultora-1.0.0-offline.tar.gz
-cd faultora-1.0.0-offline
+tar xzf faultora-1.0.1-offline.tar.gz
+cd faultora-1.0.1-offline
 FINGERPRINT=the-recorded-64-hex-digits
 echo "${FINGERPRINT}  SHA256SUMS" | sha256sum -c - && sha256sum -c --quiet SHA256SUMS
 ```
@@ -205,8 +205,8 @@ On the connected side, use a Faultora checkout to verify the downloaded
 release JAR and its checksum manifest before building the bundle:
 
 ```bash
-python3 deploy/verify-release.py faultora-1.0.0.jar --sums SHA256SUMS \
-  --tag v1.0.0 --require-sums-attestation
+python3 deploy/verify-release.py faultora-1.0.1.jar --sums SHA256SUMS \
+  --tag v1.0.1 --require-sums-attestation
 ```
 
 This checks the release workflow, tag and hosted runner for both subjects.

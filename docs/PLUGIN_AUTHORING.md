@@ -61,8 +61,8 @@ cat > classes/META-INF/faultora-plugin.yaml <<'EOF'
 id: synthetic-assertion
 version: "1.0"
 requiresApi:
-  from: "1.0.0"
-  to: "1.0.0"
+  from: "1.0.1"
+  to: "1.0.1"
 EOF
 jar --create --file synthetic-assertion.jar -C classes .
 jar --list --file synthetic-assertion.jar
